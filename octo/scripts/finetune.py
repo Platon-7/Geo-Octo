@@ -31,7 +31,7 @@ from octo.utils.train_utils import (
 FLAGS = flags.FLAGS
 flags.DEFINE_string("name", "experiment", "Experiment name.")
 flags.DEFINE_bool("debug", False, "Debug config (no wandb logging)")
-default_config_file = os.path.join(os.path.dirname(__file__), "configs/config_offline.py")
+default_config_file = os.path.join(os.path.dirname(__file__), "configs/finetune_vggt_config.py")
 config_flags.DEFINE_config_file("config", default_config_file, "File path to the training hyperparameter configuration.", lock_config=False)
 
 
@@ -47,28 +47,27 @@ class LiberoVggtBuilder(tfds.core.GeneratorBasedBuilder):
     VERSION = tfds.core.Version('1.0.0')
 
     def _info(self) -> tfds.core.DatasetInfo:
-        # We need to get the feature spec from the *original* dataset.
-        # The name of this class will be e.g. "Libero10NoNoopsVggt", so we
-        # convert it back to "libero_10_no_noops" to load the original.
-        original_dataset_name = tfds.core.naming.cls_to_name(self.__class__).replace('_vggt', '')
-        original_builder = tfds.builder(original_dataset_name)
-        original_info = original_builder.info
-
-        step_features = dict(original_info.features['steps'].feature)
-        observation_features = dict(step_features['observation'])
-        
-        # Add our new vggt_tokens feature
-        observation_features['vggt_tokens'] = tfds.features.Tensor(
-            shape=(261, 2048),
-            dtype=np.float16,
-            doc='Pre-computed VGGT tokens from the primary image.',
-        )
-        
-        step_features['observation'] = tfds.features.FeaturesDict(observation_features)
+        # Define the feature structure for VGGT datasets
+        step_features = {
+            'action': tfds.features.Tensor(shape=(7,), dtype=np.float32),
+            'discount': tfds.features.Tensor(shape=(), dtype=np.float32),
+            'is_first': tfds.features.Tensor(shape=(), dtype=np.bool_),
+            'is_last': tfds.features.Tensor(shape=(), dtype=np.bool_),
+            'is_terminal': tfds.features.Tensor(shape=(), dtype=np.bool_),
+            'observation': tfds.features.FeaturesDict({
+                'image': tfds.features.Image(shape=(224, 224, 3), dtype=np.uint8),
+                'proprio': tfds.features.Tensor(shape=(7,), dtype=np.float32),
+                'vggt_tokens': tfds.features.Tensor(shape=(261, 2048), dtype=np.float16),
+            }),
+            'reward': tfds.features.Tensor(shape=(), dtype=np.float32),
+        }
         
         final_features = tfds.features.FeaturesDict({
             'steps': tfds.features.Dataset(tfds.features.FeaturesDict(step_features)),
-            'episode_metadata': original_info.features['episode_metadata']
+            'episode_metadata': tfds.features.FeaturesDict({
+                'file_path': tfds.features.Text(),
+                'task_description': tfds.features.Text(),
+            })
         })
         
         return tfds.core.DatasetInfo(
@@ -85,16 +84,17 @@ class LiberoVggtBuilder(tfds.core.GeneratorBasedBuilder):
     def _generate_examples(self, split):
         pass
 
-# We define a concrete class for each dataset variation we might want to use.
+# We define a concrete class for each dataset variation we want to use.
 # The class names are converted to snake_case to get the dataset name.
-# E.g. Libero10NoNoopsVggt -> libero_10_no_noops_vggt
-class Libero10NoNoopsVggt(LiberoVggtBuilder):
+class LiberoObjectVggt(LiberoVggtBuilder):
     pass
-class LiberoSpatialNoNoopsVggt(LiberoVggtBuilder):
+class LiberoSpatialVggt(LiberoVggtBuilder):
     pass
-class LiberoObjectNoNoopsVggt(LiberoVggtBuilder):
+class LiberoGoalVggt(LiberoVggtBuilder):
     pass
-class LiberoGoalNoNoopsVggt(LiberoVggtBuilder):
+class LiberoO10Vggt(LiberoVggtBuilder):
+    pass
+class LiberO10Vggt(LiberoVggtBuilder):  # Handle the typo in the original dataset name
     pass
 
 # ===============================================================================================
@@ -115,7 +115,28 @@ def main(_):
     
     config = ConfigDict(pretrained_model.config)
     finetune_config = FLAGS.config
-    config.update(finetune_config)
+    
+    # Handle config deletions if specified
+    if hasattr(finetune_config, 'config_delete_keys') and finetune_config.config_delete_keys:
+        def delete_nested_key(d, delete_dict):
+            for key, value in delete_dict.items():
+                if key in d:
+                    if isinstance(value, dict):
+                        delete_nested_key(d[key], value)
+                    else:
+                        del d[key]
+        delete_nested_key(config, finetune_config.config_delete_keys)
+    
+    # Handle config updates if specified
+    if hasattr(finetune_config, 'update_config') and finetune_config.update_config:
+        config.update(finetune_config.update_config)
+    
+    # Update with other finetune config settings
+    finetune_config_dict = finetune_config.to_dict()
+    # Remove the special keys so they don't override the main config
+    finetune_config_dict.pop('config_delete_keys', None)
+    finetune_config_dict.pop('update_config', None)
+    config.update(finetune_config_dict)
 
     text_processor = ModuleSpec.instantiate(config.text_processor)() if "text_processor" in config and config.text_processor else None
     
