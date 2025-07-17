@@ -29,7 +29,7 @@ cd octo
 #     --data_dir=/home/pkarageorgis/libero_datasets
 
 srun -u python scripts/create_vggt_dataset.py \
-    --input_data_dir=/home/pkarageorgis/libero_datasets \
+    --input_data_dir=/home/pkarageorgis/geo_octo/libero_datasets \
     --output_data_dir=/scratch-shared/tmp.cwkV8vOvfY/libero_vggt_datasets2 \
     --vggt_batch_size=32 \
     --overwrite=True
