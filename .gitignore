@@ -1,0 +1,10 @@
+# Folders to ignore
+my_octo_vggt_model/
+outfiles/
+wandb/
+
+# Ignore all files in the libero_datasets subdirectory...
+libero_datasets/**/*
+
+# ...but DO NOT ignore the .gitkeep files.
+!libero_datasets/**/.gitkeep
