@@ -1,0 +1,27 @@
+#!/bin/bash
+
+#SBATCH --partition=gpu_a100
+#SBATCH --gres=gpu:1            # Reduced to 1 GPU to avoid DDP issues
+#SBATCH --cpus-per-task=9
+#SBATCH --gpus=1                # Reduced to 1 GPU to avoid DDP issues
+#SBATCH --job-name=Octo_Trial
+#SBATCH --ntasks=1
+#SBATCH --time=05:30:00         # Increased time for full train-eval-test cycle
+#SBATCH --mem=48000M            # Increased memory for more comprehensive analysis
+#SBATCH --output=outfiles/trial_octo_%A.out
+
+module purge
+module load 2024
+module load Anaconda3/2024.06-1
+module load CUDA/11.8.0
+
+export WANDB_API_KEY="5d3260b21e8729601f20bfe817abc713a0dcc047"
+export WANDB_ENTITY="nlp-squad"
+export WANDB_PROJECT="Geo_Octo"
+
+source activate octo
+cd octo
+
+#srun -u python run_octo.py
+
+srun python scripts/finetune.py --config.pretrained_path=hf://rail-berkeley/octo-small-1.5 --config.save_dir=./my_octo_vggt_model

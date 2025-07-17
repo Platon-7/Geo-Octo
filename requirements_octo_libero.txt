@@ -1,0 +1,58 @@
+# PyTorch for CUDA 11.8
+# ===================================================================
+--index-url https://download.pytorch.org/whl/cu118
+torch==2.3.1
+torchvision==0.18.1
+
+# ===================================================================
+# Foundational Dependencies from LIBERO (The Strictest Constraints)
+# ===================================================================
+numpy==1.26.1
+gym==0.25.2
+wandb==0.13.1
+transformers==4.21.1
+einops==0.4.1
+matplotlib==3.5.3
+cloudpickle==2.1.0
+hydra-core==1.2.0
+easydict==1.9
+opencv-python==4.6.0.66
+robomimic==0.2.0
+thop==0.1.1-2209072238
+robosuite==1.4.0
+bddl==1.0.1
+future==0.18.2
+
+# ===================================================================
+# TensorFlow version compatible with LIBERO's NumPy
+# ===================================================================
+tensorflow==2.15.0
+
+# ===================================================================
+# JAX ecosystem versions compatible with LIBERO's NumPy
+# ===================================================================
+jax==0.4.20
+flax==0.7.5
+distrax==0.1.5
+optax==0.1.5
+chex==0.1.85
+
+# ===================================================================
+# Other necessary utilities from Octo
+# ===================================================================
+ml_collections>=0.1.0
+tqdm>=4.60.0
+absl-py>=0.12.0
+scipy==1.10.1
+imageio>=2.31.1
+moviepy>=1.0.3
+tensorflow_hub>=0.14.0
+tensorflow_datasets==4.9.2
+tensorflow_graphics==2021.12.3
+tensorflow-probability==0.23.0
+dlimp @ git+https://github.com/kvablack/dlimp@5edaa4691567873d495633f2708982b42edf1972
+plotly>=5.16.1
+
+# Note: tensorflow_probability and tensorflow_text are excluded as they
+# have deep dependencies that conflict with the older TensorFlow.
+# They are not required for model loading and evaluation.
