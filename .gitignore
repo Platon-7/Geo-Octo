@@ -3,8 +3,6 @@ my_octo_vggt_model/
 outfiles/
 wandb/
 
-# Ignore all files in the libero_datasets subdirectory...
-libero_datasets/**/*
-
-# ...but DO NOT ignore the .gitkeep files.
-!libero_datasets/**/.gitkeep
+# THIS IS THE NEW RULE:
+# Recursively find and ignore all .tfrecord files inside libero_datasets
+libero_datasets/**/*tfrecord*
