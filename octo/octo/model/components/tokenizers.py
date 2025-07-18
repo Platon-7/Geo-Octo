@@ -318,12 +318,12 @@ class LowdimObsTokenizer(BinTokenizer):
 ### START MODIFICATION ###
 class VGGTTokenizer(nn.Module):
     """
-    A tokenizer for pre-computed VGGT tokens with memory optimization options.
+    A tokenizer for pre-computed VGGT tokens with aggressive memory optimization.
     """
     use_compression: bool = True  # Enable compression to reduce memory
-    compression_ratio: float = 0.5  # Compress to 50% of original size
+    compression_ratio: float = 0.25  # Compress to 25% of original size for more memory savings
     use_token_learner: bool = True  # Use token learner to reduce token count
-    num_output_tokens: int = 128  # Reduce from 261 to 128 tokens
+    num_output_tokens: int = 64  # Reduce from 261 to 64 tokens for significant memory savings
     use_gradient_checkpointing: bool = True  # Enable gradient checkpointing
 
     @nn.compact
@@ -340,8 +340,8 @@ class VGGTTokenizer(nn.Module):
             )
         
         # Ensure proper dtype for JAX compatibility
-        # Convert to float32 for stable training (avoid float16 precision issues)
-        tokens = jnp.asarray(vggt_tokens, dtype=jnp.float32)
+        # Use float16 to save memory, but ensure proper handling
+        tokens = jnp.asarray(vggt_tokens, dtype=jnp.float16)
         
         # Optional compression: reduce feature dimension
         if self.use_compression:

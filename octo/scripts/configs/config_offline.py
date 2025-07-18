@@ -73,13 +73,13 @@ def get_config(config_string="full,multimodal"):
         )
 
     max_steps = FieldReference(50000)
-    window_size = FieldReference(default=2)
+    window_size = FieldReference(default=1)  # Reduce window size to save memory
 
     config = dict(
         pretrained_path=placeholder(str),
         pretrained_step=placeholder(int),
-        batch_size=2,
-        shuffle_buffer_size=10,
+        batch_size=1,  # Reduce from 2 to 1 to save memory
+        shuffle_buffer_size=5,  # Reduce shuffle buffer to save memory
         num_steps=50000,
         log_interval=100,
         eval_interval=5000,
@@ -105,17 +105,17 @@ def get_config(config_string="full,multimodal"):
             weight_decay=0.01,
             clip_gradient=1.0,
             frozen_keys=frozen_keys,
-            grad_accumulation_steps=None,
+            grad_accumulation_steps=4,  # Accumulate gradients over 4 steps to simulate batch_size=4
         ),
         val_kwargs=dict(
-            val_shuffle_buffer_size=1000,
-            num_val_batches=16,
+            val_shuffle_buffer_size=100,  # Reduce validation buffer
+            num_val_batches=4,  # Reduce validation batches
         ),
         viz_kwargs=dict(
-            eval_batch_size=128,
-            trajs_for_metrics=100,
-            trajs_for_viz=8,
-            samples_per_state=8,
+            eval_batch_size=16,  # Reduce eval batch size significantly
+            trajs_for_metrics=20,  # Reduce trajectories for metrics
+            trajs_for_viz=2,  # Reduce visualization trajectories
+            samples_per_state=2,  # Reduce samples per state
         ),
     )
 

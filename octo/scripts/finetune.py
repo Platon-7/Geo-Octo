@@ -205,6 +205,14 @@ def main(_):
         with timer("train"):
             train_state, update_info = train_step(train_state, batch)
 
+        # Clear batch from memory after training step
+        del batch
+        
+        # Periodic garbage collection to free memory
+        if (i + 1) % 10 == 0:
+            import gc
+            gc.collect()
+
         if (i + 1) % config.log_interval == 0:
             wandb.log({"training": jax.device_get(update_info)}, step=i)
 
