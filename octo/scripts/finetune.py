@@ -35,69 +35,8 @@ default_config_file = os.path.join(os.path.dirname(__file__), "configs/config_of
 config_flags.DEFINE_config_file("config", default_config_file, "File path to the training hyperparameter configuration.", lock_config=False)
 
 
-# =================================================================================================
-# === TFDS DATASET BUILDER CLASS ==================================================================
-# =================================================================================================
-# This class defines the "recipe" for your custom dataset. By including it here,
-# we "register" the dataset with tensorflow-datasets, which allows the program
-# to find and load your pre-generated data.
-
-class LiberoVggtBuilder(tfds.core.GeneratorBasedBuilder):
-    """Base class for Libero datasets with VGGT tokens."""
-    VERSION = tfds.core.Version('1.0.0')
-
-    def _info(self) -> tfds.core.DatasetInfo:
-        # We need to get the feature spec from the *original* dataset.
-        # The name of this class will be e.g. "Libero10NoNoopsVggt", so we
-        # convert it back to "libero_10_no_noops" to load the original.
-        original_dataset_name = tfds.core.naming.cls_to_name(self.__class__).replace('_vggt', '')
-        original_builder = tfds.builder(original_dataset_name)
-        original_info = original_builder.info
-
-        step_features = dict(original_info.features['steps'].feature)
-        observation_features = dict(step_features['observation'])
-        
-        # Add our new vggt_tokens feature
-        observation_features['vggt_tokens'] = tfds.features.Tensor(
-            shape=(261, 2048),
-            dtype=np.float16,
-            doc='Pre-computed VGGT tokens from the primary image.',
-        )
-        
-        step_features['observation'] = tfds.features.FeaturesDict(observation_features)
-        
-        final_features = tfds.features.FeaturesDict({
-            'steps': tfds.features.Dataset(tfds.features.FeaturesDict(step_features)),
-            'episode_metadata': original_info.features['episode_metadata']
-        })
-        
-        return tfds.core.DatasetInfo(
-            builder=self,
-            description="A version of the Libero dataset with pre-computed VGGT tokens.",
-            features=final_features,
-            homepage="https://github.com/geopavlo/geo-octo",
-        )
-    
-    # These methods are not needed for loading data, only for generating it,
-    # so we can leave them empty.
-    def _split_generators(self, dl_manager):
-        return {}
-    def _generate_examples(self, split):
-        pass
-
-# We define a concrete class for each dataset variation we might want to use.
-# The class names are converted to snake_case to get the dataset name.
-# E.g. Libero10NoNoopsVggt -> libero_10_no_noops_vggt
-class Libero10NoNoopsVggt(LiberoVggtBuilder):
-    pass
-class LiberoSpatialNoNoopsVggt(LiberoVggtBuilder):
-    pass
-class LiberoObjectNoNoopsVggt(LiberoVggtBuilder):
-    pass
-class LiberoGoalNoNoopsVggt(LiberoVggtBuilder):
-    pass
-
-# ===============================================================================================
+# TFDS will automatically discover datasets in the data_dir if they have the right structure
+# No explicit builders needed since the datasets were created with proper TFDS format
 
 def main(_):
     initialize_compilation_cache()
@@ -110,12 +49,13 @@ def main(_):
     wandb_id = f"{name}_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}"
     wandb.init(config=FLAGS.config.to_dict(), id=wandb_id, name=name, mode="disabled" if FLAGS.debug else None, **FLAGS.config.wandb)
 
-    # Load the pretrained model and its config
     pretrained_model = OctoModel.load_pretrained(FLAGS.config.pretrained_path, step=FLAGS.config.pretrained_step)
-    
-    config = ConfigDict(pretrained_model.config)
-    finetune_config = FLAGS.config
-    config.update(finetune_config)
+
+
+    config = FLAGS.config
+    model_config = ConfigDict(pretrained_model.config)
+    config.model = model_config.model
+    config.model.update(FLAGS.config.get("update_config", {}).get("model", {}))
 
     text_processor = ModuleSpec.instantiate(config.text_processor)() if "text_processor" in config and config.text_processor else None
     
@@ -124,6 +64,7 @@ def main(_):
     train_dataset = make_interleaved_dataset(
         dataset_kwargs_list=config.dataset_kwargs_list,
         traj_transform_kwargs=config.traj_transform_kwargs,
+        frame_transform_kwargs=config.frame_transform_kwargs,
         train=True,
         batch_size=config.batch_size,
         shuffle_buffer_size=config.shuffle_buffer_size,
@@ -133,18 +74,26 @@ def main(_):
     train_data_iter = train_dataset.iterator()
 
     def process_batch(batch):
-        batch = tf.nest.map_structure(lambda x: x.numpy(), batch)
+        # Fixed: handle data that's already in numpy format
+        def convert_to_numpy(x):
+            if hasattr(x, 'numpy'):
+                return x.numpy()
+            else:
+                return x  # Already numpy or other format
+        
+        batch = tf.nest.map_structure(convert_to_numpy, batch)
         return process_text(batch, text_processor)
 
     logging.info("Loading first batch for model initialization...")
     example_batch = process_batch(next(train_data_iter))
+    print("DEBUG: Observation keys in batch:", list(example_batch['observation'].keys()))
     logging.info("Successfully loaded example batch.")
 
     rng = jax.random.PRNGKey(config.seed)
     rng, init_rng = jax.random.split(rng)
     
     model = OctoModel.from_config(
-        config.model,
+        config,
         example_batch,
         text_processor,
         rng=init_rng,
@@ -185,7 +134,16 @@ def main(_):
     for i in tqdm.tqdm(range(int(config.num_steps)), total=int(config.num_steps), dynamic_ncols=True):
         with timer("dataset"):
             batch = process_batch(next(train_data_iter))
-
+            
+        if "language_instruction" in batch.get("task", {}):
+            # Get batch and window size from a tensor we know exists, like the vision tokens.
+            b, w = batch["observation"]["vggt_tokens"].shape[:2]
+            def reshape_lang(arr):
+                # Reshape from (b*w, num_tokens) to (b, w, num_tokens)
+                return arr.reshape(b, w, *arr.shape[1:])
+            # Apply this to all arrays in the tokenized dictionary (input_ids, attention_mask)
+            batch["task"]["language_instruction"] = jax.tree_map(reshape_lang, batch["task"]["language_instruction"])
+            
         with timer("train"):
             train_state, update_info = train_step(train_state, batch)
 
@@ -198,6 +156,7 @@ def main(_):
                 val_dataset = make_interleaved_dataset(
                     dataset_kwargs_list=config.dataset_kwargs_list,
                     traj_transform_kwargs=config.traj_transform_kwargs,
+                    frame_transform_kwargs=config.frame_transform_kwargs, 
                     train=False,
                     batch_size=config.viz_kwargs.eval_batch_size,
                     shuffle_buffer_size=config.val_kwargs.val_shuffle_buffer_size,

@@ -318,9 +318,13 @@ class LowdimObsTokenizer(BinTokenizer):
 ### START MODIFICATION ###
 class VGGTTokenizer(nn.Module):
     """
-    A simple tokenizer for pre-computed VGGT tokens.
-    It assumes that the VGGT tokens have been pre-computed and are available in the observation dictionary.
+    A tokenizer for pre-computed VGGT tokens with memory optimization options.
     """
+    use_compression: bool = True  # Enable compression to reduce memory
+    compression_ratio: float = 0.5  # Compress to 50% of original size
+    use_token_learner: bool = True  # Use token learner to reduce token count
+    num_output_tokens: int = 128  # Reduce from 261 to 128 tokens
+    use_gradient_checkpointing: bool = True  # Enable gradient checkpointing
 
     @nn.compact
     def __call__(
@@ -334,16 +338,43 @@ class VGGTTokenizer(nn.Module):
             raise ValueError(
                 "`vggt_tokens` not found in observations. Ensure they are added in the data pipeline."
             )
-        # The VGGT tokens are already computed, so we just need to package them in a TokenGroup.
-        # We assume the tokens are always present, so the mask is all ones.
-        mask = jnp.ones(vggt_tokens.shape[:-1], dtype=jnp.bool_)
         
-        # The main OctoTransformer is designed to be modular. It doesn't accept raw arrays. 
-        # It expects to receive a TokenGroup object from every tokenizer. This standardized interface 
-        # is what allows you to mix and match different tokenizers (like the PatchTokenizer and your
-        # VGGTTokenizer) so cleanly inside the VisionMixer.
-        return TokenGroup(tokens=vggt_tokens, mask=mask)
-
+        # Convert to float32 if needed and optimize memory layout
+        if vggt_tokens.dtype == jnp.float16:
+            # Keep as float16 to save memory, but ensure proper handling
+            tokens = vggt_tokens.astype(jnp.float16)
+        else:
+            tokens = vggt_tokens.astype(jnp.float32)
+        
+        # Optional compression: reduce feature dimension
+        if self.use_compression:
+            compressed_dim = int(tokens.shape[-1] * self.compression_ratio)
+            tokens = nn.Dense(
+                features=compressed_dim,
+                name="vggt_compression"
+            )(tokens)
+        
+        # Optional token reduction using TokenLearner
+        if self.use_token_learner:
+            # Add positional embeddings
+            pos_embed = self.param(
+                "pos_embed",
+                nn.initializers.normal(stddev=0.02),
+                (tokens.shape[-2], tokens.shape[-1]),
+            )
+            tokens = tokens + jnp.broadcast_to(pos_embed, tokens.shape)
+            tokens = nn.LayerNorm(name="vggt_norm")(tokens)
+            
+            # Use TokenLearner to reduce token count
+            tokens = TokenLearner(
+                num_tokens=self.num_output_tokens,
+            )(tokens, train=train)
+        
+        # Generate mask
+        mask = jnp.ones(tokens.shape[:-1], dtype=jnp.bool_)
+        
+        return TokenGroup(tokens=tokens, mask=mask)
+### END MODIFICATION ###
 
 
 class VisionMixer(nn.Module):

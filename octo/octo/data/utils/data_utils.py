@@ -445,3 +445,18 @@ def allocate_threads(n: Optional[int], weights: np.ndarray):
     for i in np.argsort(fractional)[::-1][: int(n)]:
         allocation[i] += 1
     return allocation
+
+# Move the standardize function outside so it can be imported properly
+def standardize_libero_vggt(traj: dict) -> dict:
+    print("DEBUG: Raw observation keys before standardization:", list(traj['observation'].keys()))
+    traj['observation']['image_primary'] = traj['observation'].pop('image')
+    traj['observation']['proprio'] = traj['observation'].pop('state')
+    print("DEBUG: Observation keys after standardization:", list(traj['observation'].keys()))
+    
+    # Add task_description if missing (fix for TFDS compatibility)
+    if 'episode_metadata' not in traj:
+        traj['episode_metadata'] = {}
+    if 'task_description' not in traj['episode_metadata']:
+        traj['episode_metadata']['task_description'] = ""  # Empty string as placeholder
+    
+    return traj

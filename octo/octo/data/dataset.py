@@ -353,6 +353,12 @@ def make_dataset_from_rlds(
 
         if proprio_obs_key is not None:
             new_obs["proprio"] = tf.cast(old_obs[proprio_obs_key], tf.float32)
+            
+        # CRITICAL ADDITION: Preserve additional observation keys like vggt_tokens
+        additional_keys_to_preserve = ["vggt_tokens", "joint_state"]
+        for key in additional_keys_to_preserve:
+            if key in old_obs:
+                new_obs[key] = old_obs[key]
 
         # add timestep info
         new_obs["timestep"] = tf.range(traj_len)
