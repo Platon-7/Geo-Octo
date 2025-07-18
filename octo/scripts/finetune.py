@@ -74,14 +74,53 @@ def main(_):
     train_data_iter = train_dataset.iterator()
 
     def process_batch(batch):
-        # Fixed: handle data that's already in numpy format
-        def convert_to_numpy(x):
+        # Fixed: handle data that's already in numpy format and ensure JAX compatibility
+        def convert_to_numpy_and_fix_dtype(x):
             if hasattr(x, 'numpy'):
-                return x.numpy()
-            else:
-                return x  # Already numpy or other format
+                x = x.numpy()
+            
+            # Convert to proper numpy array if needed and fix dtypes
+            if isinstance(x, np.ndarray):
+                # Fix object dtype arrays that can cause JAX errors
+                if x.dtype == np.object_:
+                    # Try to convert to float32 if possible
+                    try:
+                        x = x.astype(np.float32)
+                    except (ValueError, TypeError):
+                        # If that fails, try other numeric types
+                        try:
+                            x = x.astype(np.int32)
+                        except (ValueError, TypeError):
+                            # Keep as is if no conversion works
+                            pass
+                elif x.dtype == np.float64:
+                    # Convert float64 to float32 for JAX compatibility
+                    x = x.astype(np.float32)
+                elif x.dtype == np.int64:
+                    # Convert int64 to int32 for JAX compatibility  
+                    x = x.astype(np.int32)
+            
+            return x
         
-        batch = tf.nest.map_structure(convert_to_numpy, batch)
+        batch = tf.nest.map_structure(convert_to_numpy_and_fix_dtype, batch)
+        
+        # Additional safeguard: Check for any remaining object dtypes after processing
+        def final_dtype_check(x, path=""):
+            if isinstance(x, np.ndarray) and x.dtype == np.object_:
+                print(f"ERROR: Object dtype still present at {path} after conversion")
+                print(f"Array shape: {x.shape}, sample: {x.flat[:min(3, x.size)]}")
+                # Try one more aggressive conversion
+                try:
+                    # For strings, keep as string arrays but ensure they're proper numpy arrays
+                    if x.size > 0 and isinstance(x.flat[0], (str, bytes)):
+                        return np.array(x, dtype='<U100')  # Fixed-length unicode strings
+                    else:
+                        return x.astype(np.float32)
+                except:
+                    return x
+            return x
+        
+        batch = tf.nest.map_structure(final_dtype_check, batch)
         return process_text(batch, text_processor)
 
     logging.info("Loading first batch for model initialization...")
@@ -144,6 +183,25 @@ def main(_):
             # Apply this to all arrays in the tokenized dictionary (input_ids, attention_mask)
             batch["task"]["language_instruction"] = jax.tree_map(reshape_lang, batch["task"]["language_instruction"])
             
+        # Debug: Check batch dtypes before training step
+        def check_dtypes(x, path=""):
+            if isinstance(x, np.ndarray):
+                if x.dtype == np.object_:
+                    print(f"WARNING: Object dtype found at {path}, shape: {x.shape}")
+                    print(f"Sample values: {x.flat[:min(5, x.size)]}")
+                elif not np.issubdtype(x.dtype, np.number):
+                    print(f"WARNING: Non-numeric dtype {x.dtype} found at {path}")
+            elif isinstance(x, dict):
+                for k, v in x.items():
+                    check_dtypes(v, f"{path}/{k}")
+            elif isinstance(x, (list, tuple)):
+                for i, v in enumerate(x):
+                    check_dtypes(v, f"{path}[{i}]")
+        
+        # Only check on first iteration to avoid spam
+        if i == 0:
+            check_dtypes(batch, "batch")
+        
         with timer("train"):
             train_state, update_info = train_step(train_state, batch)
 
