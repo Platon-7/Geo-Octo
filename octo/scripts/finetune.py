@@ -106,21 +106,41 @@ def main(_):
         
         # Additional safeguard: Check for any remaining object dtypes after processing
         def final_dtype_check(x, path=""):
-            if isinstance(x, np.ndarray) and x.dtype == np.object_:
-                print(f"ERROR: Object dtype still present at {path} after conversion")
-                print(f"Array shape: {x.shape}, sample: {x.flat[:min(3, x.size)]}")
-                # Try one more aggressive conversion
-                try:
-                    # For strings, keep as string arrays but ensure they're proper numpy arrays
+            if isinstance(x, np.ndarray):
+                # Handle different problematic dtypes
+                if x.dtype == np.object_:
+                    print(f"DEBUG: Converting object dtype at {path}, shape: {x.shape}")
+                    # For strings/bytes, remove them from the batch (not needed for training)
                     if x.size > 0 and isinstance(x.flat[0], (str, bytes)):
-                        return np.array(x, dtype='<U100')  # Fixed-length unicode strings
+                        return None  # Remove string fields from batch
                     else:
-                        return x.astype(np.float32)
-                except:
-                    return x
+                        try:
+                            return x.astype(np.float32)
+                        except:
+                            return None
+                elif x.dtype.kind == 'U':  # Unicode strings
+                    print(f"DEBUG: Removing unicode string field at {path}")
+                    return None  # Remove string fields
+                elif x.dtype == np.bool_:
+                    # Convert boolean arrays to int32 for JAX compatibility
+                    return x.astype(np.int32)
+                elif not np.issubdtype(x.dtype, np.number) and x.dtype != np.bool_:
+                    print(f"DEBUG: Removing non-numeric field at {path}, dtype: {x.dtype}")
+                    return None
             return x
         
         batch = tf.nest.map_structure(final_dtype_check, batch)
+        
+        # Remove None values from the batch (fields that were removed due to incompatible dtypes)
+        def filter_none_values(d):
+            if isinstance(d, dict):
+                return {k: filter_none_values(v) for k, v in d.items() if v is not None}
+            elif isinstance(d, (list, tuple)):
+                return type(d)([filter_none_values(item) for item in d if item is not None])
+            else:
+                return d
+        
+        batch = filter_none_values(batch)
         return process_text(batch, text_processor)
 
     logging.info("Loading first batch for model initialization...")
@@ -189,7 +209,9 @@ def main(_):
                 if x.dtype == np.object_:
                     print(f"WARNING: Object dtype found at {path}, shape: {x.shape}")
                     print(f"Sample values: {x.flat[:min(5, x.size)]}")
-                elif not np.issubdtype(x.dtype, np.number):
+                elif x.dtype.kind == 'U':  # Unicode strings
+                    print(f"WARNING: Unicode string dtype {x.dtype} found at {path}")
+                elif not np.issubdtype(x.dtype, np.number) and x.dtype != np.bool_:
                     print(f"WARNING: Non-numeric dtype {x.dtype} found at {path}")
             elif isinstance(x, dict):
                 for k, v in x.items():
