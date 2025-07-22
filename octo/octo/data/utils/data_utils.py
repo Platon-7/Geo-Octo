@@ -447,10 +447,31 @@ def allocate_threads(n: Optional[int], weights: np.ndarray):
     return allocation
 
 # Move the standardize function outside so it can be imported properly
+# def standardize_libero_vggt(traj: dict) -> dict:
+#     print("DEBUG: Raw observation keys before standardization:", list(traj['observation'].keys()))
+#     traj['observation']['image_primary'] = traj['observation'].pop('image')
+#     traj['observation']['proprio'] = traj['observation'].pop('state')
+#     print("DEBUG: Observation keys after standardization:", list(traj['observation'].keys()))
+    
+#     # Add task_description if missing (fix for TFDS compatibility)
+#     if 'episode_metadata' not in traj:
+#         traj['episode_metadata'] = {}
+#     if 'task_description' not in traj['episode_metadata']:
+#         traj['episode_metadata']['task_description'] = ""  # Empty string as placeholder
+    
+#     return traj
+
 def standardize_libero_vggt(traj: dict) -> dict:
     print("DEBUG: Raw observation keys before standardization:", list(traj['observation'].keys()))
     traj['observation']['image_primary'] = traj['observation'].pop('image')
     traj['observation']['proprio'] = traj['observation'].pop('state')
+    
+    # Remove VGGT tokens and ALL extra fields that standard Octo doesn't expect
+    fields_to_remove = ['vggt_tokens', 'joint_state', 'wrist_image']
+    for field in fields_to_remove:
+        if field in traj['observation']:
+            traj['observation'].pop(field)
+    
     print("DEBUG: Observation keys after standardization:", list(traj['observation'].keys()))
     
     # Add task_description if missing (fix for TFDS compatibility)

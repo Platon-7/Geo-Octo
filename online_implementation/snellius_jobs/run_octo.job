@@ -24,4 +24,4 @@ cd octo
 
 #srun -u python run_octo.py
 
-srun python scripts/finetune_online_inference.py --config.pretrained_path=hf://rail-berkeley/octo-small-1.5 --config.save_dir=./my_octo_vggt_model
+srun python scripts/finetune.py --config.pretrained_path=hf://rail-berkeley/octo-small-1.5 --config.save_dir=./my_octo_vggt_model

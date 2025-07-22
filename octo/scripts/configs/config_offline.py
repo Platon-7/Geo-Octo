@@ -79,7 +79,7 @@ def get_config(config_string="full,multimodal"):
         pretrained_path=placeholder(str),
         pretrained_step=placeholder(int),
         batch_size=2,
-        shuffle_buffer_size=10,
+        shuffle_buffer_size=2,
         num_steps=50000,
         log_interval=100,
         eval_interval=5000,
@@ -156,6 +156,6 @@ def get_config(config_string="full,multimodal"):
         ),
     )
     
-    config['update_config'] = {"model": {"observation_tokenizers": {"vggt_tokens": ModuleSpec.create('octo.model.components.tokenizers:VGGTTokenizer')}}}
+    # config['update_config'] = {"model": {"observation_tokenizers": {"vggt_tokens": ModuleSpec.create('octo.model.components.tokenizers:VGGTTokenizer')}}}
 
     return ConfigDict(config)

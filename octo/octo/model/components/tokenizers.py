@@ -339,12 +339,9 @@ class VGGTTokenizer(nn.Module):
                 "`vggt_tokens` not found in observations. Ensure they are added in the data pipeline."
             )
         
-        # Convert to float32 if needed and optimize memory layout
-        if vggt_tokens.dtype == jnp.float16:
-            # Keep as float16 to save memory, but ensure proper handling
-            tokens = vggt_tokens.astype(jnp.float16)
-        else:
-            tokens = vggt_tokens.astype(jnp.float32)
+        # Ensure proper dtype for JAX compatibility
+        # Convert to float32 for stable training (avoid float16 precision issues)
+        tokens = jnp.asarray(vggt_tokens, dtype=jnp.float32)
         
         # Optional compression: reduce feature dimension
         if self.use_compression:

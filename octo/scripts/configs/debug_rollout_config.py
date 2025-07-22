@@ -19,7 +19,7 @@ def get_config(config_string="full,multimodal"):
         "name": "bridge_dataset",
         "data_dir": "./tests/debug_dataset",
         "image_obs_keys": {"primary": "image_0", "wrist": None},
-        "proprio_obs_key": "proprio",
+        "proprio_obs_key": "state",
         "language_key": "language_instruction",
         "action_proprio_normalization_type": "normal",
         # We want to avoid normalizing the gripper
@@ -29,10 +29,6 @@ def get_config(config_string="full,multimodal"):
         # "standardize_fn": ModuleSpec.create(
         #     "octo.data.oxe.oxe_standardization_transforms:bridge_dataset_transform",
         # ),
-        # REPLACE IT WITH THIS:
-        "standardize_fn": ModuleSpec.create(
-            "octo.utils.custom_transforms:load_vggt_and_standardize",
-        ),
         # If the default data loading speed is too slow, try these:
         # "num_parallel_reads": 8,  # for reading from disk / GCS
         # "num_parallel_calls": 16,  # for initial dataset construction
