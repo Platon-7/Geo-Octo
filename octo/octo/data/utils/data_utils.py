@@ -464,10 +464,22 @@ def allocate_threads(n: Optional[int], weights: np.ndarray):
 def standardize_libero_vggt(traj: dict) -> dict:
     print("DEBUG: Raw observation keys before standardization:", list(traj['observation'].keys()))
     traj['observation']['image_primary'] = traj['observation'].pop('image')
-    traj['observation']['proprio'] = traj['observation'].pop('state')
     
-    # Remove VGGT tokens and ALL extra fields that standard Octo doesn't expect
-    fields_to_remove = ['vggt_tokens', 'joint_state', 'wrist_image']
+    # THIS IS THE CRITICAL FIX: Slice the 8D proprio down to the 7D expected by the model.
+    # We take the first 7 dimensions, which are typically [pos, rpy, gripper].
+    proprio_8d = traj['observation'].pop('state')
+    traj['observation']['proprio'] = proprio_8d[..., :7]
+    
+    # Add image_wrist using wrist_image if available, otherwise duplicate image_primary
+    if 'wrist_image' in traj['observation']:
+        traj['observation']['image_wrist'] = traj['observation'].pop('wrist_image')
+    else:
+        # Use image_primary as wrist image if wrist_image is not available
+        traj['observation']['image_wrist'] = traj['observation']['image_primary']
+    
+    # Keep VGGT tokens as they are needed for the updated model architecture
+    # Remove only the extra fields that standard Octo doesn't expect
+    fields_to_remove = ['joint_state']  # Removed 'wrist_image' since we now use it as 'image_wrist'
     for field in fields_to_remove:
         if field in traj['observation']:
             traj['observation'].pop(field)

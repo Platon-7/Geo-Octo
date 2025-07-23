@@ -20,7 +20,7 @@ def get_config(config_string="full,multimodal"):
             "image_obs_keys": {"primary": "image_primary"},
             "proprio_obs_key": "proprio",
             "language_key": "language_instruction",
-            "action_proprio_normalization_type": "normal",
+            "action_proprio_normalization_type": "none",  # Changed from "normal" to "none"
             "filter_functions": [],
         },
         {
@@ -32,7 +32,7 @@ def get_config(config_string="full,multimodal"):
             "image_obs_keys": {"primary": "image_primary"},
             "proprio_obs_key": "proprio",
             "language_key": "language_instruction",
-            "action_proprio_normalization_type": "normal",
+            "action_proprio_normalization_type": "none",  # Changed from "normal" to "none"
             "filter_functions": [],
         },
         {
@@ -44,7 +44,7 @@ def get_config(config_string="full,multimodal"):
             "image_obs_keys": {"primary": "image_primary"},
             "proprio_obs_key": "proprio",
             "language_key": "language_instruction",
-            "action_proprio_normalization_type": "normal",
+            "action_proprio_normalization_type": "none",  # Changed from "normal" to "none"
             "filter_functions": [],
         },
         {
@@ -56,7 +56,7 @@ def get_config(config_string="full,multimodal"):
             "image_obs_keys": {"primary": "image_primary"},
             "proprio_obs_key": "proprio",
             "language_key": "language_instruction",
-            "action_proprio_normalization_type": "normal",
+            "action_proprio_normalization_type": "none",  # Changed from "normal" to "none"
             "filter_functions": [],
         },
     ]
@@ -156,6 +156,19 @@ def get_config(config_string="full,multimodal"):
         ),
     )
     
-    # config['update_config'] = {"model": {"observation_tokenizers": {"vggt_tokens": ModuleSpec.create('octo.model.components.tokenizers:VGGTTokenizer')}}}
+    config['update_config'] = {
+        "model": {
+            "observation_tokenizers": {
+                "vggt_tokens": ModuleSpec.create('octo.model.components.tokenizers:VGGTTokenizer')
+            }
+        }
+    }
+    config['config_delete_keys'] = {
+        "model": {
+            "task_tokenizers": {
+                "image": None
+            }
+        }
+    }
 
     return ConfigDict(config)
