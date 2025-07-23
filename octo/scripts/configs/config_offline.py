@@ -20,7 +20,7 @@ def get_config(config_string="full,multimodal"):
             "image_obs_keys": {"primary": "image_primary"},
             "proprio_obs_key": "proprio",
             "language_key": "language_instruction",
-            "action_proprio_normalization_type": "none",  # Changed from "normal" to "none"
+            "action_proprio_normalization_type": "normal",  # Changed from "normal" to "normal"
             "filter_functions": [],
         },
         {
@@ -32,7 +32,7 @@ def get_config(config_string="full,multimodal"):
             "image_obs_keys": {"primary": "image_primary"},
             "proprio_obs_key": "proprio",
             "language_key": "language_instruction",
-            "action_proprio_normalization_type": "none",  # Changed from "normal" to "none"
+            "action_proprio_normalization_type": "normal",  # Changed from "normal" to "normal"
             "filter_functions": [],
         },
         {
@@ -44,7 +44,7 @@ def get_config(config_string="full,multimodal"):
             "image_obs_keys": {"primary": "image_primary"},
             "proprio_obs_key": "proprio",
             "language_key": "language_instruction",
-            "action_proprio_normalization_type": "none",  # Changed from "normal" to "none"
+            "action_proprio_normalization_type": "normal",  # Changed from "normal" to "normal"
             "filter_functions": [],
         },
         {
@@ -56,7 +56,7 @@ def get_config(config_string="full,multimodal"):
             "image_obs_keys": {"primary": "image_primary"},
             "proprio_obs_key": "proprio",
             "language_key": "language_instruction",
-            "action_proprio_normalization_type": "none",  # Changed from "normal" to "none"
+            "action_proprio_normalization_type": "normal",  # Changed from "normal" to "normal"
             "filter_functions": [],
         },
     ]
