@@ -451,7 +451,16 @@ def standardize_libero_vggt(traj: dict) -> dict:
     print("DEBUG: Raw observation keys before standardization:", list(traj['observation'].keys()))
     traj['observation']['image_primary'] = traj['observation'].pop('image')
     traj['observation']['proprio'] = traj['observation'].pop('state')
+    
+    # CRITICAL FIX: Slice proprio from 8D to 7D to match pretrained model
+    # The pretrained Octo model expects 7D proprio, but Libero provides 8D
+    if traj['observation']['proprio'].shape[-1] == 8:
+        print("DEBUG: Slicing proprio from 8D to 7D")
+        traj['observation']['proprio'] = traj['observation']['proprio'][..., :7]
+        
+    
     print("DEBUG: Observation keys after standardization:", list(traj['observation'].keys()))
+    print("DEBUG: Proprio shape after slicing:", traj['observation']['proprio'].shape)
     
     # Add task_description if missing (fix for TFDS compatibility)
     if 'episode_metadata' not in traj:

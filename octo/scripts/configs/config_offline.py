@@ -22,6 +22,7 @@ def get_config(config_string="full,multimodal"):
             "language_key": "language_instruction",
             "action_proprio_normalization_type": "normal",  # Changed from "normal" to "normal"
             "filter_functions": [],
+            "force_recompute_dataset_statistics": False, 
         },
         {
             "name": "libero_spatial_vggt",
@@ -34,6 +35,7 @@ def get_config(config_string="full,multimodal"):
             "language_key": "language_instruction",
             "action_proprio_normalization_type": "normal",  # Changed from "normal" to "normal"
             "filter_functions": [],
+            "force_recompute_dataset_statistics": False, 
         },
         {
             "name": "libero_goal_vggt",  # Added the missing dataset
@@ -46,6 +48,7 @@ def get_config(config_string="full,multimodal"):
             "language_key": "language_instruction",
             "action_proprio_normalization_type": "normal",  # Changed from "normal" to "normal"
             "filter_functions": [],
+            "force_recompute_dataset_statistics": False, 
         },
         {
             "name": "liber_o10_vggt",
@@ -58,6 +61,7 @@ def get_config(config_string="full,multimodal"):
             "language_key": "language_instruction",
             "action_proprio_normalization_type": "normal",  # Changed from "normal" to "normal"
             "filter_functions": [],
+            "force_recompute_dataset_statistics": False, 
         },
     ]
 
@@ -78,8 +82,8 @@ def get_config(config_string="full,multimodal"):
     config = dict(
         pretrained_path=placeholder(str),
         pretrained_step=placeholder(int),
-        batch_size=2,
-        shuffle_buffer_size=2,
+        batch_size=4,
+        shuffle_buffer_size=200,
         num_steps=50000,
         log_interval=100,
         eval_interval=5000,
@@ -112,7 +116,7 @@ def get_config(config_string="full,multimodal"):
             num_val_batches=16,
         ),
         viz_kwargs=dict(
-            eval_batch_size=128,
+            eval_batch_size=16,
             trajs_for_metrics=100,
             trajs_for_viz=8,
             samples_per_state=8,
@@ -128,38 +132,46 @@ def get_config(config_string="full,multimodal"):
 
     config["traj_transform_kwargs"] = dict(
         window_size=window_size,
-        action_horizon=window_size,
+        action_horizon=4,
         task_augment_strategy=task_augment_strategy,
         task_augment_kwargs=task_augment_kwargs,
     )
     
     # Add frame transform kwargs to fix the resize_size warning
     config["frame_transform_kwargs"] = dict(
-        resize_size={
-            "primary": (256, 256),  # Match original Libero image size
-        },
-        image_augment_kwargs=dict(
-            primary=dict(
-                random_resized_crop=dict(scale=[0.8, 1.0], ratio=[0.9, 1.1]),
-                random_brightness=[0.1],
-                random_contrast=[0.9, 1.1],
-                random_saturation=[0.9, 1.1],
-                random_hue=[0.05],
-                augment_order=[
-                    "random_resized_crop",
-                    "random_brightness", 
-                    "random_contrast",
-                    "random_saturation",
-                    "random_hue",
-                ],
-            ),
+    resize_size={
+        "primary": (224, 224),  # Match original Libero image size
+    },
+    image_augment_kwargs=dict(
+        primary=dict(
+            random_resized_crop=dict(scale=[0.8, 1.0], ratio=[0.9, 1.1]),
+            random_brightness=[0.1],
+            random_contrast=[0.9, 1.1],
+            random_saturation=[0.9, 1.1],
+            random_hue=[0.05],
+            augment_order=[
+                "random_resized_crop",
+                "random_brightness", 
+                "random_contrast",
+                "random_saturation",
+                "random_hue",
+            ],
         ),
-    )
+    ),
     
+)
     config['update_config'] = {
         "model": {
             "observation_tokenizers": {
-                "vggt_tokens": ModuleSpec.create('octo.model.components.tokenizers:VGGTTokenizer')
+                "vggt_tokens": ModuleSpec.create(
+                    'octo.model.components.tokenizers:VGGTTokenizer',
+                    # Add memory optimization parameters
+                    use_compression=True,
+                    compression_ratio=0.25,  # More aggressive compression
+                    use_token_learner=True,
+                    num_output_tokens=64,    # Reduce from 128 to 64
+                    use_gradient_checkpointing=True
+                )
             }
         }
     }

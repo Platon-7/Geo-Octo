@@ -37,6 +37,10 @@ default_config_file = os.path.join(os.path.dirname(__file__), "configs/debug_rol
 config_flags.DEFINE_config_file("config", default_config_file, "File path to the training hyperparameter configuration.", lock_config=False)
 
 
+import os
+os.environ['XLA_PYTHON_CLIENT_PREALLOCATE'] = 'false'
+os.environ['XLA_PYTHON_CLIENT_MEM_FRACTION'] = '0.8'
+
 # TFDS will automatically discover datasets in the data_dir if they have the right structure
 # No explicit builders needed since the datasets were created with proper TFDS format
 
@@ -46,6 +50,11 @@ def main(_):
     dp_sharding = NamedSharding(mesh, PartitionSpec("batch"))
     replicated_sharding = NamedSharding(mesh, PartitionSpec())
     tf.config.set_visible_devices([], "GPU")
+
+
+    print(f"JAX devices: {jax.devices()}")
+    print(f"Number of devices: {len(jax.devices())}")
+    print(f"Device type: {jax.devices()[0].device_kind}")
 
     name = format_name_with_config(FLAGS.name, FLAGS.config.to_dict())
     wandb_id = f"{name}_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}"
@@ -172,7 +181,6 @@ def main(_):
         # Process text
         batch = process_text(batch, text_processor)
         
-        # ADD THIS SECTION: Create task images to match online implementation
         if "task" not in batch:
             batch["task"] = {}
         
@@ -180,8 +188,8 @@ def main(_):
         if "image_primary" not in batch["task"] and "image_primary" in batch["observation"]:
             batch["task"]["image_primary"] = batch["observation"]["image_primary"][:, 0]  # (batch_size, H, W, C)
         
-        if "image_wrist" not in batch["task"] and "image_wrist" in batch["observation"]:
-            batch["task"]["image_wrist"] = batch["observation"]["image_wrist"][:, 0]  # (batch_size, H, W, C)
+        # if "image_wrist" not in batch["task"] and "image_wrist" in batch["observation"]:
+        #     batch["task"]["image_wrist"] = batch["observation"]["image_wrist"][:, 0]  # (batch_size, H, W, C)
         
         return batch
 
@@ -239,7 +247,32 @@ def main(_):
         info.update({"grad_norm": grad_norm, "learning_rate": lr_callable(state.step)})
         return new_state, info
 
-    val_callback, viz_callback = None, None
+        logging.info("Initializing validation dataset and callbacks...")
+        
+        val_dataset = make_interleaved_dataset(
+            dataset_kwargs_list=config["dataset_kwargs_list"],
+            traj_transform_kwargs=config["traj_transform_kwargs"],
+            frame_transform_kwargs=config["frame_transform_kwargs"], 
+            train=False,
+            batch_size=config["viz_kwargs"]["eval_batch_size"],
+            shuffle_buffer_size=config["val_kwargs"]["val_shuffle_buffer_size"],
+        )
+        
+        val_iterator = val_dataset.iterator()
+        
+        val_callback = ValidationCallback(
+            loss_fn=loss_fn, 
+            process_batch_fn=process_batch, 
+            data_iterator=val_iterator, 
+            num_batches=config["val_kwargs"]["num_val_batches"]
+        )
+        
+        viz_callback = VisualizationCallback(
+            text_processor=text_processor, 
+            data_iterator=val_iterator, 
+            **config["viz_kwargs"]
+        )
+
 
     timer = Timer()
     logging.info("Starting training loop...")
@@ -266,7 +299,7 @@ def main(_):
         
 
         if i == 0:  # Only on first iteration
-            print("=== ONLINE DEBUGGING DIMENSIONS ===")
+            print("=== OFFLINE DEBUGGING DIMENSIONS ===")
             
             # 1. Check what's in the batch
             print("Batch observation keys:", list(batch["observation"].keys()))
@@ -281,7 +314,7 @@ def main(_):
                     print(f"  task {key}: shape = {value.shape}, dtype = {value.dtype}")
             
             # 2. Simple transformer call to get embeddings
-            print("\n--- ONLINE Transformer output ---")
+            print("\n--- Offline Transformer output ---")
             def debug_transformer_simple():
                 bound_module = model.module.bind({"params": train_state.model.params})
                 transformer_output = bound_module.octo_transformer(
@@ -306,7 +339,7 @@ def main(_):
                 pooled = action_readout.tokens.mean(axis=2)  # Pool over tokens
                 flattened = pooled.reshape(batch_size, -1)
                 print(f"  after pooling and flattening: {flattened.shape}")
-                print(f"  -> ONLINE FINAL DIMENSION TO DIFFUSION: {flattened.shape[-1]}")
+                print(f"  -> Offline FINAL DIMENSION TO DIFFUSION: {flattened.shape[-1]}")
                 
                 return transformer_output
             
@@ -315,7 +348,7 @@ def main(_):
             except Exception as e:
                 print("Error calling transformer:", str(e))
             
-            print("=== END ONLINE DEBUGGING ===")
+            print("=== END Offline DEBUGGING ===")
 
         with timer("train"):
             train_state, update_info = train_step(train_state, batch)
@@ -324,24 +357,14 @@ def main(_):
             wandb.log({"training": jax.device_get(update_info)}, step=i)
 
         if (i + 1) % config["eval_interval"] == 0:
-            if val_callback is None:
-                logging.info("Initializing validation dataset and callbacks...")
-                val_dataset = make_interleaved_dataset(
-                    dataset_kwargs_list=config["dataset_kwargs_list"],
-                    traj_transform_kwargs=config["traj_transform_kwargs"],
-                    frame_transform_kwargs=config["frame_transform_kwargs"], 
-                    train=False,
-                    batch_size=config["viz_kwargs"]["eval_batch_size"],
-                    shuffle_buffer_size=config["val_kwargs"]["val_shuffle_buffer_size"],
-                )
-                val_callback = ValidationCallback(loss_fn=loss_fn, process_batch_fn=process_batch, data_iterator=val_dataset.iterator(), num_batches=config["val_kwargs"]["num_val_batches"])
-                viz_callback = VisualizationCallback(text_processor=text_processor, data_iterator=val_dataset.iterator(), **config["viz_kwargs"])
-
             logging.info("Evaluating...")
-            wandb.log(val_callback(train_state, i + 1), step=i)
-            wandb.log(viz_callback(train_state, i + 1), step=i)
+            with timer("val"):
+                wandb.log(val_callback(train_state, i + 1), step=i)
+            with timer("visualize"):
+                wandb.log(viz_callback(train_state, i + 1), step=i)
 
         if (i + 1) % config["save_interval"] == 0 and save_dir:
+            logging.info("Saving checkpoint...")
             save_callback(train_state, i + 1)
 
 if __name__ == "__main__":
