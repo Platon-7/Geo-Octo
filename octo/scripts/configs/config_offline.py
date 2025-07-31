@@ -9,59 +9,62 @@ def get_config(config_string="full,multimodal"):
     assert task in ["image_conditioned", "language_conditioned", "multimodal"]
     assert mode in ["full", "head_only", "head_mlp_only"]
 
+    # Define the path to your single, unified statistics file.
+    UNIFIED_STATS_PATH = "/home/pkarageorgis/geo_octo/libero_datasets/unified_stats/unified_dataset_statistics.json"
+
     # Use ALL your VGGT datasets for training
     DATASET_KWARGS_LIST = [
         {
             "name": "libero_object_vggt",
             "data_dir": "/scratch-shared/tmp.cwkV8vOvfY/libero_vggt_datasets2",
+            "dataset_statistics": UNIFIED_STATS_PATH,  # Use the unified file
             "standardize_fn": ModuleSpec.create(
                 "octo.data.utils.data_utils:standardize_libero_vggt"
             ),
             "image_obs_keys": {"primary": "image_primary"},
             "proprio_obs_key": "proprio",
             "language_key": "language_instruction",
-            "action_proprio_normalization_type": "normal",  # Changed from "normal" to "normal"
+            "action_proprio_normalization_type": "normal",
             "filter_functions": [],
-            "force_recompute_dataset_statistics": False, 
         },
         {
             "name": "libero_spatial_vggt",
             "data_dir": "/scratch-shared/tmp.cwkV8vOvfY/libero_vggt_datasets2",
+            "dataset_statistics": UNIFIED_STATS_PATH,  # Use the unified file
             "standardize_fn": ModuleSpec.create(
                 "octo.data.utils.data_utils:standardize_libero_vggt"
             ),
             "image_obs_keys": {"primary": "image_primary"},
             "proprio_obs_key": "proprio",
             "language_key": "language_instruction",
-            "action_proprio_normalization_type": "normal",  # Changed from "normal" to "normal"
+            "action_proprio_normalization_type": "normal",
             "filter_functions": [],
-            "force_recompute_dataset_statistics": False, 
         },
         {
-            "name": "libero_goal_vggt",  # Added the missing dataset
+            "name": "libero_goal_vggt",
             "data_dir": "/scratch-shared/tmp.cwkV8vOvfY/libero_vggt_datasets2",
+            "dataset_statistics": UNIFIED_STATS_PATH,  # Use the unified file
             "standardize_fn": ModuleSpec.create(
                 "octo.data.utils.data_utils:standardize_libero_vggt"
             ),
             "image_obs_keys": {"primary": "image_primary"},
             "proprio_obs_key": "proprio",
             "language_key": "language_instruction",
-            "action_proprio_normalization_type": "normal",  # Changed from "normal" to "normal"
+            "action_proprio_normalization_type": "normal",
             "filter_functions": [],
-            "force_recompute_dataset_statistics": False, 
         },
         {
             "name": "liber_o10_vggt",
             "data_dir": "/scratch-shared/tmp.cwkV8vOvfY/libero_vggt_datasets2",
+            "dataset_statistics": UNIFIED_STATS_PATH,  # Use the unified file
             "standardize_fn": ModuleSpec.create(
                 "octo.data.utils.data_utils:standardize_libero_vggt"
             ),
             "image_obs_keys": {"primary": "image_primary"},
             "proprio_obs_key": "proprio",
             "language_key": "language_instruction",
-            "action_proprio_normalization_type": "normal",  # Changed from "normal" to "normal"
+            "action_proprio_normalization_type": "normal",
             "filter_functions": [],
-            "force_recompute_dataset_statistics": False, 
         },
     ]
 
@@ -82,8 +85,8 @@ def get_config(config_string="full,multimodal"):
     config = dict(
         pretrained_path=placeholder(str),
         pretrained_step=placeholder(int),
-        batch_size=4,
-        shuffle_buffer_size=200,
+        batch_size=128,
+        shuffle_buffer_size=1000,
         num_steps=50000,
         log_interval=100,
         eval_interval=5000,
@@ -106,17 +109,17 @@ def get_config(config_string="full,multimodal"):
                 decay_steps=max_steps,
                 end_value=0.0,
             ),
+            grad_accumulation_steps=4,
             weight_decay=0.01,
             clip_gradient=1.0,
             frozen_keys=frozen_keys,
-            grad_accumulation_steps=None,
         ),
         val_kwargs=dict(
             val_shuffle_buffer_size=1000,
             num_val_batches=16,
         ),
         viz_kwargs=dict(
-            eval_batch_size=16,
+            eval_batch_size=128,
             trajs_for_metrics=100,
             trajs_for_viz=8,
             samples_per_state=8,
@@ -136,11 +139,10 @@ def get_config(config_string="full,multimodal"):
         task_augment_strategy=task_augment_strategy,
         task_augment_kwargs=task_augment_kwargs,
     )
-    
-    # Add frame transform kwargs to fix the resize_size warning
+
     config["frame_transform_kwargs"] = dict(
     resize_size={
-        "primary": (224, 224),  # Match original Libero image size
+        "primary": (224, 224),
     },
     image_augment_kwargs=dict(
         primary=dict(
@@ -151,30 +153,15 @@ def get_config(config_string="full,multimodal"):
             random_hue=[0.05],
             augment_order=[
                 "random_resized_crop",
-                "random_brightness", 
+                "random_brightness",
                 "random_contrast",
                 "random_saturation",
                 "random_hue",
             ],
         ),
     ),
-    
+
 )
-    config['update_config'] = {
-        "model": {
-            "observation_tokenizers": {
-                "vggt_tokens": ModuleSpec.create(
-                    'octo.model.components.tokenizers:VGGTTokenizer',
-                    # Add memory optimization parameters
-                    use_compression=True,
-                    compression_ratio=0.25,  # More aggressive compression
-                    use_token_learner=True,
-                    num_output_tokens=64,    # Reduce from 128 to 64
-                    use_gradient_checkpointing=True
-                )
-            }
-        }
-    }
     config['config_delete_keys'] = {
         "model": {
             "task_tokenizers": {

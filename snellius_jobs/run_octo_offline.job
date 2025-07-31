@@ -1,8 +1,8 @@
 #!/bin/bash
 
-#SBATCH --partition=gpu_a100
+#SBATCH --partition=gpu_h100
 #SBATCH --gres=gpu:1              # Request 4 GPUs instead of 1
-#SBATCH --cpus-per-task=9        # Scale CPUs (4 GPUs × 7 CPUs)
+#SBATCH --cpus-per-task=7        # Scale CPUs (4 GPUs × 7 CPUs)
 #SBATCH --gpus=1                 # Request 4 GPUs
 #SBATCH --job-name=Octo_Finetune_Offline_MultiGPU
 #SBATCH --ntasks=1
@@ -20,9 +20,10 @@ export WANDB_PROJECT="Geo_Octo"
 export XLA_FLAGS="--xla_gpu_force_compilation_parallelism=1"
 export TF_FORCE_GPU_ALLOW_GROWTH=true
 export JAX_TRACEBACK_FILTERING=off
+export TOKENIZERS_PARALLELISM=false
 
 # Multi-GPU specific settings
-export CUDA_VISIBLE_DEVICES=0,1,2,3
+# export CUDA_VISIBLE_DEVICES=0,1,2,3
 
 source activate octo
 cd octo
