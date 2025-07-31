@@ -14,6 +14,7 @@ import tensorflow_datasets as tfds
 import numpy as np
 import tqdm
 import wandb
+import gc
 
 from octo.data.dataset import make_interleaved_dataset
 from octo.model.octo_model import OctoModel
@@ -159,6 +160,7 @@ def main(_):
 
         if (i + 1) % config["eval_interval"] == 0:
             logging.info("Evaluating...")
+            log_memory_usage(i, "BEFORE validation: ")
             
             # Lazily initialize the validation data iterator to save memory at startup
             if val_data_iter is None:
@@ -181,7 +183,7 @@ def main(_):
                     val_batch = next(val_data_iter)
                 except StopIteration:
                     # Iterator exhausted - recreate it (shouldn't happen with .repeat())
-                    logging.warning("Validation dataset iterator exhausted unexpectedly, recreating...")
+                    logging.warning("Validation dataset iterator exhausted, recreating...")
                     val_data_iter = val_dataset.iterator()
                     val_batch = next(val_data_iter)
                     
@@ -196,9 +198,11 @@ def main(_):
             # Aggregate and log the metrics
             metrics = jax.tree_map(lambda *xs: np.mean([x for x in xs]), *metrics)
             wandb.log({"validation": metrics}, step=i)
-
-        if (i + 1) % config["save_interval"] == 0 and save_dir:
-            save_callback(train_state, i + 1)
+            
+            log_memory_usage(i, "AFTER validation: ")
+    
+            # Force garbage collection but keep validation iterator alive for reuse
+            gc.collect()
 
 if __name__ == "__main__":
     app.run(main)
