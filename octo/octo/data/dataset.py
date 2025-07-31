@@ -565,12 +565,18 @@ def make_interleaved_dataset(
         threads_per_dataset,
         reads_per_dataset,
     ):
+        # Create a copy of dataset_kwargs to avoid modifying the original
+        dataset_kwargs_copy = dict(dataset_kwargs)
+        
+        # Only add dataset_statistics if it's not already present in the kwargs
+        if "dataset_statistics" not in dataset_kwargs_copy:
+            dataset_kwargs_copy["dataset_statistics"] = all_dataset_statistics[dataset_kwargs["name"]]
+        
         dataset, _ = make_dataset_from_rlds(
-            **dataset_kwargs,
+            **dataset_kwargs_copy,
             train=train,
             num_parallel_calls=threads,
             num_parallel_reads=reads,
-            dataset_statistics=all_dataset_statistics[dataset_kwargs["name"]],
         )
         dataset = apply_trajectory_transforms(
             dataset.repeat(),

@@ -85,9 +85,50 @@ def main():
     del action_stats['M2']
     del prop_stats['M2']
     
+    # Need to compute quantiles from the data
+    print("Computing quantiles...")
+    
+    # We need to iterate through the dataset again to collect all data for quantile computation
+    all_actions = []
+    all_proprios = []
+    
+    raw_dataset = tf.data.TFRecordDataset(TFRECORD_FILES)
+    for raw_record in tqdm(raw_dataset):
+        example = tf.io.parse_single_example(raw_record, FEATURE_DESCRIPTION)
+        
+        actions = tf.reshape(tf.sparse.to_dense(example[ACTION_KEY]), [-1, action_dim])
+        proprios = tf.reshape(tf.sparse.to_dense(example[PROP_KEY]), [-1, proprio_dim])
+        
+        all_actions.append(actions.numpy())
+        all_proprios.append(proprios.numpy())
+    
+    # Concatenate all data
+    all_actions = np.concatenate(all_actions, axis=0)
+    all_proprios = np.concatenate(all_proprios, axis=0)
+    
+    # Compute quantiles
+    action_p99 = np.quantile(all_actions, 0.99, 0)
+    action_p01 = np.quantile(all_actions, 0.01, 0)
+    proprio_p99 = np.quantile(all_proprios, 0.99, 0)
+    proprio_p01 = np.quantile(all_proprios, 0.01, 0)
+
     final_statistics = {
-        'action': {key: val.tolist() if isinstance(val, np.ndarray) else val for key, val in action_stats.items()},
-        'proprio': {key: val.tolist() if isinstance(val, np.ndarray) else val for key, val in prop_stats.items()},
+        'action': {
+            'mean': action_stats['mean'].tolist(),
+            'std': action_stats['std'].tolist(),
+            'max': action_stats['max'].tolist(),
+            'min': action_stats['min'].tolist(),
+            'p99': action_p99.tolist(),
+            'p01': action_p01.tolist(),
+        },
+        'proprio': {
+            'mean': prop_stats['mean'].tolist(),
+            'std': prop_stats['std'].tolist(),
+            'max': prop_stats['max'].tolist(),
+            'min': prop_stats['min'].tolist(),
+            'p99': proprio_p99.tolist(),
+            'p01': proprio_p01.tolist(),
+        },
         'num_transitions': num_transitions,  # ADDED: Save counts to the final JSON
         'num_trajectories': num_trajectories, # ADDED: Save counts to the final JSON
     }
