@@ -142,6 +142,7 @@ def main(_):
     val_callback, viz_callback = None, None
     timer = Timer()
     val_data_iter = None
+    val_dataset = None
     
     for i in tqdm.tqdm(range(int(config["num_steps"])), total=int(config["num_steps"]), dynamic_ncols=True):
         timer.tick("total")
@@ -169,14 +170,21 @@ def main(_):
                     train=False,
                     batch_size=config["viz_kwargs"]["eval_batch_size"],
                     shuffle_buffer_size=config["val_kwargs"]["val_shuffle_buffer_size"],
-                ).map(process_batch_tf, num_parallel_calls=tf.data.AUTOTUNE).prefetch(tf.data.AUTOTUNE)
+                ).map(process_batch_tf, num_parallel_calls=tf.data.AUTOTUNE).prefetch(tf.data.AUTOTUNE).repeat()
                 val_data_iter = val_dataset.iterator()
 
             # Manually run the evaluation loop for full control
             metrics = []
             for _ in range(config["val_kwargs"]["num_val_batches"]):
-                # Get a raw batch from the validation pipeline
-                val_batch = next(val_data_iter)
+                try:
+                    # Get a raw batch from the validation pipeline
+                    val_batch = next(val_data_iter)
+                except StopIteration:
+                    # Iterator exhausted - recreate it (shouldn't happen with .repeat())
+                    logging.warning("Validation dataset iterator exhausted unexpectedly, recreating...")
+                    val_data_iter = val_dataset.iterator()
+                    val_batch = next(val_data_iter)
+                    
                 # Explicitly prune it to be JAX-safe
                 model_val_batch = prune_batch_for_jax(val_batch)
                 # Split a new RNG key for this step
