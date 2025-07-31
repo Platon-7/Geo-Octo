@@ -15,6 +15,7 @@ import numpy as np
 import tqdm
 import wandb
 import gc
+import psutil
 
 from octo.data.dataset import make_interleaved_dataset
 from octo.model.octo_model import OctoModel
@@ -41,6 +42,44 @@ config_flags.DEFINE_config_file("config", default_config_file, "File path to the
 import os
 os.environ['XLA_PYTHON_CLIENT_PREALLOCATE'] = 'false'
 os.environ['XLA_PYTHON_CLIENT_MEM_FRACTION'] = '0.8'
+
+def log_memory_usage(step, prefix=""):
+    # Force garbage collection
+    gc.collect()
+    
+    # Get system memory info
+    memory = psutil.virtual_memory()
+    
+    # Try to get SLURM memory allocation
+    slurm_mem_mb = os.environ.get('SLURM_MEM_PER_NODE')
+    if slurm_mem_mb:
+        try:
+            allocated_gb = int(slurm_mem_mb) / 1024  # Convert MB to GB
+            used_gb = memory.used / (1024**3)
+            usage_percent = (used_gb / allocated_gb) * 100
+            free_gb = allocated_gb - used_gb
+            
+            print(f"{prefix}Step {step}:")
+            print(f"  Allocated RAM: {usage_percent:.1f}% ({used_gb:.1f}GB used, {free_gb:.1f}GB free of {allocated_gb:.0f}GB allocated)")
+        except (ValueError, TypeError):
+            # Fallback to system memory if SLURM parsing fails
+            print(f"{prefix}Step {step}:")
+            print(f"  System RAM: {memory.percent}% ({memory.used/1024**3:.1f}GB used, {memory.available/1024**3:.1f}GB free)")
+    else:
+        # Fallback to system memory if no SLURM environment
+        print(f"{prefix}Step {step}:")
+        print(f"  System RAM: {memory.percent}% ({memory.used/1024**3:.1f}GB used, {memory.available/1024**3:.1f}GB free)")
+    
+    print(f"  Python objects: {len(gc.get_objects())}")
+    
+    # TensorFlow GPU memory (with error handling)
+    try:
+        if tf.config.list_physical_devices('GPU'):
+            tf_memory = tf.config.experimental.get_memory_info('GPU:0')
+            print(f"  TF GPU memory: {tf_memory}")
+    except Exception as e:
+        # Silently skip GPU memory info if not available
+        pass
 
 def main(_):
     initialize_compilation_cache()
