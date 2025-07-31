@@ -25,9 +25,9 @@ if not TFRECORD_FILES:
 print(f"Found {len(TFRECORD_FILES)} TFRecord files to process.")
 
 
-# Keys for parsing the TFRecord files
+# Keys for parsing the TFRecord files - FIXED to use 'state' instead of 'joint_state'
 ACTION_KEY = 'steps/action'
-PROP_KEY = 'steps/observation/joint_state'
+PROP_KEY = 'steps/observation/state'  # Use 'state' not 'joint_state'
 
 FEATURE_DESCRIPTION = {
     ACTION_KEY: tf.io.VarLenFeature(tf.float32),
@@ -44,12 +44,13 @@ def main():
     raw_dataset = tf.data.TFRecordDataset(TFRECORD_FILES)
 
     action_dim = 7
-    proprio_dim = 7
+    raw_proprio_dim = 8  # Raw state is 8D
+    final_proprio_dim = 7  # Will be sliced to 7D to match standardization
     
     action_stats = {'count': 0, 'mean': np.zeros(action_dim), 'M2': np.zeros(action_dim), 'min': np.full(action_dim, np.inf), 'max': np.full(action_dim, -np.inf)}
-    prop_stats = {'count': 0, 'mean': np.zeros(proprio_dim), 'M2': np.zeros(proprio_dim), 'min': np.full(proprio_dim, np.inf), 'max': np.full(proprio_dim, -np.inf)}
+    prop_stats = {'count': 0, 'mean': np.zeros(final_proprio_dim), 'M2': np.zeros(final_proprio_dim), 'min': np.full(final_proprio_dim, np.inf), 'max': np.full(final_proprio_dim, -np.inf)}
 
-    # ADDED: Initialize counters for trajectories and transitions
+    # Initialize counters for trajectories and transitions
     num_trajectories = 0
     num_transitions = 0
 
@@ -67,9 +68,12 @@ def main():
         example = tf.io.parse_single_example(raw_record, FEATURE_DESCRIPTION)
         
         actions = tf.reshape(tf.sparse.to_dense(example[ACTION_KEY]), [-1, action_dim])
-        proprios = tf.reshape(tf.sparse.to_dense(example[PROP_KEY]), [-1, proprio_dim])
+        proprios = tf.reshape(tf.sparse.to_dense(example[PROP_KEY]), [-1, raw_proprio_dim])
+        
+        # Slice proprios from 8D to 7D to match standardization function
+        proprios = proprios[:, :7]
 
-        # ADDED: Update counters
+        # Update counters
         num_trajectories += 1
         num_transitions += actions.shape[0]
         
@@ -97,7 +101,10 @@ def main():
         example = tf.io.parse_single_example(raw_record, FEATURE_DESCRIPTION)
         
         actions = tf.reshape(tf.sparse.to_dense(example[ACTION_KEY]), [-1, action_dim])
-        proprios = tf.reshape(tf.sparse.to_dense(example[PROP_KEY]), [-1, proprio_dim])
+        proprios = tf.reshape(tf.sparse.to_dense(example[PROP_KEY]), [-1, raw_proprio_dim])
+        
+        # Slice proprios from 8D to 7D to match standardization function
+        proprios = proprios[:, :7]
         
         all_actions.append(actions.numpy())
         all_proprios.append(proprios.numpy())
@@ -129,8 +136,8 @@ def main():
             'p99': proprio_p99.tolist(),
             'p01': proprio_p01.tolist(),
         },
-        'num_transitions': num_transitions,  # ADDED: Save counts to the final JSON
-        'num_trajectories': num_trajectories, # ADDED: Save counts to the final JSON
+        'num_transitions': num_transitions,
+        'num_trajectories': num_trajectories,
     }
 
     with open(OUTPUT_STATS_FILE, 'w') as f:
