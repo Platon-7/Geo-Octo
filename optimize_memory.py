@@ -103,6 +103,58 @@ def monitor_memory_during_training(step: int, threshold_gb: float = 300.0):
         force_cleanup()
     return True
 
+def get_recommended_prefetch_size(available_memory_gb: float, batch_size: int, num_datasets: int) -> int:
+    """
+    Recommend prefetch size based on available memory and configuration.
+    
+    Args:
+        available_memory_gb: Available RAM in GB
+        batch_size: Training batch size
+        num_datasets: Number of datasets being used
+    
+    Returns:
+        Recommended prefetch size
+    """
+    # Rough estimation: each batch uses ~1-3GB depending on model/data
+    estimated_batch_memory_gb = batch_size * 0.2  # Conservative estimate
+    total_memory_for_prefetch = estimated_batch_memory_gb * num_datasets
+    
+    if available_memory_gb > 200:
+        # Plenty of memory - can use higher prefetch
+        recommended = min(8, max(2, int(available_memory_gb / (total_memory_for_prefetch * 10))))
+    elif available_memory_gb > 100:
+        # Moderate memory - balanced approach
+        recommended = min(4, max(2, int(available_memory_gb / (total_memory_for_prefetch * 20))))
+    else:
+        # Low memory - conservative
+        recommended = 2
+    
+    print(f"💡 Recommended prefetch size: {recommended}")
+    print(f"   (Based on {available_memory_gb:.0f}GB available, batch_size={batch_size}, {num_datasets} datasets)")
+    return recommended
+
+def adjust_prefetch_for_performance(current_prefetch: int, gpu_utilization: float) -> int:
+    """
+    Adjust prefetch based on GPU utilization.
+    
+    Args:
+        current_prefetch: Current prefetch setting
+        gpu_utilization: Average GPU utilization (0.0-1.0)
+    
+    Returns:
+        Suggested new prefetch size
+    """
+    if gpu_utilization < 0.7:  # GPU underutilized
+        suggested = min(current_prefetch + 1, 8)
+        print(f"🚀 GPU utilization low ({gpu_utilization:.1%}), consider increasing prefetch to {suggested}")
+        return suggested
+    elif gpu_utilization > 0.95:  # GPU well utilized
+        print(f"✅ GPU utilization good ({gpu_utilization:.1%}), prefetch={current_prefetch} is optimal")
+        return current_prefetch
+    else:
+        print(f"👍 GPU utilization acceptable ({gpu_utilization:.1%}), prefetch={current_prefetch} is fine")
+        return current_prefetch
+
 if __name__ == "__main__":
     print("Memory optimization utilities loaded")
     print(f"Current memory usage: {get_memory_usage_gb():.1f}GB")
