@@ -41,12 +41,79 @@ import os
 os.environ['XLA_PYTHON_CLIENT_PREALLOCATE'] = 'false'
 os.environ['XLA_PYTHON_CLIENT_MEM_FRACTION'] = '0.8'
 
+def check_batch_validity(batch, prefix=""):
+    for key, value in batch.items():
+        full_key = f"{prefix}{key}" if prefix else key
+        if isinstance(value, dict):
+            check_batch_validity(value, f"{full_key}/")
+        else:
+            try:
+                if hasattr(value, 'numpy'):
+                    value_np = value.numpy() if hasattr(value, 'numpy') else value
+                else:
+                    value_np = value
+                
+                has_nan = np.any(np.isnan(value_np))
+                has_inf = np.any(np.isinf(value_np))
+                min_val = np.min(value_np)
+                max_val = np.max(value_np)
+                
+                print(f"{full_key}: shape={value.shape}, dtype={value.dtype}, min={min_val:.6f}, max={max_val:.6f}, NaN={has_nan}, Inf={has_inf}")
+                
+                if has_nan or has_inf:
+                    print(f"❌ INVALID DATA in {full_key}!")
+                    return False
+            except Exception as e:
+                print(f"Error checking {full_key}: {e}")
+    return True
+
+import psutil
+import gc
+import tensorflow as tf
+
+def log_memory_usage(step, prefix=""):
+    # Force garbage collection
+    gc.collect()
+    
+    # Get system memory info
+    memory = psutil.virtual_memory()
+    
+    # Try to get SLURM memory allocation
+    slurm_mem_mb = os.environ.get('SLURM_MEM_PER_NODE')
+    if slurm_mem_mb:
+        try:
+            allocated_gb = int(slurm_mem_mb) / 1024  # Convert MB to GB
+            used_gb = memory.used / (1024**3)
+            usage_percent = (used_gb / allocated_gb) * 100
+            free_gb = allocated_gb - used_gb
+            
+            print(f"{prefix}Step {step}:")
+            print(f"  Allocated RAM: {usage_percent:.1f}% ({used_gb:.1f}GB used, {free_gb:.1f}GB free of {allocated_gb:.0f}GB allocated)")
+        except (ValueError, TypeError):
+            # Fallback to system memory if SLURM parsing fails
+            print(f"{prefix}Step {step}:")
+            print(f"  System RAM: {memory.percent}% ({memory.used/1024**3:.1f}GB used, {memory.available/1024**3:.1f}GB free)")
+    else:
+        # Fallback to system memory if no SLURM environment
+        print(f"{prefix}Step {step}:")
+        print(f"  System RAM: {memory.percent}% ({memory.used/1024**3:.1f}GB used, {memory.available/1024**3:.1f}GB free)")
+    
+    print(f"  Python objects: {len(gc.get_objects())}")
+    
+    # TensorFlow GPU memory (with error handling)
+    try:
+        if tf.config.list_physical_devices('GPU'):
+            tf_memory = tf.config.experimental.get_memory_info('GPU:0')
+            print(f"  TF GPU memory: {tf_memory}")
+    except Exception as e:
+        # Silently skip GPU memory info if not available
+        pass
+
 def main(_):
     initialize_compilation_cache()
     mesh = Mesh(jax.devices(), axis_names="batch")
     dp_sharding = NamedSharding(mesh, PartitionSpec("batch"))
     replicated_sharding = NamedSharding(mesh, PartitionSpec())
-    tf.config.set_visible_devices([], "GPU")
 
     logging.info(f"JAX devices: {jax.devices()}")
     name = format_name_with_config(FLAGS.name, FLAGS.config.to_dict())
@@ -150,14 +217,47 @@ def main(_):
         
         with timer("train"):
             model_batch = prune_batch_for_jax(batch)
+            if i < 3:  # Check first 3 batches
+                print(f"=== Checking batch {i} validity ===")
+                
+                # Check dataset composition - ADD THIS BACK
+                if 'dataset_name' in model_batch:
+                    dataset_names = model_batch['dataset_name']
+                    print(f"Batch {i} dataset composition:")
+                    unique_names, counts = np.unique(dataset_names, return_counts=True)
+                    for name, count in zip(unique_names, counts):
+                        print(f"  {name.decode() if hasattr(name, 'decode') else name}: {count} samples")
+                
+                if not check_batch_validity(model_batch):
+                    print(f"❌ Invalid batch detected at step {i}!")
+                else:
+                    print(f"✅ Batch {i} looks valid")
             train_state, update_info = train_step(train_state, model_batch)
         timer.tock("total")
 
         if (i + 1) % config["log_interval"] == 0:
             wandb.log({"training": jax.device_get(update_info), "timer": timer.get_average_times()}, step=i)
 
+        if i % 50 == 0:  # Every 50 steps
+            import psutil
+            import GPUtil
+            
+            # CPU/RAM usage
+            cpu_percent = psutil.cpu_percent()
+            memory = psutil.virtual_memory()
+            print(f"Step {i}: CPU {cpu_percent}%, RAM {memory.percent}% ({memory.available/1024**3:.1f}GB free)")
+            
+            # GPU usage
+            try:
+                gpus = GPUtil.getGPUs()
+                for gpu in gpus:
+                    print(f"  GPU {gpu.id}: {gpu.memoryUtil*100:.1f}% memory, {gpu.load*100:.1f}% util")
+            except:
+                pass
+    
         if (i + 1) % config["eval_interval"] == 0:
             logging.info("Evaluating...")
+            log_memory_usage(i, "BEFORE validation: ")
             
             # Lazily initialize the validation data iterator to save memory at startup
             if val_data_iter is None:
@@ -169,7 +269,7 @@ def main(_):
                     train=False,
                     batch_size=config["viz_kwargs"]["eval_batch_size"],
                     shuffle_buffer_size=config["val_kwargs"]["val_shuffle_buffer_size"],
-                ).map(process_batch_tf, num_parallel_calls=tf.data.AUTOTUNE).prefetch(tf.data.AUTOTUNE)
+                ).map(process_batch_tf, num_parallel_calls=tf.data.AUTOTUNE).prefetch(tf.data.AUTOTUNE).repeat()
                 val_data_iter = val_dataset.iterator()
 
             # Manually run the evaluation loop for full control
@@ -188,6 +288,9 @@ def main(_):
             # Aggregate and log the metrics
             metrics = jax.tree_map(lambda *xs: np.mean([x for x in xs]), *metrics)
             wandb.log({"validation": metrics}, step=i)
+            
+            log_memory_usage(i, "AFTER validation: ")
+            gc.collect()
 
         if (i + 1) % config["save_interval"] == 0 and save_dir:
             save_callback(train_state, i + 1)

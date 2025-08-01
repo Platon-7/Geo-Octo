@@ -25,9 +25,9 @@ if not TFRECORD_FILES:
 print(f"Found {len(TFRECORD_FILES)} TFRecord files to process.")
 
 
-# Keys for parsing the TFRecord files
+# Keys for parsing the TFRecord files - FIXED to use 'state' instead of 'joint_state'
 ACTION_KEY = 'steps/action'
-PROP_KEY = 'steps/observation/joint_state'
+PROP_KEY = 'steps/observation/state'  # Use 'state' not 'joint_state'
 
 FEATURE_DESCRIPTION = {
     ACTION_KEY: tf.io.VarLenFeature(tf.float32),
@@ -44,12 +44,13 @@ def main():
     raw_dataset = tf.data.TFRecordDataset(TFRECORD_FILES)
 
     action_dim = 7
-    proprio_dim = 7
+    raw_proprio_dim = 8  # Raw state is 8D
+    final_proprio_dim = 7  # Will be sliced to 7D to match standardization
     
     action_stats = {'count': 0, 'mean': np.zeros(action_dim), 'M2': np.zeros(action_dim), 'min': np.full(action_dim, np.inf), 'max': np.full(action_dim, -np.inf)}
-    prop_stats = {'count': 0, 'mean': np.zeros(proprio_dim), 'M2': np.zeros(proprio_dim), 'min': np.full(proprio_dim, np.inf), 'max': np.full(proprio_dim, -np.inf)}
+    prop_stats = {'count': 0, 'mean': np.zeros(final_proprio_dim), 'M2': np.zeros(final_proprio_dim), 'min': np.full(final_proprio_dim, np.inf), 'max': np.full(final_proprio_dim, -np.inf)}
 
-    # ADDED: Initialize counters for trajectories and transitions
+    # Initialize counters for trajectories and transitions
     num_trajectories = 0
     num_transitions = 0
 
@@ -67,9 +68,12 @@ def main():
         example = tf.io.parse_single_example(raw_record, FEATURE_DESCRIPTION)
         
         actions = tf.reshape(tf.sparse.to_dense(example[ACTION_KEY]), [-1, action_dim])
-        proprios = tf.reshape(tf.sparse.to_dense(example[PROP_KEY]), [-1, proprio_dim])
+        proprios = tf.reshape(tf.sparse.to_dense(example[PROP_KEY]), [-1, raw_proprio_dim])
+        
+        # Slice proprios from 8D to 7D to match standardization function
+        proprios = proprios[:, :7]
 
-        # ADDED: Update counters
+        # Update counters
         num_trajectories += 1
         num_transitions += actions.shape[0]
         
@@ -85,11 +89,55 @@ def main():
     del action_stats['M2']
     del prop_stats['M2']
     
+    # Need to compute quantiles from the data
+    print("Computing quantiles...")
+    
+    # We need to iterate through the dataset again to collect all data for quantile computation
+    all_actions = []
+    all_proprios = []
+    
+    raw_dataset = tf.data.TFRecordDataset(TFRECORD_FILES)
+    for raw_record in tqdm(raw_dataset):
+        example = tf.io.parse_single_example(raw_record, FEATURE_DESCRIPTION)
+        
+        actions = tf.reshape(tf.sparse.to_dense(example[ACTION_KEY]), [-1, action_dim])
+        proprios = tf.reshape(tf.sparse.to_dense(example[PROP_KEY]), [-1, raw_proprio_dim])
+        
+        # Slice proprios from 8D to 7D to match standardization function
+        proprios = proprios[:, :7]
+        
+        all_actions.append(actions.numpy())
+        all_proprios.append(proprios.numpy())
+    
+    # Concatenate all data
+    all_actions = np.concatenate(all_actions, axis=0)
+    all_proprios = np.concatenate(all_proprios, axis=0)
+    
+    # Compute quantiles
+    action_p99 = np.quantile(all_actions, 0.99, 0)
+    action_p01 = np.quantile(all_actions, 0.01, 0)
+    proprio_p99 = np.quantile(all_proprios, 0.99, 0)
+    proprio_p01 = np.quantile(all_proprios, 0.01, 0)
+
     final_statistics = {
-        'action': {key: val.tolist() if isinstance(val, np.ndarray) else val for key, val in action_stats.items()},
-        'proprio': {key: val.tolist() if isinstance(val, np.ndarray) else val for key, val in prop_stats.items()},
-        'num_transitions': num_transitions,  # ADDED: Save counts to the final JSON
-        'num_trajectories': num_trajectories, # ADDED: Save counts to the final JSON
+        'action': {
+            'mean': action_stats['mean'].tolist(),
+            'std': action_stats['std'].tolist(),
+            'max': action_stats['max'].tolist(),
+            'min': action_stats['min'].tolist(),
+            'p99': action_p99.tolist(),
+            'p01': action_p01.tolist(),
+        },
+        'proprio': {
+            'mean': prop_stats['mean'].tolist(),
+            'std': prop_stats['std'].tolist(),
+            'max': prop_stats['max'].tolist(),
+            'min': prop_stats['min'].tolist(),
+            'p99': proprio_p99.tolist(),
+            'p01': proprio_p01.tolist(),
+        },
+        'num_transitions': num_transitions,
+        'num_trajectories': num_trajectories,
     }
 
     with open(OUTPUT_STATS_FILE, 'w') as f:

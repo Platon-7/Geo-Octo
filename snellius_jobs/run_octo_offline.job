@@ -1,13 +1,13 @@
 #!/bin/bash
 
 #SBATCH --partition=gpu_h100
-#SBATCH --gres=gpu:1              # Request 4 GPUs instead of 1
-#SBATCH --cpus-per-task=7        # Scale CPUs (4 GPUs × 7 CPUs)
-#SBATCH --gpus=1                 # Request 4 GPUs
+#SBATCH --gres=gpu:4              # Request 4 GPUs instead of 1
+#SBATCH --cpus-per-task=30        # Scale CPUs (4 GPUs × 7 CPUs)
+#SBATCH --gpus=4                 # Request 4 GPUs
 #SBATCH --job-name=Octo_Finetune_Offline_MultiGPU
 #SBATCH --ntasks=1
 #SBATCH --time=05:30:00
-#SBATCH --mem=48000M             # Double the memory (or adjust as needed)
+#SBATCH --mem=550000M             # Double the memory (or adjust as needed)
 #SBATCH --output=outfiles/finetune_offline_octo_multigpu_%A.out
 
 module purge
@@ -30,5 +30,5 @@ cd octo
 
 srun python scripts/finetune.py \
     --config=scripts/configs/config_offline.py \
-    --config.pretrained_path=hf://rail-berkeley/octo-small-1.5 \
+    --config.pretrained_path=hf://rail-berkeley/octo-base-1.5 \
     --config.save_dir=./my_octo_vggt_model_offline

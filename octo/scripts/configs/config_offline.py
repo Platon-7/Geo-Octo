@@ -79,18 +79,18 @@ def get_config(config_string="full,multimodal"):
             "heads_*.map_head.MultiHeadDotProductAttention_0.*",
         )
 
-    max_steps = FieldReference(50000)
+    max_steps = FieldReference(150000)
     window_size = FieldReference(default=2)
 
     config = dict(
         pretrained_path=placeholder(str),
         pretrained_step=placeholder(int),
-        batch_size=128,
-        shuffle_buffer_size=1000,
-        num_steps=50000,
-        log_interval=100,
-        eval_interval=5000,
-        save_interval=5000,
+        batch_size=8,
+        shuffle_buffer_size=100,
+        num_steps=200, # was 150000
+        log_interval=10, # was 100
+        eval_interval=50, # was 5000
+        save_interval=50, # was 5000
         save_dir=placeholder(str),
         seed=42,
         wandb=dict(
@@ -104,25 +104,25 @@ def get_config(config_string="full,multimodal"):
             learning_rate=dict(
                 name="cosine",
                 init_value=0.0,
-                peak_value=1e-4,
+                peak_value=5e-4,
                 warmup_steps=2000,
                 decay_steps=max_steps,
                 end_value=0.0,
             ),
-            grad_accumulation_steps=4,
+            grad_accumulation_steps=16,
             weight_decay=0.01,
             clip_gradient=1.0,
             frozen_keys=frozen_keys,
         ),
         val_kwargs=dict(
-            val_shuffle_buffer_size=1000,
-            num_val_batches=16,
+            val_shuffle_buffer_size=50,
+            num_val_batches=4,
         ),
         viz_kwargs=dict(
-            eval_batch_size=128,
-            trajs_for_metrics=100,
-            trajs_for_viz=8,
-            samples_per_state=8,
+            eval_batch_size=8,
+            trajs_for_metrics=20,
+            trajs_for_viz=2,
+            samples_per_state=2,
         ),
     )
 

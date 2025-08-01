@@ -537,13 +537,34 @@ def make_interleaved_dataset(
     # go through datasets once to get sizes
     dataset_sizes = []
     all_dataset_statistics = {}
-    for dataset_kwargs in dataset_kwargs_list:
-        _, dataset_statistics = make_dataset_from_rlds(**dataset_kwargs, train=train)
-        dataset_sizes.append(dataset_statistics["num_transitions"])
-        assert (
-            dataset_kwargs["name"] not in all_dataset_statistics
-        ), f"Duplicate name {dataset_kwargs['name']}"
-        all_dataset_statistics[dataset_kwargs["name"]] = dataset_statistics
+    
+    # Check if all datasets have pre-computed statistics
+    all_have_stats = all("dataset_statistics" in kwargs for kwargs in dataset_kwargs_list)
+    
+    if all_have_stats:
+        # Skip the expensive first pass - load statistics directly from files
+        for dataset_kwargs in dataset_kwargs_list:
+            stats_path = dataset_kwargs["dataset_statistics"]
+            if isinstance(stats_path, str):
+                with tf.io.gfile.GFile(stats_path, "r") as f:
+                    dataset_statistics = json.load(f)
+            else:
+                dataset_statistics = stats_path
+            
+            dataset_sizes.append(dataset_statistics["num_transitions"])
+            assert (
+                dataset_kwargs["name"] not in all_dataset_statistics
+            ), f"Duplicate name {dataset_kwargs['name']}"
+            all_dataset_statistics[dataset_kwargs["name"]] = dataset_statistics
+    else:
+        # Original behavior - compute statistics on the fly
+        for dataset_kwargs in dataset_kwargs_list:
+            _, dataset_statistics = make_dataset_from_rlds(**dataset_kwargs, train=train)
+            dataset_sizes.append(dataset_statistics["num_transitions"])
+            assert (
+                dataset_kwargs["name"] not in all_dataset_statistics
+            ), f"Duplicate name {dataset_kwargs['name']}"
+            all_dataset_statistics[dataset_kwargs["name"]] = dataset_statistics
 
     # balance and normalize weights
     if balance_weights:
@@ -565,12 +586,18 @@ def make_interleaved_dataset(
         threads_per_dataset,
         reads_per_dataset,
     ):
+        # Create a copy of dataset_kwargs to avoid modifying the original
+        dataset_kwargs_copy = dict(dataset_kwargs)
+        
+        # Only add dataset_statistics if it's not already present in the kwargs
+        if "dataset_statistics" not in dataset_kwargs_copy:
+            dataset_kwargs_copy["dataset_statistics"] = all_dataset_statistics[dataset_kwargs["name"]]
+        
         dataset, _ = make_dataset_from_rlds(
-            **dataset_kwargs,
+            **dataset_kwargs_copy,
             train=train,
             num_parallel_calls=threads,
             num_parallel_reads=reads,
-            dataset_statistics=all_dataset_statistics[dataset_kwargs["name"]],
         )
         dataset = apply_trajectory_transforms(
             dataset.repeat(),
@@ -584,6 +611,27 @@ def make_interleaved_dataset(
     dataset: dl.DLataset = dl.DLataset.sample_from_datasets(
         datasets, sample_weights
     ).shuffle(shuffle_buffer_size)
+
+    # ADD DEBUG CODE HERE - RIGHT AFTER THE INTERLEAVING:
+    print(f"Created interleaved dataset from {len(datasets)} datasets")
+    print(f"Sample weights: {sample_weights}")
+
+    # Test a few samples from the interleaved dataset
+    print("Testing interleaved dataset samples...")
+    test_iter = dataset.iterator()
+    for i in range(3):
+        try:
+            sample = next(test_iter)
+            print(f"Sample {i} keys: {list(sample.keys())}")
+            if 'observation' in sample:
+                print(f"  Observation keys: {list(sample['observation'].keys())}")
+            # Check shapes
+            for key, value in sample.items():
+                if hasattr(value, 'shape'):
+                    print(f"  {key} shape: {value.shape}")
+        except Exception as e:
+            print(f"❌ Error in interleaved sample {i}: {e}")
+            break
 
     # apply frame transforms
     dataset = apply_frame_transforms(dataset, **frame_transform_kwargs, train=train)
