@@ -4,10 +4,9 @@ Test script to verify memory optimizations for Octo training.
 Run this to check if the memory usage has been reduced.
 """
 
-import sys
 import os
-sys.path.append('/workspace')
 
+# Import from same directory
 from optimize_memory import (
     get_memory_usage_gb, 
     set_memory_env_variables, 

@@ -4,10 +4,9 @@ Performance tuning script for Octo memory optimizations.
 This helps you find the optimal prefetch and dataset settings.
 """
 
-import sys
 import psutil
-sys.path.append('/workspace')
 
+# Import from same directory
 from optimize_memory import (
     get_memory_usage_gb,
     get_recommended_prefetch_size,

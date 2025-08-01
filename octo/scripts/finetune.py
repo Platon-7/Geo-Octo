@@ -3,10 +3,8 @@ from functools import partial
 import os
 import psutil
 import gc
-import sys
 
-# Add path for memory optimization utilities
-sys.path.append('/workspace')
+# Import memory optimization utilities from same directory
 from optimize_memory import (
     optimize_tensorflow_memory, 
     set_memory_env_variables, 
