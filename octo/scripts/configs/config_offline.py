@@ -86,7 +86,7 @@ def get_config(config_string="full,multimodal"):
         pretrained_path=placeholder(str),
         pretrained_step=placeholder(int),
         batch_size=8,
-        shuffle_buffer_size=100,
+        shuffle_buffer_size=10,  # Reduced from 100 to 10
         num_steps=200, # was 150000
         log_interval=10, # was 100
         eval_interval=50, # was 5000
@@ -115,7 +115,7 @@ def get_config(config_string="full,multimodal"):
             frozen_keys=frozen_keys,
         ),
         val_kwargs=dict(
-            val_shuffle_buffer_size=50,
+            val_shuffle_buffer_size=5,  # Reduced from 50 to 5
             num_val_batches=4,
         ),
         viz_kwargs=dict(
