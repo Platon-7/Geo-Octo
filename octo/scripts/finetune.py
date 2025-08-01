@@ -43,6 +43,50 @@ import os
 os.environ['XLA_PYTHON_CLIENT_PREALLOCATE'] = 'false'
 os.environ['XLA_PYTHON_CLIENT_MEM_FRACTION'] = '0.8'
 
+def log_detailed_memory(step, label, prefix=""):
+    """Enhanced memory logging with more details"""
+    import psutil
+    import gc
+    
+    # Force garbage collection
+    gc.collect()
+    
+    # Get process info
+    process = psutil.Process()
+    memory_info = process.memory_info()
+    memory_percent = process.memory_percent()
+    
+    # System memory
+    system_memory = psutil.virtual_memory()
+    
+    # Try to get SLURM allocation
+    slurm_mem_mb = os.environ.get('SLURM_MEM_PER_NODE')
+    if slurm_mem_mb:
+        try:
+            allocated_gb = int(slurm_mem_mb) / 1024
+            usage_percent = (memory_info.rss / (1024**3) / allocated_gb) * 100
+            free_gb = allocated_gb - (memory_info.rss / (1024**3))
+            
+            print(f"{prefix}🔍 MEMORY ANALYSIS - {label} (Step {step}):")
+            print(f"  Process RSS: {memory_info.rss / (1024**3):.1f}GB ({usage_percent:.1f}% of {allocated_gb:.0f}GB allocated)")
+            print(f"  Process VMS: {memory_info.vms / (1024**3):.1f}GB")
+            print(f"  System RAM: {system_memory.percent:.1f}% ({system_memory.available / (1024**3):.1f}GB free)")
+            print(f"  Python objects: {len(gc.get_objects())}")
+            
+            # Try to get TensorFlow memory info safely
+            try:
+                import tensorflow as tf
+                if tf.config.list_physical_devices('GPU'):
+                    tf_memory = tf.config.experimental.get_memory_info('GPU:0')
+                    print(f"  TF GPU memory: {tf_memory}")
+            except:
+                pass
+                
+        except (ValueError, TypeError):
+            print(f"{prefix}🔍 MEMORY ANALYSIS - {label} (Step {step}):")
+            print(f"  Process RSS: {memory_info.rss / (1024**3):.1f}GB")
+            print(f"  System RAM: {system_memory.percent:.1f}% ({system_memory.available / (1024**3):.1f}GB free)")
+
 def log_memory_usage(step, prefix=""):
     # Force garbage collection
     gc.collect()
@@ -82,6 +126,9 @@ def log_memory_usage(step, prefix=""):
         pass
 
 def main(_):
+    # MEMORY CHECKPOINT 0: Script startup baseline
+    log_detailed_memory(-1, "Script startup baseline", "")
+    
     initialize_compilation_cache()
     mesh = Mesh(jax.devices(), axis_names="batch")
     dp_sharding = NamedSharding(mesh, PartitionSpec("batch"))
@@ -105,6 +152,9 @@ def main(_):
     config = FLAGS.config
     text_processor = ModuleSpec.instantiate(model_config_dict["text_processor"])() if model_config_dict.get("text_processor") else None
 
+    # MEMORY CHECKPOINT 1: After model loading
+    log_detailed_memory(-1, "After model loading", "")
+
     def encode_texts(strings_tensor: tf.Tensor) -> np.ndarray:
         strings_np = strings_tensor.numpy()
         decoded_strings = [s.decode('utf-8') for s in strings_np]
@@ -126,19 +176,32 @@ def main(_):
         return {"observation": batch["observation"], "task": batch["task"],
                 "action": batch["action"], "action_pad_mask": batch["action_pad_mask"]}
 
+    # MEMORY CHECKPOINT 2: Before training dataset creation
+    log_detailed_memory(-1, "Before training dataset creation", "")
+    
     logging.info("Creating training dataset...")
     train_dataset_with_stats = make_interleaved_dataset(
         dataset_kwargs_list=config.dataset_kwargs_list, traj_transform_kwargs=config.traj_transform_kwargs,
         frame_transform_kwargs=config.frame_transform_kwargs, train=True, batch_size=config.batch_size,
         shuffle_buffer_size=config.shuffle_buffer_size,
     )
+    
+    # MEMORY CHECKPOINT 3: After training dataset creation
+    log_detailed_memory(-1, "After training dataset creation", "")
+    
     dataset_statistics = train_dataset_with_stats.dataset_statistics
     train_dataset_processed = train_dataset_with_stats.map(process_batch_tf, num_parallel_calls=tf.data.AUTOTUNE).prefetch(tf.data.AUTOTUNE)
     train_data_iter = train_dataset_processed.iterator()
 
+    # MEMORY CHECKPOINT 4: After dataset processing and iterator creation
+    log_detailed_memory(-1, "After dataset processing and iterator", "")
+
     logging.info("Loading first batch for model initialization...")
     example_batch = prune_batch_for_jax(next(train_data_iter))
     logging.info("Successfully loaded example batch.")
+
+    # MEMORY CHECKPOINT 5: After loading first batch
+    log_detailed_memory(-1, "After loading first batch", "")
 
     rng = jax.random.PRNGKey(config.seed)
     rng, init_rng = jax.random.split(rng)
@@ -146,6 +209,9 @@ def main(_):
     merged_params = merge_params(model.params, pretrained_model.params)
     model = model.replace(params=merged_params)
     del pretrained_model
+
+    # MEMORY CHECKPOINT 6: After model initialization and parameter merging
+    log_detailed_memory(-1, "After model initialization", "")
 
     tx, lr_callable, _ = create_optimizer(model.params, **config.optimizer.to_dict())
     train_state = TrainState.create(model=model, tx=tx, rng=rng)
