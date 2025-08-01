@@ -1,6 +1,8 @@
 import datetime
 from functools import partial
 import os
+import psutil
+import gc
 
 from absl import app, flags, logging
 from ml_collections import config_flags, ConfigDict
@@ -36,40 +38,9 @@ flags.DEFINE_bool("debug", False, "Debug config (no wandb logging)")
 default_config_file = os.path.join(os.path.dirname(__file__), "configs/debug_rollout_config.py")
 config_flags.DEFINE_config_file("config", default_config_file, "File path to the training hyperparameter configuration.", lock_config=False)
 
-
-import os
 os.environ['XLA_PYTHON_CLIENT_PREALLOCATE'] = 'false'
 os.environ['XLA_PYTHON_CLIENT_MEM_FRACTION'] = '0.8'
 
-def check_batch_validity(batch, prefix=""):
-    for key, value in batch.items():
-        full_key = f"{prefix}{key}" if prefix else key
-        if isinstance(value, dict):
-            check_batch_validity(value, f"{full_key}/")
-        else:
-            try:
-                if hasattr(value, 'numpy'):
-                    value_np = value.numpy() if hasattr(value, 'numpy') else value
-                else:
-                    value_np = value
-                
-                has_nan = np.any(np.isnan(value_np))
-                has_inf = np.any(np.isinf(value_np))
-                min_val = np.min(value_np)
-                max_val = np.max(value_np)
-                
-                print(f"{full_key}: shape={value.shape}, dtype={value.dtype}, min={min_val:.6f}, max={max_val:.6f}, NaN={has_nan}, Inf={has_inf}")
-                
-                if has_nan or has_inf:
-                    print(f"❌ INVALID DATA in {full_key}!")
-                    return False
-            except Exception as e:
-                print(f"Error checking {full_key}: {e}")
-    return True
-
-import psutil
-import gc
-import tensorflow as tf
 
 def log_memory_usage(step, prefix=""):
     # Force garbage collection
@@ -162,6 +133,7 @@ def main(_):
     dataset_statistics = train_dataset_with_stats.dataset_statistics
     train_dataset_processed = train_dataset_with_stats.map(process_batch_tf, num_parallel_calls=tf.data.AUTOTUNE).prefetch(tf.data.AUTOTUNE)
     train_data_iter = train_dataset_processed.iterator()
+    
 
     logging.info("Loading first batch for model initialization...")
     example_batch = prune_batch_for_jax(next(train_data_iter))
@@ -217,28 +189,31 @@ def main(_):
         
         with timer("train"):
             model_batch = prune_batch_for_jax(batch)
-            if i < 3:  # Check first 3 batches
-                print(f"=== Checking batch {i} validity ===")
-                
-                # Check dataset composition - ADD THIS BACK
-                if 'dataset_name' in model_batch:
-                    dataset_names = model_batch['dataset_name']
-                    print(f"Batch {i} dataset composition:")
-                    unique_names, counts = np.unique(dataset_names, return_counts=True)
-                    for name, count in zip(unique_names, counts):
-                        print(f"  {name.decode() if hasattr(name, 'decode') else name}: {count} samples")
-                
-                if not check_batch_validity(model_batch):
-                    print(f"❌ Invalid batch detected at step {i}!")
-                else:
-                    print(f"✅ Batch {i} looks valid")
             train_state, update_info = train_step(train_state, model_batch)
         timer.tock("total")
 
         if (i + 1) % config["log_interval"] == 0:
-            wandb.log({"training": jax.device_get(update_info), "timer": timer.get_average_times()}, step=i)
+            avg_times = timer.get_average_times()
 
-        if i % 50 == 0:  # Every 50 steps
+            # Step 2: Use that same variable for the wandb log.
+            wandb.log({"training": jax.device_get(update_info), "timer": avg_times}, step=i)
+
+            # Step 3: Use the SAME variable for the console log.
+            total_time = avg_times.get('total', 1e-6) # Use 1e-6 to avoid division by zero
+            dataset_time = avg_times.get('dataset', 0)
+            train_time = avg_times.get('train', 0)
+
+            dataset_percent = (dataset_time / total_time) * 100
+            train_percent = (train_time / total_time) * 100
+
+            logging.info(
+                f"\n| Step {i+1} | "
+                f"Avg Step Time: {total_time:.4f}s | "
+                f"Data Loading: {dataset_time:.4f}s ({dataset_percent:.1f}%) | "
+                f"Model Training: {train_time:.4f}s ({train_percent:.1f}%) |\n"
+            )
+
+        if i % 50 == 0:  # Every 1000 steps
             import psutil
             import GPUtil
             
@@ -257,7 +232,7 @@ def main(_):
     
         if (i + 1) % config["eval_interval"] == 0:
             logging.info("Evaluating...")
-            log_memory_usage(i, "BEFORE validation: ")
+            # log_memory_usage(i, "BEFORE validation: ")
             
             # Lazily initialize the validation data iterator to save memory at startup
             if val_data_iter is None:
@@ -289,7 +264,7 @@ def main(_):
             metrics = jax.tree_map(lambda *xs: np.mean([x for x in xs]), *metrics)
             wandb.log({"validation": metrics}, step=i)
             
-            log_memory_usage(i, "AFTER validation: ")
+            # log_memory_usage(i, "AFTER validation: ")
             gc.collect()
 
         if (i + 1) % config["save_interval"] == 0 and save_dir:

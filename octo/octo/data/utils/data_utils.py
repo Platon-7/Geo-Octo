@@ -447,22 +447,22 @@ def allocate_threads(n: Optional[int], weights: np.ndarray):
     return allocation
 
 def standardize_libero_vggt(traj: dict) -> dict:
-    print("DEBUG: Raw observation keys before standardization:", list(traj['observation'].keys()))
+    #print("DEBUG: Raw observation keys before standardization:", list(traj['observation'].keys()))
     traj['observation']['image_primary'] = traj['observation'].pop('image')
     traj['observation']['proprio'] = traj['observation'].pop('state')
     
     # CRITICAL FIX: Slice proprio from 8D to 7D to match pretrained model
     if traj['observation']['proprio'].shape[-1] == 8:
-        print("DEBUG: Slicing proprio from 8D to 7D")
+        #print("DEBUG: Slicing proprio from 8D to 7D")
         traj['observation']['proprio'] = traj['observation']['proprio'][..., :7]
     
     # REMOVE joint_state if it exists to avoid conflicts
     if 'joint_state' in traj['observation']:
-        print("DEBUG: Removing joint_state to avoid conflicts")
+        #print("DEBUG: Removing joint_state to avoid conflicts")
         traj['observation'].pop('joint_state')
     
-    print("DEBUG: Observation keys after standardization:", list(traj['observation'].keys()))
-    print("DEBUG: Proprio shape after slicing:", traj['observation']['proprio'].shape)
+    #print("DEBUG: Observation keys after standardization:", list(traj['observation'].keys()))
+    #print("DEBUG: Proprio shape after slicing:", traj['observation']['proprio'].shape)
     
     # Add task_description if missing (fix for TFDS compatibility)
     if 'episode_metadata' not in traj:
