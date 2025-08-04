@@ -461,6 +461,24 @@ def standardize_libero_vggt(traj: dict) -> dict:
         #print("DEBUG: Removing joint_state to avoid conflicts")
         traj['observation'].pop('joint_state')
     
+    # NORMALIZE COMPRESSED VGGT TOKENS for training stability
+    if 'vggt_tokens' in traj['observation']:
+        import numpy as np
+        vggt_tokens = traj['observation']['vggt_tokens']
+        
+        # Layer normalization across the last dimension (per-token normalization)
+        # Shape: (sequence_length, height, width) -> normalize across width dimension
+        eps = 1e-6
+        mean = np.mean(vggt_tokens, axis=-1, keepdims=True)
+        variance = np.var(vggt_tokens, axis=-1, keepdims=True)
+        normalized_tokens = (vggt_tokens - mean) / np.sqrt(variance + eps)
+        
+        # Optional: Scale and shift (learned parameters would be better, but this helps)
+        # Compress tokens often have different ranges than original
+        traj['observation']['vggt_tokens'] = normalized_tokens.astype(np.float32)
+        
+        #print(f"DEBUG: VGGT tokens normalized - shape: {normalized_tokens.shape}, mean: {np.mean(normalized_tokens):.3f}, std: {np.std(normalized_tokens):.3f}")
+    
     #print("DEBUG: Observation keys after standardization:", list(traj['observation'].keys()))
     #print("DEBUG: Proprio shape after slicing:", traj['observation']['proprio'].shape)
     

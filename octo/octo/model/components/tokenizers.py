@@ -343,6 +343,10 @@ class VGGTTokenizer(nn.Module):
         # Convert to float32 for stable training (avoid float16 precision issues)
         tokens = jnp.asarray(vggt_tokens, dtype=jnp.float32)
         
+        # ADD NORMALIZATION for compressed VGGT tokens stability
+        # Layer normalization across the feature dimension (last axis)
+        tokens = nn.LayerNorm()(tokens)
+        
         # Optional compression: reduce feature dimension
         if self.use_compression:
             compressed_dim = int(tokens.shape[-1] * self.compression_ratio)
