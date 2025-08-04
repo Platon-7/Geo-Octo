@@ -266,13 +266,19 @@ def main(_):
             
             # Switch to stage 2 optimizer
             if tx_stage2 is not None:
-                # Update the train state with new optimizer
-                train_state = train_state.replace(tx=tx_stage2)
+                # CRITICAL: Create a completely new TrainState with the stage 2 optimizer
+                # This reinitializes the optimizer state to match the new optimizer
+                train_state = TrainState.create(
+                    model=train_state.model,  # Keep the trained model
+                    tx=tx_stage2,            # New optimizer
+                    rng=train_state.rng      # Keep the RNG state
+                )
+                
                 # Update the learning rate callable
                 lr_callable = lr_callable_stage2
                 current_stage = 2
                 
-                logging.info(f"✅ Successfully switched to Stage 2 optimizer")
+                logging.info(f"✅ Successfully switched to Stage 2 optimizer with reinitialized state")
                 
                 # Log to wandb
                 wandb.log({"stage_transition": 2, "unfrozen_training_start": True}, step=i)
