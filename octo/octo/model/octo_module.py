@@ -85,6 +85,8 @@ class OctoTransformer(nn.Module):
     max_horizon: int
     repeat_task_tokens: bool
     use_correct_attention: bool = False
+    # New parameter to enable/disable input normalization
+    use_input_normalization: bool = True
 
     @nn.compact
     def __call__(
@@ -170,6 +172,10 @@ class OctoTransformer(nn.Module):
             )(tokenizer_output.tokens)
             # task_tokens shape is (batch, n_tokens, token_embedding_size)
 
+            # Apply input normalization if enabled
+            if self.use_input_normalization:
+                task_tokens = nn.LayerNorm(name=f"{group_name}_input_norm")(task_tokens)
+
             # Add positional embedding
             task_tokens += self._create_positional_embedding(group_name, task_tokens)
 
@@ -199,6 +205,10 @@ class OctoTransformer(nn.Module):
             )(tokenizer_output.tokens)
             # obs_tokens shape is (batch, horizon, n_tokens, token_embedding_size)
 
+            # Apply input normalization if enabled
+            if self.use_input_normalization:
+                obs_tokens = nn.LayerNorm(name=f"{group_name}_input_norm")(obs_tokens)
+
             # Add positional embedding
             obs_tokens += self._create_positional_embedding(group_name, obs_tokens)
 
@@ -225,6 +235,11 @@ class OctoTransformer(nn.Module):
                 task_tokens = tasks.tokens[:, jnp.newaxis, :, :]
                 ws = all_timestep_groups[0].tokens.shape[1]
                 task_tokens = jnp.tile(task_tokens, [1, ws, 1, 1])
+                
+                # Apply input normalization to repeated task tokens if enabled
+                if self.use_input_normalization:
+                    task_tokens = nn.LayerNorm(name=f"repeated_{tasks.name}_input_norm")(task_tokens)
+                
                 task_pad_mask = tasks.mask[:, jnp.newaxis, :]
                 task_pad_mask = jnp.tile(task_pad_mask, [1, ws, 1])
                 group_name = f"obs_{tasks.name}"
@@ -379,6 +394,7 @@ class OctoModule(nn.Module):
         max_horizon: int,
         repeat_task_tokens: bool = False,
         use_correct_attention: bool = False,
+        use_input_normalization: bool = True,
     ) -> "OctoModule":
         """
         Canonical way to create an OctoModule from configuration.
@@ -392,6 +408,7 @@ class OctoModule(nn.Module):
             max_horizon (int): Sets the size of positional embeddings, and provides an upper limit on the
                 maximum horizon of the model
             repeat_task_tokens (bool): If true, repeats the task tokens at each observation timestep.
+            use_input_normalization (bool): If true, applies LayerNorm to tokenized inputs before the transformer.
             transformer_kwargs: additional kwargs to forward to the transformer, which include:
                 num_layers (int): number of layers
                 mlp_dim (int): hidden dimension of the MLPs
@@ -419,6 +436,7 @@ class OctoModule(nn.Module):
             repeat_task_tokens=repeat_task_tokens,
             transformer_kwargs=transformer_kwargs,
             use_correct_attention=use_correct_attention,
+            use_input_normalization=use_input_normalization,
         )
 
         return cls(
