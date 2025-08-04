@@ -17,6 +17,58 @@ from octo.utils.spec import ModuleSpec
 from octo.utils.typing import Data, Sequence
 
 
+class TokenNormalizationAdapter(nn.Module):
+    """
+    A gated adapter that safely adds normalization to pretrained models.
+    
+    This module implements a residual connection that starts "invisible" during 
+    initialization and learns to become useful during training:
+    
+    output = original_input + gate_scale * adapter(normalize(original_input))
+    
+    Args:
+        token_dim: Dimension of the token embeddings
+        initial_gate_scale: Initial scaling factor (should be very small, e.g., 0.01)
+    """
+    
+    token_dim: int
+    initial_gate_scale: float = 0.01
+    
+    @nn.compact
+    def __call__(self, tokens: jax.Array) -> jax.Array:
+        """
+        Args:
+            tokens: Input tokens of shape (..., token_dim)
+            
+        Returns:
+            Adapted tokens with same shape as input
+        """
+        # Store original tokens for residual connection
+        original_tokens = tokens
+        
+        # Step 1: Normalize the tokens
+        normalized_tokens = nn.LayerNorm()(tokens)
+        
+        # Step 2: Pass through adapter projection (initialized to output zeros)
+        adapted_tokens = nn.Dense(
+            features=self.token_dim,
+            kernel_init=nn.initializers.zeros,  # Initialize weights to zero
+            bias_init=nn.initializers.zeros,    # Initialize bias to zero
+        )(normalized_tokens)
+        
+        # Step 3: Learnable gate scaling (starts small, can grow during training)
+        gate_scale = self.param(
+            'gate_scale',
+            nn.initializers.constant(self.initial_gate_scale),
+            ()  # scalar parameter
+        )
+        
+        # Step 4: Residual connection with gated adapter
+        output = original_tokens + gate_scale * adapted_tokens
+        
+        return output
+
+
 class OctoTransformer(nn.Module):
     """
     This module forms the base of the Octo architecture.
@@ -85,8 +137,9 @@ class OctoTransformer(nn.Module):
     max_horizon: int
     repeat_task_tokens: bool
     use_correct_attention: bool = False
-    # New parameter to enable/disable input normalization
+    # New parameter to enable gated adapter normalization
     use_input_normalization: bool = True
+    normalization_gate_scale: float = 0.01
 
     @nn.compact
     def __call__(
@@ -172,9 +225,13 @@ class OctoTransformer(nn.Module):
             )(tokenizer_output.tokens)
             # task_tokens shape is (batch, n_tokens, token_embedding_size)
 
-            # Apply input normalization if enabled
+            # Apply gated adapter normalization if enabled
             if self.use_input_normalization:
-                task_tokens = nn.LayerNorm(name=f"{group_name}_input_norm")(task_tokens)
+                task_tokens = TokenNormalizationAdapter(
+                    token_dim=self.token_embedding_size,
+                    initial_gate_scale=self.normalization_gate_scale,
+                    name=f"{group_name}_norm_adapter"
+                )(task_tokens)
 
             # Add positional embedding
             task_tokens += self._create_positional_embedding(group_name, task_tokens)
@@ -205,9 +262,13 @@ class OctoTransformer(nn.Module):
             )(tokenizer_output.tokens)
             # obs_tokens shape is (batch, horizon, n_tokens, token_embedding_size)
 
-            # Apply input normalization if enabled
+            # Apply gated adapter normalization if enabled
             if self.use_input_normalization:
-                obs_tokens = nn.LayerNorm(name=f"{group_name}_input_norm")(obs_tokens)
+                obs_tokens = TokenNormalizationAdapter(
+                    token_dim=self.token_embedding_size,
+                    initial_gate_scale=self.normalization_gate_scale,
+                    name=f"{group_name}_norm_adapter"
+                )(obs_tokens)
 
             # Add positional embedding
             obs_tokens += self._create_positional_embedding(group_name, obs_tokens)
@@ -236,9 +297,13 @@ class OctoTransformer(nn.Module):
                 ws = all_timestep_groups[0].tokens.shape[1]
                 task_tokens = jnp.tile(task_tokens, [1, ws, 1, 1])
                 
-                # Apply input normalization to repeated task tokens if enabled
+                # Apply gated adapter normalization to repeated task tokens if enabled
                 if self.use_input_normalization:
-                    task_tokens = nn.LayerNorm(name=f"repeated_{tasks.name}_input_norm")(task_tokens)
+                    task_tokens = TokenNormalizationAdapter(
+                        token_dim=self.token_embedding_size,
+                        initial_gate_scale=self.normalization_gate_scale,
+                        name=f"repeated_{tasks.name}_norm_adapter"
+                    )(task_tokens)
                 
                 task_pad_mask = tasks.mask[:, jnp.newaxis, :]
                 task_pad_mask = jnp.tile(task_pad_mask, [1, ws, 1])
@@ -395,6 +460,7 @@ class OctoModule(nn.Module):
         repeat_task_tokens: bool = False,
         use_correct_attention: bool = False,
         use_input_normalization: bool = True,
+        normalization_gate_scale: float = 0.01,
     ) -> "OctoModule":
         """
         Canonical way to create an OctoModule from configuration.
@@ -408,7 +474,8 @@ class OctoModule(nn.Module):
             max_horizon (int): Sets the size of positional embeddings, and provides an upper limit on the
                 maximum horizon of the model
             repeat_task_tokens (bool): If true, repeats the task tokens at each observation timestep.
-            use_input_normalization (bool): If true, applies LayerNorm to tokenized inputs before the transformer.
+            use_input_normalization (bool): If true, applies gated adapter normalization to tokenized inputs.
+            normalization_gate_scale (float): Initial scaling factor for the normalization adapter gate.
             transformer_kwargs: additional kwargs to forward to the transformer, which include:
                 num_layers (int): number of layers
                 mlp_dim (int): hidden dimension of the MLPs
@@ -437,6 +504,7 @@ class OctoModule(nn.Module):
             transformer_kwargs=transformer_kwargs,
             use_correct_attention=use_correct_attention,
             use_input_normalization=use_input_normalization,
+            normalization_gate_scale=normalization_gate_scale,
         )
 
         return cls(
