@@ -336,7 +336,94 @@ class OctoModel:
             checkpoint_path, orbax.checkpoint.PyTreeCheckpointer()
         )
         step = step if step is not None else checkpointer.latest_step()
-        params = checkpointer.restore(step, params_shape)
+        
+        # Try to restore with the current params shape (which includes adapters)
+        try:
+            params = checkpointer.restore(step, params_shape)
+        except (KeyError, ValueError) as e:
+            # If loading fails due to missing adapter parameters, load without adapters
+            # and then add the missing parameters
+            logging.info(f"Pretrained model missing adapter parameters. Adding them automatically...")
+            
+            # Create model without adapters for loading
+            model_config_no_adapters = config["model"].copy()
+            model_config_no_adapters["use_input_normalization"] = False
+            module_no_adapters = OctoModule.create(**model_config_no_adapters)
+            
+            # Get params shape without adapters
+            params_shape_no_adapters = jax.eval_shape(
+                partial(module_no_adapters.init, train=False), jax.random.PRNGKey(0), *init_args
+            )["params"]
+            
+            # Load the pretrained parameters
+            params_pretrained = checkpointer.restore(step, params_shape_no_adapters)
+            
+            # Now create the full model with adapters and get its parameter structure
+            params_with_adapters = jax.eval_shape(
+                partial(module.init, train=False), jax.random.PRNGKey(0), *init_args
+            )["params"]
+            
+            # Initialize the missing adapter parameters
+            def initialize_missing_params(full_params, pretrained_params, path=""):
+                """Recursively initialize missing parameters with appropriate values."""
+                if isinstance(full_params, dict) and isinstance(pretrained_params, dict):
+                    result = {}
+                    for key in full_params:
+                        if key in pretrained_params:
+                            result[key] = initialize_missing_params(
+                                full_params[key], pretrained_params[key], f"{path}.{key}"
+                            )
+                        else:
+                            # This is a missing parameter (likely an adapter parameter)
+                            logging.info(f"Initializing missing parameter: {path}.{key}")
+                            if "norm_adapter" in key:
+                                # Initialize adapter parameters appropriately
+                                result[key] = initialize_adapter_params(full_params[key])
+                            else:
+                                # For other missing params, use the structure from full_params
+                                result[key] = initialize_param_structure(full_params[key])
+                    return result
+                elif isinstance(full_params, dict):
+                    # Pretrained doesn't have this structure, initialize from scratch
+                    return initialize_param_structure(full_params)
+                else:
+                    # This is a leaf parameter, use pretrained value
+                    return pretrained_params
+            
+            def initialize_adapter_params(adapter_structure):
+                """Initialize adapter parameters to make them start as identity."""
+                result = {}
+                for key, value in adapter_structure.items():
+                    if key == "LayerNorm_0":
+                        # Initialize LayerNorm parameters
+                        result[key] = {
+                            "bias": jnp.zeros_like(value["bias"]),
+                            "scale": jnp.ones_like(value["scale"])
+                        }
+                    elif key == "Dense_0":
+                        # Initialize Dense layer to output zeros (identity adapter)
+                        result[key] = {
+                            "kernel": jnp.zeros_like(value["kernel"]),
+                            "bias": jnp.zeros_like(value["bias"])
+                        }
+                    elif key == "gate_scale":
+                        # Initialize gate scale to small value
+                        result[key] = jnp.array(0.01, dtype=value.dtype)
+                    else:
+                        result[key] = initialize_param_structure(value)
+                return result
+            
+            def initialize_param_structure(structure):
+                """Initialize a parameter structure with appropriate default values."""
+                if isinstance(structure, dict):
+                    return {k: initialize_param_structure(v) for k, v in structure.items()}
+                else:
+                    # This is a leaf parameter, initialize with zeros
+                    return jnp.zeros_like(structure)
+            
+            # Merge pretrained and missing parameters
+            params = initialize_missing_params(params_with_adapters, params_pretrained)
+            logging.info("Successfully initialized missing adapter parameters.")
 
         if config["text_processor"] is not None:
             text_processor = ModuleSpec.instantiate(config["text_processor"])()
