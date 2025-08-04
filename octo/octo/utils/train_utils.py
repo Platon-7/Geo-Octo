@@ -291,7 +291,7 @@ def freeze_weights(
 
 def create_optimizer(
     params_or_params_shape: Params, **kwargs: dict
-) -> optax.GradientTransformation:
+) -> tuple[optax.GradientTransformation, callable, callable]:
     """Creates optimizer for Octo.
 
     kwargs are the kwargs for optax.adamw; if the "learning_rate" key is a dict, it is interpreted
@@ -304,45 +304,69 @@ def create_optimizer(
     Returns:
         tx: an Optax optimizer
         lr_callable: Function that takes the current step and returns the learning rate
+        param_norm_callable: Function that takes gradients and returns their global norm
     """
+    # Create the learning rate schedule callable
     if isinstance(kwargs["learning_rate"], dict):
         lr_callable = create_lr_schedule(**kwargs["learning_rate"])
     else:
         lr_callable = lambda _: kwargs["learning_rate"]
+    
+    # Keep a reference to the callable for the optimizer
+    # This is passed directly to adamw
     kwargs["learning_rate"] = lr_callable
 
-    # Following ViT, timm, MAE: this mask skips weight decay on biases and LayerNorm parameters
-    wd_mask = jax.tree_util.tree_map_with_path(
-        lambda path, x: "kernel" in jax.tree_util.keystr(path), params_or_params_shape
-    )
-
+    # Pop our custom arguments before passing them to the base optimizer
     clip_gradient = kwargs.pop("clip_gradient", None)
     frozen_keys = kwargs.pop("frozen_keys", None)
     grad_accumulation_steps = kwargs.pop("grad_accumulation_steps", None)
 
+    # Create the mask for weight decay (skips biases and LayerNorms)
+    wd_mask = jax.tree_util.tree_map_with_path(
+        lambda path, x: "kernel" in jax.tree_util.keystr(path), params_or_params_shape
+    )
+
+    # The base optimizer
     tx = optax.adamw(mu_dtype=jnp.bfloat16, **kwargs, mask=wd_mask)
-    if grad_accumulation_steps:
-        tx = optax.MultiSteps(tx, grad_accumulation_steps)
+
+    # --- START: ROBUST FREEZING AND CHAINING LOGIC ---
+
+    param_partitions = None
+    if frozen_keys:
+        # Use the existing freeze_weights utility to get the partitioned optimizer and the partition map
+        tx, param_partitions = freeze_weights(
+            tx, params_or_params_shape, frozen_keys, return_partitions=True
+        )
+
+    # Chain gradient clipping AFTER the freezing logic has been applied
     if clip_gradient is not None:
         tx = optax.chain(
             optax.clip_by_global_norm(clip_gradient),
             tx,
         )
+    
+    # Apply gradient accumulation LAST, as it wraps the entire chain
+    if grad_accumulation_steps and grad_accumulation_steps > 1:
+        tx = optax.MultiSteps(tx, grad_accumulation_steps)
 
-    if frozen_keys:
-        tx, param_partitions = freeze_weights(
-            tx, params_or_params_shape, frozen_keys, return_partitions=True
-        )
-        zero_frozen_params = lambda params: jax.tree_map(
-            lambda x, y: x if y == "trainable" else jnp.zeros(()),
-            params,
-            param_partitions,
-        )
-        param_norm_callable = lambda params: optax.global_norm(
-            zero_frozen_params(params)
-        )
+    # --- DEFINE THE GRADIENT NORM FUNCTION CORRECTLY ---
+    # This callable will be used to log the gradient norm in your training loop.
+    # It now correctly handles the frozen parameters if they exist.
+    if param_partitions is not None:
+        # If we are freezing, create a function that zeroes out the grads for frozen params before computing the norm
+        def zero_frozen_grads(grads):
+            return jax.tree_map(
+                lambda grad, partition: grad if partition == "trainable" else jnp.zeros_like(grad),
+                grads,
+                param_partitions,
+            )
+        # The final callable takes grads, zeroes the frozen ones, then calculates the norm
+        param_norm_callable = lambda grads: optax.global_norm(zero_frozen_grads(grads))
     else:
+        # If not freezing, the norm is just the global norm of all gradients
         param_norm_callable = optax.global_norm
+    
+    # --- END OF MODIFICATIONS ---
 
     return tx, lr_callable, param_norm_callable
 

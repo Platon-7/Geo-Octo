@@ -202,7 +202,7 @@ def main(_):
     model = model.replace(params=merged_params)
     del pretrained_model
 
-    tx, lr_callable, _ = create_optimizer(model.params, **config.optimizer.to_dict())
+    tx, lr_callable, grad_norm_callable = create_optimizer(model.params, **config.optimizer.to_dict())
     train_state = TrainState.create(model=model, tx=tx, rng=rng)
     
     # Staged Training Setup
@@ -296,7 +296,8 @@ def main(_):
     def train_step(state: TrainState, batch):
         rng, dropout_rng = jax.random.split(state.rng)
         (loss, info), grads = jax.value_and_grad(loss_fn, has_aux=True)(state.model.params, batch, dropout_rng, train=True)
-        grad_norm = optax.global_norm(grads)
+        grad_norm = grad_norm_callable(grads) 
+        # grad_norm = optax.global_norm(grads)
         new_state = state.apply_gradients(grads=grads, rng=rng)
         info.update({"grad_norm": grad_norm, "learning_rate": lr_callable(state.step)})
         return new_state, info, grads  # Return grads for analysis
