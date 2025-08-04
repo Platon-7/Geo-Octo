@@ -274,6 +274,10 @@ def main(_):
                     rng=train_state.rng      # Keep the RNG state
                 )
                 
+                # IMPORTANT: Recompile the training function for the new optimizer
+                logging.info("Recompiling training function for Stage 2...")
+                train_step.lower(train_state, example_batch).compile()
+                
                 # Update the learning rate callable
                 lr_callable = lr_callable_stage2
                 current_stage = 2
