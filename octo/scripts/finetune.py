@@ -234,6 +234,63 @@ def main(_):
         action_loss, action_metrics = bound_module.heads["action"].loss(transformer_embeddings, batch["action"], batch["observation"]["timestep_pad_mask"], batch["action_pad_mask"], train=train)
         return action_loss, action_metrics
 
+    def analyze_gradients(grads, step, stage):
+        """Analyze gradient statistics to understand training instability."""
+        def get_grad_stats(grad_tree, prefix=""):
+            stats = {}
+            if isinstance(grad_tree, dict):
+                for key, value in grad_tree.items():
+                    if isinstance(value, dict):
+                        stats.update(get_grad_stats(value, f"{prefix}.{key}" if prefix else key))
+                    else:
+                        # This is an actual gradient array
+                        grad_norm = jnp.linalg.norm(value)
+                        grad_max = jnp.max(jnp.abs(value))
+                        grad_mean = jnp.mean(jnp.abs(value))
+                        stats[f"{prefix}.{key}" if prefix else key] = {
+                            "norm": float(grad_norm),
+                            "max": float(grad_max), 
+                            "mean": float(grad_mean)
+                        }
+            return stats
+        
+        grad_stats = get_grad_stats(grads)
+        
+        # Print key gradient statistics
+        print(f"\n=== GRADIENT ANALYSIS Step {step} (Stage {stage}) ===")
+        
+        # Focus on adapters vs transformer
+        adapter_grads = {k: v for k, v in grad_stats.items() if "norm_adapter" in k}
+        transformer_grads = {k: v for k, v in grad_stats.items() if "octo_transformer" in k and "norm_adapter" not in k}
+        head_grads = {k: v for k, v in grad_stats.items() if "heads" in k}
+        
+        print(f"📊 ADAPTER gradients ({len(adapter_grads)} components):")
+        for name, stats in list(adapter_grads.items())[:5]:  # Show first 5
+            print(f"  {name}: norm={stats['norm']:.2e}, max={stats['max']:.2e}")
+        
+        print(f"🧠 TRANSFORMER gradients ({len(transformer_grads)} components):")
+        for name, stats in list(transformer_grads.items())[:5]:  # Show first 5  
+            print(f"  {name}: norm={stats['norm']:.2e}, max={stats['max']:.2e}")
+            
+        print(f"🎯 HEAD gradients ({len(head_grads)} components):")
+        for name, stats in list(head_grads.items())[:3]:  # Show first 3
+            print(f"  {name}: norm={stats['norm']:.2e}, max={stats['max']:.2e}")
+        
+        # Overall statistics
+        all_norms = [stats['norm'] for stats in grad_stats.values()]
+        all_maxes = [stats['max'] for stats in grad_stats.values()]
+        
+        print(f"🔥 OVERALL: max_norm={max(all_norms):.2e}, max_value={max(all_maxes):.2e}")
+        print(f"📈 RANGE: norm_range=[{min(all_norms):.2e}, {max(all_norms):.2e}]")
+        
+        # Check for potential issues
+        if max(all_norms) > 1e3:
+            print("⚠️  WARNING: Very large gradient norms detected!")
+        if max(all_maxes) > 1e6:
+            print("🚨 CRITICAL: Extremely large gradient values detected!")
+            
+        return grad_stats
+
     @partial(jax.jit, in_shardings=[replicated_sharding, dp_sharding])
     def train_step(state: TrainState, batch):
         rng, dropout_rng = jax.random.split(state.rng)
@@ -241,7 +298,7 @@ def main(_):
         grad_norm = optax.global_norm(grads)
         new_state = state.apply_gradients(grads=grads, rng=rng)
         info.update({"grad_norm": grad_norm, "learning_rate": lr_callable(state.step)})
-        return new_state, info
+        return new_state, info, grads  # Return grads for analysis
 
     @partial(jax.jit, in_shardings=[replicated_sharding, dp_sharding, replicated_sharding])
     def eval_step(params, batch, rng):
@@ -295,7 +352,13 @@ def main(_):
         
         with timer("train"):
             model_batch = prune_batch_for_jax(batch)
-            train_state, update_info = train_step(train_state, model_batch)
+            train_state, update_info, grads = train_step(train_state, model_batch)
+            
+            # Gradient analysis around stage transition and when issues occur
+            if (i < 10 or  # First few steps 
+                (stage1_steps > 0 and abs(i - stage1_steps) < 5) or  # Around stage transition
+                i % 1000 == 0):  # Every 1000 steps
+                analyze_gradients(grads, i, current_stage)
         timer.tock("total")
 
         if (i + 1) % config["log_interval"] == 0:
