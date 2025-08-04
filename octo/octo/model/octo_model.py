@@ -314,7 +314,10 @@ class OctoModel:
             )
 
         # create model def (an OctoModule)
-        module = OctoModule.create(**config["model"])
+        # Disable input normalization for pretrained models to avoid parameter mismatch
+        model_config = config["model"].copy()
+        model_config["use_input_normalization"] = False
+        module = OctoModule.create(**model_config)
         # infer params shape without actually doing any computation
 
         # shim for old checkpoints
