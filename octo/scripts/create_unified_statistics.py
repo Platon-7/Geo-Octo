@@ -6,12 +6,12 @@ import os
 import glob
 
 # --- Configuration ---
-BASE_DATA_DIR = "/scratch-shared/tmp.cwkV8vOvfY/libero_vggt_datasets2"
+BASE_DATA_DIR = "/scratch-shared/tmp.cwkV8vOvfY/libero_vggt_compressed"
 DATASET_NAMES = [
-    "libero_object_vggt",
-    "libero_spatial_vggt",
-    "libero_goal_vggt",
-    "liber_o10_vggt",
+    "libero_object_vggt_compressed",
+    "libero_spatial_vggt_compressed",
+    "libero_goal_vggt_compressed",
+    "liber_o10_vggt_compressed",
 ]
 
 TFRECORD_FILES = []

@@ -460,6 +460,7 @@ def standardize_libero_vggt(traj: dict) -> dict:
     if 'joint_state' in traj['observation']:
         #print("DEBUG: Removing joint_state to avoid conflicts")
         traj['observation'].pop('joint_state')
+        
     
     #print("DEBUG: Observation keys after standardization:", list(traj['observation'].keys()))
     #print("DEBUG: Proprio shape after slicing:", traj['observation']['proprio'].shape)

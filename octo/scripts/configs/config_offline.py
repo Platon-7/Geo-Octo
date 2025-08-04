@@ -15,8 +15,8 @@ def get_config(config_string="full,multimodal"):
     # Use ALL your VGGT datasets for training
     DATASET_KWARGS_LIST = [
         {
-            "name": "libero_object_vggt",
-            "data_dir": "/scratch-shared/tmp.cwkV8vOvfY/libero_vggt_datasets2",
+            "name": "libero_object_vggt_compressed",
+            "data_dir": "/scratch-shared/tmp.cwkV8vOvfY/libero_vggt_compressed",
             "dataset_statistics": UNIFIED_STATS_PATH,  # Use the unified file
             "standardize_fn": ModuleSpec.create(
                 "octo.data.utils.data_utils:standardize_libero_vggt"
@@ -28,8 +28,8 @@ def get_config(config_string="full,multimodal"):
             "filter_functions": [],
         },
         {
-            "name": "libero_spatial_vggt",
-            "data_dir": "/scratch-shared/tmp.cwkV8vOvfY/libero_vggt_datasets2",
+            "name": "libero_spatial_vggt_compressed",
+            "data_dir": "/scratch-shared/tmp.cwkV8vOvfY/libero_vggt_compressed",
             "dataset_statistics": UNIFIED_STATS_PATH,  # Use the unified file
             "standardize_fn": ModuleSpec.create(
                 "octo.data.utils.data_utils:standardize_libero_vggt"
@@ -41,8 +41,8 @@ def get_config(config_string="full,multimodal"):
             "filter_functions": [],
         },
         {
-            "name": "libero_goal_vggt",
-            "data_dir": "/scratch-shared/tmp.cwkV8vOvfY/libero_vggt_datasets2",
+            "name": "libero_goal_vggt_compressed",
+            "data_dir": "/scratch-shared/tmp.cwkV8vOvfY/libero_vggt_compressed",
             "dataset_statistics": UNIFIED_STATS_PATH,  # Use the unified file
             "standardize_fn": ModuleSpec.create(
                 "octo.data.utils.data_utils:standardize_libero_vggt"
@@ -54,8 +54,8 @@ def get_config(config_string="full,multimodal"):
             "filter_functions": [],
         },
         {
-            "name": "liber_o10_vggt",
-            "data_dir": "/scratch-shared/tmp.cwkV8vOvfY/libero_vggt_datasets2",
+            "name": "liber_o10_vggt_compressed",
+            "data_dir": "/scratch-shared/tmp.cwkV8vOvfY/libero_vggt_compressed",
             "dataset_statistics": UNIFIED_STATS_PATH,  # Use the unified file
             "standardize_fn": ModuleSpec.create(
                 "octo.data.utils.data_utils:standardize_libero_vggt"
@@ -85,12 +85,12 @@ def get_config(config_string="full,multimodal"):
     config = dict(
         pretrained_path=placeholder(str),
         pretrained_step=placeholder(int),
-        batch_size=8,
+        batch_size=4,
         shuffle_buffer_size=100,
-        num_steps=200, # was 150000
-        log_interval=10, # was 100
-        eval_interval=50, # was 5000
-        save_interval=50, # was 5000
+        num_steps=150000, # was 150000
+        log_interval=100, # was 100
+        eval_interval=5000, # was 5000
+        save_interval=5000, # was 5000
         save_dir=placeholder(str),
         seed=42,
         wandb=dict(
@@ -104,22 +104,22 @@ def get_config(config_string="full,multimodal"):
             learning_rate=dict(
                 name="cosine",
                 init_value=0.0,
-                peak_value=5e-4,
+                peak_value=1e-5,
                 warmup_steps=2000,
                 decay_steps=max_steps,
                 end_value=0.0,
             ),
             grad_accumulation_steps=16,
             weight_decay=0.01,
-            clip_gradient=1.0,
+            clip_gradient=0.5,
             frozen_keys=frozen_keys,
         ),
         val_kwargs=dict(
             val_shuffle_buffer_size=50,
-            num_val_batches=4,
+            num_val_batches=2,
         ),
         viz_kwargs=dict(
-            eval_batch_size=8,
+            eval_batch_size=4,
             trajs_for_metrics=20,
             trajs_for_viz=2,
             samples_per_state=2,

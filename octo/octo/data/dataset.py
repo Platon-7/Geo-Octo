@@ -484,7 +484,7 @@ def make_single_dataset(
     dataset = apply_frame_transforms(dataset, **frame_transform_kwargs, train=train)
 
     # this seems to reduce memory usage without affecting speed
-    dataset = dataset.with_ram_budget(1)
+    dataset = dataset.with_ram_budget(50)
 
     # save for later
     dataset.dataset_statistics = dataset_statistics
@@ -641,7 +641,7 @@ def make_interleaved_dataset(
         dataset = dataset.batch(batch_size)
 
     # this seems to reduce memory usage without affecting speed
-    dataset = dataset.with_ram_budget(1)
+    dataset = dataset.with_ram_budget(50)
 
     dataset = dataset.ignore_errors(log_warning=True)
 

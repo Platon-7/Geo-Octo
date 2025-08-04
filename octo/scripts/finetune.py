@@ -2,6 +2,7 @@ import datetime
 from functools import partial
 import os
 import psutil
+import GPUtil
 import gc
 
 from absl import app, flags, logging
@@ -30,6 +31,16 @@ from octo.utils.train_utils import (
     Timer,
     TrainState,
     process_text,
+)
+import sys
+
+from optimize_memory import (
+    optimize_tensorflow_memory,
+    set_memory_env_variables,
+    optimize_dataset_config,
+    create_memory_efficient_dataset_kwargs,
+    monitor_memory_during_training,
+    force_cleanup
 )
 
 FLAGS = flags.FLAGS
@@ -81,6 +92,10 @@ def log_memory_usage(step, prefix=""):
         pass
 
 def main(_):
+    set_memory_env_variables()
+    optimize_tensorflow_memory()
+    force_cleanup()
+    
     initialize_compilation_cache()
     mesh = Mesh(jax.devices(), axis_names="batch")
     dp_sharding = NamedSharding(mesh, PartitionSpec("batch"))
@@ -101,6 +116,15 @@ def main(_):
     model_config.update(FLAGS.config.get("update_config", ConfigDict()))
     model_config_dict = model_config.to_dict()
     config = FLAGS.config
+    
+    # Apply memory optimization to config
+    config = optimize_dataset_config(config)
+    
+    # Optimize dataset kwargs for memory efficiency
+    optimized_dataset_kwargs = create_memory_efficient_dataset_kwargs(
+        config.dataset_kwargs_list, max_datasets=4
+    )
+    config.dataset_kwargs_list = optimized_dataset_kwargs
     text_processor = ModuleSpec.instantiate(model_config_dict["text_processor"])() if model_config_dict.get("text_processor") else None
 
     def encode_texts(strings_tensor: tf.Tensor) -> np.ndarray:
@@ -125,13 +149,24 @@ def main(_):
                 "action": batch["action"], "action_pad_mask": batch["action_pad_mask"]}
 
     logging.info("Creating training dataset...")
+    gc.collect()
     train_dataset_with_stats = make_interleaved_dataset(
         dataset_kwargs_list=config.dataset_kwargs_list, traj_transform_kwargs=config.traj_transform_kwargs,
         frame_transform_kwargs=config.frame_transform_kwargs, train=True, batch_size=config.batch_size,
         shuffle_buffer_size=config.shuffle_buffer_size,
     )
     dataset_statistics = train_dataset_with_stats.dataset_statistics
-    train_dataset_processed = train_dataset_with_stats.map(process_batch_tf, num_parallel_calls=tf.data.AUTOTUNE).prefetch(tf.data.AUTOTUNE)
+    
+    # Add this memory check:
+    current_memory = psutil.virtual_memory().used / (1024**3)
+    print(f"Memory after dataset creation: {current_memory:.1f}GB")
+    if current_memory > 200:
+        print("WARNING: High memory usage detected. Consider reducing batch_size or buffer sizes.")
+    
+    #train_dataset_processed = train_dataset_with_stats.map(process_batch_tf, num_parallel_calls=tf.data.AUTOTUNE).prefetch(tf.data.AUTOTUNE)
+    gc.collect()
+    log_memory_usage(0, "AFTER training dataset creation: ")
+    train_dataset_processed = train_dataset_with_stats.map(process_batch_tf, num_parallel_calls=4).prefetch(2)
     train_data_iter = train_dataset_processed.iterator()
     
 
@@ -142,6 +177,26 @@ def main(_):
     rng = jax.random.PRNGKey(config.seed)
     rng, init_rng = jax.random.split(rng)
     model = OctoModel.from_config(model_config_dict, example_batch, text_processor, rng=init_rng, dataset_statistics=dataset_statistics)
+    
+    print(f"JAX devices: {jax.devices()}")
+    print(f"Device count: {jax.device_count()}")
+    print(f"Local device count: {jax.local_device_count()}")
+
+    # Check model sharding
+    print("Model parameter shapes and sharding:")
+    for name, param in model.params.items():
+        if hasattr(param, 'shape'):
+            print(f"  {name}: {param.shape}")
+        else:
+            print(f"  {name}: nested dict")
+
+    # Check GPU memory before first step
+    import subprocess
+    print("\nGPU Memory before first training step:")
+    result = subprocess.run(['nvidia-smi', '--query-gpu=memory.used,memory.total', '--format=csv,noheader,nounits'], 
+                        capture_output=True, text=True)
+    print(result.stdout)
+    
     merged_params = merge_params(model.params, pretrained_model.params)
     model = model.replace(params=merged_params)
     del pretrained_model
@@ -206,16 +261,18 @@ def main(_):
             dataset_percent = (dataset_time / total_time) * 100
             train_percent = (train_time / total_time) * 100
 
-            logging.info(
-                f"\n| Step {i+1} | "
-                f"Avg Step Time: {total_time:.4f}s | "
-                f"Data Loading: {dataset_time:.4f}s ({dataset_percent:.1f}%) | "
-                f"Model Training: {train_time:.4f}s ({train_percent:.1f}%) |\n"
-            )
+            # logging.info(
+            #     f"\n| Step {i+1} | "
+            #     f"Avg Step Time: {total_time:.4f}s | "
+            #     f"Data Loading: {dataset_time:.4f}s ({dataset_percent:.1f}%) | "
+            #     f"Model Training: {train_time:.4f}s ({train_percent:.1f}%) |\n"
+            # )
 
         if i % 50 == 0:  # Every 1000 steps
-            import psutil
-            import GPUtil
+            
+            # Monitor memory and trigger cleanup if needed
+            if not monitor_memory_during_training(i, threshold_gb=300.0):
+                print("Memory usage too high, consider stopping training")
             
             # CPU/RAM usage
             cpu_percent = psutil.cpu_percent()
@@ -230,6 +287,9 @@ def main(_):
             except:
                 pass
     
+        if i % 50 == 0:
+            force_cleanup()
+            
         if (i + 1) % config["eval_interval"] == 0:
             logging.info("Evaluating...")
             # log_memory_usage(i, "BEFORE validation: ")
@@ -244,7 +304,7 @@ def main(_):
                     train=False,
                     batch_size=config["viz_kwargs"]["eval_batch_size"],
                     shuffle_buffer_size=config["val_kwargs"]["val_shuffle_buffer_size"],
-                ).map(process_batch_tf, num_parallel_calls=tf.data.AUTOTUNE).prefetch(tf.data.AUTOTUNE).repeat()
+                ).map(process_batch_tf, num_parallel_calls=4).prefetch(2).repeat()
                 val_data_iter = val_dataset.iterator()
 
             # Manually run the evaluation loop for full control
