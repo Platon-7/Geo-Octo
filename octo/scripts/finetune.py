@@ -203,6 +203,26 @@ def main(_):
 
     tx, lr_callable, _ = create_optimizer(model.params, **config.optimizer.to_dict())
     train_state = TrainState.create(model=model, tx=tx, rng=rng)
+    
+    # STAGED TRAINING SETUP
+    stage1_steps = config.get("stage1_steps", 0)  # Default to 0 if not specified
+    stage2_optimizer_config = config.get("stage2_optimizer", None)
+    current_stage = 1 if stage1_steps > 0 else 2
+    
+    # Prepare stage 2 optimizer (will be used later)
+    if stage2_optimizer_config is not None:
+        tx_stage2, lr_callable_stage2, _ = create_optimizer(model.params, **stage2_optimizer_config.to_dict())
+    else:
+        tx_stage2, lr_callable_stage2 = None, None
+    
+    logging.info(f"STAGED TRAINING SETUP:")
+    if stage1_steps > 0:
+        logging.info(f"  Stage 1 (0-{stage1_steps}): Frozen transformer, train heads + adapters only")
+        logging.info(f"  Stage 2 ({stage1_steps}-{config.num_steps}): Unfreeze everything, gentle fine-tuning")
+        logging.info(f"  Currently in Stage {current_stage}")
+    else:
+        logging.info(f"  Single-stage training (no staging)")
+    
     save_dir = tf.io.gfile.join(config.save_dir, config.wandb.project, config.wandb.group or "", wandb_id) if config.save_dir else None
     if save_dir:
         wandb.config.update(dict(save_dir=save_dir), allow_val_change=True)
@@ -238,6 +258,27 @@ def main(_):
     val_data_iter = None
     
     for i in tqdm.tqdm(range(int(config["num_steps"])), total=int(config["num_steps"]), dynamic_ncols=True):
+        # STAGED TRAINING TRANSITION CHECK
+        if stage1_steps > 0 and i == stage1_steps and current_stage == 1:
+            logging.info(f"\n🔄 STAGE TRANSITION at step {i}")
+            logging.info(f"   Switching from Stage 1 → Stage 2")
+            logging.info(f"   Unfreezing entire model and switching to gentle fine-tuning LR")
+            
+            # Switch to stage 2 optimizer
+            if tx_stage2 is not None:
+                # Update the train state with new optimizer
+                train_state = train_state.replace(tx=tx_stage2)
+                # Update the learning rate callable
+                lr_callable = lr_callable_stage2
+                current_stage = 2
+                
+                logging.info(f"✅ Successfully switched to Stage 2 optimizer")
+                
+                # Log to wandb
+                wandb.log({"stage_transition": 2, "unfrozen_training_start": True}, step=i)
+            else:
+                logging.warning("⚠️  Stage 2 optimizer not configured, continuing with Stage 1 settings")
+        
         timer.tick("total")
         with timer("dataset"):
             batch = next(train_data_iter)
@@ -251,7 +292,12 @@ def main(_):
             avg_times = timer.get_average_times()
 
             # Step 2: Use that same variable for the wandb log.
-            wandb.log({"training": jax.device_get(update_info), "timer": avg_times}, step=i)
+            update_info_with_stage = jax.device_get(update_info).copy()
+            update_info_with_stage["training_stage"] = current_stage
+            if stage1_steps > 0:
+                update_info_with_stage["stage_progress"] = (i + 1) / stage1_steps if current_stage == 1 else (i + 1 - stage1_steps) / (config.num_steps - stage1_steps)
+            
+            wandb.log({"training": update_info_with_stage, "timer": avg_times}, step=i)
 
             # Step 3: Use the SAME variable for the console log.
             total_time = avg_times.get('total', 1e-6) # Use 1e-6 to avoid division by zero

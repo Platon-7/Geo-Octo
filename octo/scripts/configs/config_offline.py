@@ -68,18 +68,26 @@ def get_config(config_string="full,multimodal"):
         },
     ]
 
+    # STAGED TRAINING CONFIGURATION
+    # Stage 1: Train only heads + normalization adapters (first 25k steps)  
+    # Stage 2: Unfreeze everything for gentle fine-tuning (remaining steps)
+    stage1_steps = 25000  # First stage: heads + adapters only
+    total_steps = 150000  # Total training steps
+    
     if mode == "full":
-        frozen_keys = None
+        # For full finetuning, use staged approach
+        frozen_keys = ("octo_transformer.*",)  # Stage 1: freeze transformer
+        # Note: The training script will need to handle unfreezing at stage1_steps
     elif mode == "head_only":
         frozen_keys = ("octo_transformer.*",)
     else: # head_mlp_only
         frozen_keys = (
             "octo_transformer.*",
-            "heads_*.map_head.probe",
+            "heads_*.map_head.probe", 
             "heads_*.map_head.MultiHeadDotProductAttention_0.*",
         )
 
-    max_steps = FieldReference(150000)
+    max_steps = FieldReference(total_steps)
     window_size = FieldReference(default=2)
 
     config = dict(
@@ -87,32 +95,53 @@ def get_config(config_string="full,multimodal"):
         pretrained_step=placeholder(int),
         batch_size=4,
         shuffle_buffer_size=100,
-        num_steps=150000, # was 150000
-        log_interval=100, # was 100
-        eval_interval=5000, # was 5000
-        save_interval=5000, # was 5000
+        num_steps=total_steps,
+        log_interval=100,
+        eval_interval=5000,
+        save_interval=5000,
         save_dir=placeholder(str),
         seed=42,
         wandb=dict(
-            project="octo_vggt_finetune", group=placeholder(str), entity=placeholder(str)
+            project="octo_vggt_finetune_staged", group=placeholder(str), entity=placeholder(str)
         ),
         dataset_kwargs_list=DATASET_KWARGS_LIST,
         modality=task,
         finetuning_mode=mode,
         window_size=window_size,
+        
+        # STAGED TRAINING SETTINGS
+        stage1_steps=stage1_steps,
+        
         optimizer=dict(
             learning_rate=dict(
                 name="cosine",
                 init_value=0.0,
-                peak_value=1e-5,
-                warmup_steps=2000,
+                # Stage 1: Higher learning rate for new components
+                peak_value=1e-5,  # Will be adjusted per stage in training script
+                warmup_steps=5000,  # Keep the successful warmup
                 decay_steps=max_steps,
                 end_value=0.0,
             ),
             grad_accumulation_steps=16,
             weight_decay=0.01,
-            clip_gradient=0.5,
+            clip_gradient=0.1,  # Keep the successful clipping
             frozen_keys=frozen_keys,
+        ),
+        
+        # Stage 2 optimizer settings (for unfrozen training)
+        stage2_optimizer=dict(
+            learning_rate=dict(
+                name="cosine",
+                init_value=0.0,
+                peak_value=2e-6,  # Much lower LR for full model fine-tuning
+                warmup_steps=2000,  # Shorter warmup for stage 2
+                decay_steps=total_steps - stage1_steps,  # Remaining steps
+                end_value=0.0,
+            ),
+            grad_accumulation_steps=16,
+            weight_decay=0.01,
+            clip_gradient=0.1,
+            frozen_keys=None,  # Unfreeze everything
         ),
         val_kwargs=dict(
             val_shuffle_buffer_size=50,
