@@ -67,9 +67,12 @@ def get_config(config_string="full,multimodal"):
             "filter_functions": [],
         },
     ]
+    
+    total_steps = 150000
+    stage1_steps = 1000
 
     if mode == "full":
-        frozen_keys = None
+       frozen_keys = None
     elif mode == "head_only":
         frozen_keys = ("octo_transformer.*",)
     else: # head_mlp_only
@@ -79,7 +82,7 @@ def get_config(config_string="full,multimodal"):
             "heads_*.map_head.MultiHeadDotProductAttention_0.*",
         )
 
-    max_steps = FieldReference(150000)
+    max_steps = FieldReference(total_steps)
     window_size = FieldReference(default=2)
 
     config = dict(
@@ -87,33 +90,50 @@ def get_config(config_string="full,multimodal"):
         pretrained_step=placeholder(int),
         batch_size=4,
         shuffle_buffer_size=100,
-        num_steps=150000, # was 150000
+        num_steps=total_steps,
         log_interval=100, # was 100
         eval_interval=5000, # was 5000
         save_interval=5000, # was 5000
         save_dir=placeholder(str),
         seed=42,
         wandb=dict(
-            project="octo_vggt_finetune", group=placeholder(str), entity=placeholder(str)
+            project="octo_vggt_finetune_staged", group=placeholder(str), entity=placeholder(str)
         ),
         dataset_kwargs_list=DATASET_KWARGS_LIST,
         modality=task,
         finetuning_mode=mode,
         window_size=window_size,
+        stage1_steps=stage1_steps,
         optimizer=dict(
             learning_rate=dict(
                 name="cosine",
                 init_value=0.0,
                 peak_value=1e-5,
-                warmup_steps=2000,
+                warmup_steps=5000,
                 decay_steps=max_steps,
                 end_value=0.0,
             ),
             grad_accumulation_steps=16,
             weight_decay=0.01,
-            clip_gradient=0.5,
+            clip_gradient=0.1,
             frozen_keys=frozen_keys,
         ),
+        
+        stage2_optimizer=dict(
+            learning_rate=dict(
+                name="cosine",
+                init_value=0.0,
+                peak_value=1e-6,
+                warmup_steps=5000,
+                decay_steps=total_steps - stage1_steps, # remaining steps
+                end_value=0.0,
+            ),
+            grad_accumulation_steps=16,
+            weight_decay=0.01,
+            clip_gradient=0.1,
+            frozen_keys=None,
+            ),
+        
         val_kwargs=dict(
             val_shuffle_buffer_size=50,
             num_val_batches=2,
