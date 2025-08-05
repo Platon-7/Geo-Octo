@@ -29,6 +29,6 @@ source activate octo
 cd octo
 
 srun python scripts/finetune.py \
-    --config=scripts/configs/config_offline.py \
+    --config=scripts/configs/config_offline.py:head_only,multimodal \
     --config.pretrained_path=hf://rail-berkeley/octo-small-1.5 \
     --config.save_dir=./my_octo_vggt_model_offline

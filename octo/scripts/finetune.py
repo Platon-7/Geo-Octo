@@ -15,6 +15,7 @@ from jax.sharding import Mesh, NamedSharding, PartitionSpec
 import optax
 import tensorflow as tf
 import tensorflow_datasets as tfds
+from fnmatch import fnmatch
 import numpy as np
 import tqdm
 import wandb
@@ -63,34 +64,34 @@ def log_memory_usage(step, prefix=""):
     
     # Try to get SLURM memory allocation
     slurm_mem_mb = os.environ.get('SLURM_MEM_PER_NODE')
-    if slurm_mem_mb:
-        try:
-            allocated_gb = int(slurm_mem_mb) / 1024  # Convert MB to GB
-            used_gb = memory.used / (1024**3)
-            usage_percent = (used_gb / allocated_gb) * 100
-            free_gb = allocated_gb - used_gb
+    # if slurm_mem_mb:
+    #     try:
+    #         allocated_gb = int(slurm_mem_mb) / 1024  # Convert MB to GB
+    #         used_gb = memory.used / (1024**3)
+    #         usage_percent = (used_gb / allocated_gb) * 100
+    #         free_gb = allocated_gb - used_gb
             
-            print(f"{prefix}Step {step}:")
-            print(f"  Allocated RAM: {usage_percent:.1f}% ({used_gb:.1f}GB used, {free_gb:.1f}GB free of {allocated_gb:.0f}GB allocated)")
-        except (ValueError, TypeError):
-            # Fallback to system memory if SLURM parsing fails
-            print(f"{prefix}Step {step}:")
-            print(f"  System RAM: {memory.percent}% ({memory.used/1024**3:.1f}GB used, {memory.available/1024**3:.1f}GB free)")
-    else:
-        # Fallback to system memory if no SLURM environment
-        print(f"{prefix}Step {step}:")
-        print(f"  System RAM: {memory.percent}% ({memory.used/1024**3:.1f}GB used, {memory.available/1024**3:.1f}GB free)")
+    #         print(f"{prefix}Step {step}:")
+    #         print(f"  Allocated RAM: {usage_percent:.1f}% ({used_gb:.1f}GB used, {free_gb:.1f}GB free of {allocated_gb:.0f}GB allocated)")
+    #     except (ValueError, TypeError):
+    #         # Fallback to system memory if SLURM parsing fails
+    #         print(f"{prefix}Step {step}:")
+    #         print(f"  System RAM: {memory.percent}% ({memory.used/1024**3:.1f}GB used, {memory.available/1024**3:.1f}GB free)")
+    # else:
+    #     # Fallback to system memory if no SLURM environment
+    #     print(f"{prefix}Step {step}:")
+    #     print(f"  System RAM: {memory.percent}% ({memory.used/1024**3:.1f}GB used, {memory.available/1024**3:.1f}GB free)")
     
-    print(f"  Python objects: {len(gc.get_objects())}")
+    # print(f"  Python objects: {len(gc.get_objects())}")
     
     # TensorFlow GPU memory (with error handling)
-    try:
-        if tf.config.list_physical_devices('GPU'):
-            tf_memory = tf.config.experimental.get_memory_info('GPU:0')
-            print(f"  TF GPU memory: {tf_memory}")
-    except Exception as e:
-        # Silently skip GPU memory info if not available
-        pass
+    # try:
+    #     if tf.config.list_physical_devices('GPU'):
+    #         tf_memory = tf.config.experimental.get_memory_info('GPU:0')
+    #         print(f"  TF GPU memory: {tf_memory}")
+    # except Exception as e:
+    #     # Silently skip GPU memory info if not available
+    #     pass
 
 def main(_):
     set_memory_env_variables()
@@ -235,9 +236,26 @@ def main(_):
         action_loss, action_metrics = bound_module.heads["action"].loss(transformer_embeddings, batch["action"], batch["observation"]["timestep_pad_mask"], batch["action_pad_mask"], train=train)
         return action_loss, action_metrics
 
-    def analyze_gradients(grads, step, stage):
+    def analyze_gradients(grads, step, stage, frozen_keys: list | tuple | None):
         """Analyze gradient statistics to understand training instability."""
+        if frozen_keys is None:
+            frozen_keys = []
+
+        # Manually zero-out gradients for frozen layers before analysis
+        param_partitions = flax.traverse_util.path_aware_map(
+            lambda path, v: "frozen"
+            if any([fnmatch(".".join(path), key) for key in frozen_keys])
+            else "trainable",
+            grads,
+        )
+        processed_grads = jax.tree_map(
+            lambda g, p: jnp.zeros_like(g) if p == 'frozen' else g,
+            grads,
+            param_partitions
+        )
+
         def get_grad_stats(grad_tree, prefix=""):
+            # This inner function remains the same
             stats = {}
             if isinstance(grad_tree, dict):
                 for key, value in grad_tree.items():
@@ -250,46 +268,44 @@ def main(_):
                         grad_mean = jnp.mean(jnp.abs(value))
                         stats[f"{prefix}.{key}" if prefix else key] = {
                             "norm": float(grad_norm),
-                            "max": float(grad_max), 
+                            "max": float(grad_max),
                             "mean": float(grad_mean)
                         }
             return stats
-        
-        grad_stats = get_grad_stats(grads)
-        
-        # Print key gradient statistics
+
+        # IMPORTANT: Use the processed_grads for analysis
+        grad_stats = get_grad_stats(processed_grads)
+
+        # The rest of the function remains the same...
         print(f"\n=== GRADIENT ANALYSIS Step {step} (Stage {stage}) ===")
-        
-        # Focus on adapters vs transformer
         adapter_grads = {k: v for k, v in grad_stats.items() if "norm_adapter" in k}
         transformer_grads = {k: v for k, v in grad_stats.items() if "octo_transformer" in k and "norm_adapter" not in k}
         head_grads = {k: v for k, v in grad_stats.items() if "heads" in k}
-        
+
         print(f"📊 ADAPTER gradients ({len(adapter_grads)} components):")
-        for name, stats in list(adapter_grads.items())[:5]:  # Show first 5
+        for name, stats in list(adapter_grads.items())[:5]:
             print(f"  {name}: norm={stats['norm']:.2e}, max={stats['max']:.2e}")
-        
+
         print(f"🧠 TRANSFORMER gradients ({len(transformer_grads)} components):")
-        for name, stats in list(transformer_grads.items())[:5]:  # Show first 5  
+        for name, stats in list(transformer_grads.items())[:5]:
             print(f"  {name}: norm={stats['norm']:.2e}, max={stats['max']:.2e}")
-            
+
         print(f"🎯 HEAD gradients ({len(head_grads)} components):")
-        for name, stats in list(head_grads.items())[:3]:  # Show first 3
+        for name, stats in list(head_grads.items())[:3]:
             print(f"  {name}: norm={stats['norm']:.2e}, max={stats['max']:.2e}")
-        
-        # Overall statistics
-        all_norms = [stats['norm'] for stats in grad_stats.values()]
-        all_maxes = [stats['max'] for stats in grad_stats.values()]
-        
+
+        all_norms = [stats['norm'] for stats in grad_stats.values() if stats['norm'] > 0]
+        all_maxes = [stats['max'] for stats in grad_stats.values() if stats['max'] > 0]
+        min_norm = min(all_norms) if all_norms else 0.0
+
         print(f"🔥 OVERALL: max_norm={max(all_norms):.2e}, max_value={max(all_maxes):.2e}")
-        print(f"📈 RANGE: norm_range=[{min(all_norms):.2e}, {max(all_norms):.2e}]")
-        
-        # Check for potential issues
+        print(f"📈 RANGE: norm_range=[{min_norm:.2e}, {max(all_norms):.2e}]")
+
         if max(all_norms) > 1e3:
             print("⚠️  WARNING: Very large gradient norms detected!")
         if max(all_maxes) > 1e6:
             print("🚨 CRITICAL: Extremely large gradient values detected!")
-            
+
         return grad_stats
 
     @partial(jax.jit, in_shardings=[replicated_sharding, dp_sharding])
@@ -345,7 +361,7 @@ def main(_):
                 logging.info(f"✅ Successfully switched to Stage 2 optimizer with reinitialized state")
                 
                 # Log to wandb
-                wandb.log({"stage_transition": 2, "unfrozen_training_start": True}, step=i)
+                wandb.log({"stage_transition": 2, "unfrozen_training_start": 1}, step=i)
             else:
                 logging.warning("⚠️ Stage 2 optimizer not configured, continuing with Stage 1 settings")
             
@@ -358,12 +374,19 @@ def main(_):
             model_batch = prune_batch_for_jax(batch)
             train_state, update_info, grads = train_step(train_state, model_batch)
             
-            # Gradient analysis around stage transition and when issues occur
-            if (i < 10 or  # First few steps 
-                (stage1_steps > 0 and abs(i - stage1_steps) < 5) or  # Around stage transition
-                i % 1000 == 0):  # Every 1000 steps
-                analyze_gradients(grads, i, current_stage)
-        timer.tock("total")
+            if (i < 10 or
+                (stage1_steps > 0 and abs(i - stage1_steps) < 5) or
+                i % 1000 == 0):
+
+                # Determine which keys should be frozen for the analysis
+                frozen_keys_for_logging = None
+                if current_stage == 1:
+                    # Access the keys from the optimizer sub-config
+                    frozen_keys_for_logging = config.optimizer.frozen_keys
+
+                analyze_gradients(grads, i, current_stage, frozen_keys_for_logging)
+                
+            timer.tock("total")
 
         if (i + 1) % config["log_interval"] == 0:
             avg_times = timer.get_average_times()
@@ -400,15 +423,15 @@ def main(_):
             # CPU/RAM usage
             cpu_percent = psutil.cpu_percent()
             memory = psutil.virtual_memory()
-            print(f"Step {i}: CPU {cpu_percent}%, RAM {memory.percent}% ({memory.available/1024**3:.1f}GB free)")
+            #print(f"Step {i}: CPU {cpu_percent}%, RAM {memory.percent}% ({memory.available/1024**3:.1f}GB free)")
             
-            # GPU usage
-            try:
-                gpus = GPUtil.getGPUs()
-                for gpu in gpus:
-                    print(f"  GPU {gpu.id}: {gpu.memoryUtil*100:.1f}% memory, {gpu.load*100:.1f}% util")
-            except:
-                pass
+            # # GPU usage
+            # try:
+            #     gpus = GPUtil.getGPUs()
+            #     for gpu in gpus:
+            #         print(f"  GPU {gpu.id}: {gpu.memoryUtil*100:.1f}% memory, {gpu.load*100:.1f}% util")
+            # except:
+            #     pass
     
         if i % 50 == 0:
             force_cleanup()

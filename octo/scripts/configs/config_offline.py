@@ -69,12 +69,12 @@ def get_config(config_string="full,multimodal"):
     ]
     
     total_steps = 150000
-    stage1_steps = 1000
+    stage1_steps = 5000
 
     if mode == "full":
        frozen_keys = None
     elif mode == "head_only":
-        frozen_keys = ("octo_transformer.*",)
+        frozen_keys = ("octo_transformer.BlockTransformer_*",)
     else: # head_mlp_only
         frozen_keys = (
             "octo_transformer.*",
@@ -123,7 +123,7 @@ def get_config(config_string="full,multimodal"):
             learning_rate=dict(
                 name="cosine",
                 init_value=0.0,
-                peak_value=1e-6,
+                peak_value=1e-7,
                 warmup_steps=5000,
                 decay_steps=total_steps - stage1_steps, # remaining steps
                 end_value=0.0,
