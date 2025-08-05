@@ -332,6 +332,11 @@ def main(_):
     timer = Timer()
     val_data_iter = None
     
+    # Early stopping variables
+    best_val_loss = float('inf')
+    val_loss_increases = 0
+    early_stop_patience = 5  # Stop if validation loss increases for 5 consecutive evaluations
+    
     for i in tqdm.tqdm(range(int(config["num_steps"])), total=int(config["num_steps"]), dynamic_ncols=True):
         
         # Staged Training Transition Check
@@ -469,6 +474,24 @@ def main(_):
             # Aggregate and log the metrics
             metrics = jax.tree_map(lambda *xs: np.mean([x for x in xs]), *metrics)
             wandb.log({"validation": metrics}, step=i)
+            
+            # Early stopping check
+            current_val_loss = float(metrics.get('loss', metrics.get('action_loss', float('inf'))))
+            if current_val_loss < best_val_loss:
+                best_val_loss = current_val_loss
+                val_loss_increases = 0
+                logging.info(f"✅ New best validation loss: {best_val_loss:.6f}")
+            else:
+                val_loss_increases += 1
+                logging.warning(f"⚠️ Validation loss increased ({val_loss_increases}/{early_stop_patience}): {current_val_loss:.6f} > {best_val_loss:.6f}")
+                
+                if val_loss_increases >= early_stop_patience:
+                    logging.error(f"🛑 Early stopping triggered! Validation loss increased {early_stop_patience} times consecutively.")
+                    logging.error(f"   Best val loss: {best_val_loss:.6f}, Current: {current_val_loss:.6f}")
+                    if save_dir:
+                        save_callback(train_state, i + 1)
+                        logging.info(f"💾 Saved model before early stopping at step {i + 1}")
+                    break
             
             # log_memory_usage(i, "AFTER validation: ")
             gc.collect()

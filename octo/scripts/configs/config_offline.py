@@ -69,7 +69,7 @@ def get_config(config_string="full,multimodal"):
     ]
     
     total_steps = 150000
-    stage1_steps = 5000
+    stage1_steps = 2000  # Reduced from 5000 for simpler transition
 
     if mode == "full":
        frozen_keys = None
@@ -89,10 +89,10 @@ def get_config(config_string="full,multimodal"):
         pretrained_path=placeholder(str),
         pretrained_step=placeholder(int),
         batch_size=4,
-        shuffle_buffer_size=100,
+        shuffle_buffer_size=500,  # Increased for better data diversity
         num_steps=total_steps,
         log_interval=100, # was 100
-        eval_interval=5000, # was 5000
+        eval_interval=2500, # More frequent validation to catch issues early
         save_interval=5000, # was 5000
         save_dir=placeholder(str),
         seed=42,
@@ -108,14 +108,14 @@ def get_config(config_string="full,multimodal"):
             learning_rate=dict(
                 name="cosine",
                 init_value=0.0,
-                peak_value=1e-5,
+                peak_value=3e-6,  # More conservative but not too small
                 warmup_steps=5000,
                 decay_steps=max_steps,
                 end_value=0.0,
             ),
             grad_accumulation_steps=16,
             weight_decay=0.01,
-            clip_gradient=0.1,
+            clip_gradient=1.0,  # Much more reasonable clipping
             frozen_keys=frozen_keys,
         ),
         
@@ -123,20 +123,20 @@ def get_config(config_string="full,multimodal"):
             learning_rate=dict(
                 name="cosine",
                 init_value=0.0,
-                peak_value=1e-7,
-                warmup_steps=5000,
+                peak_value=1e-6,  # Still conservative but 10x larger than before
+                warmup_steps=2000,  # Shorter warmup for stage 2
                 decay_steps=total_steps - stage1_steps, # remaining steps
                 end_value=0.0,
             ),
             grad_accumulation_steps=16,
             weight_decay=0.01,
-            clip_gradient=0.1,
+            clip_gradient=1.0,  # Consistent clipping
             frozen_keys=None,
             ),
         
         val_kwargs=dict(
-            val_shuffle_buffer_size=50,
-            num_val_batches=2,
+            val_shuffle_buffer_size=200,  # Increased for better validation data diversity
+            num_val_batches=5,  # More validation batches for stable metrics
         ),
         viz_kwargs=dict(
             eval_batch_size=4,
@@ -188,6 +188,11 @@ def get_config(config_string="full,multimodal"):
                 "image": None
             }
         }
+    }
+    
+    # Disable normalization adapters for stability
+    config['update_config'] = {
+        "use_input_normalization": False,
     }
 
     return ConfigDict(config)
