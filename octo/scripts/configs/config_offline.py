@@ -108,7 +108,7 @@ def get_config(config_string="full,multimodal"):
             learning_rate=dict(
                 name="cosine",
                 init_value=0.0,
-                peak_value=1e-5,
+                peak_value=2e-6,
                 warmup_steps=5000,
                 decay_steps=max_steps,
                 end_value=0.0,
@@ -123,20 +123,20 @@ def get_config(config_string="full,multimodal"):
             learning_rate=dict(
                 name="cosine",
                 init_value=0.0,
-                peak_value=1e-7,
+                peak_value=1e-6,
                 warmup_steps=5000,
                 decay_steps=total_steps - stage1_steps, # remaining steps
                 end_value=0.0,
             ),
             grad_accumulation_steps=16,
             weight_decay=0.01,
-            clip_gradient=0.1,
+            clip_gradient=1.0,
             frozen_keys=None,
             ),
         
         val_kwargs=dict(
             val_shuffle_buffer_size=50,
-            num_val_batches=2,
+            num_val_batches=10,
         ),
         viz_kwargs=dict(
             eval_batch_size=4,
