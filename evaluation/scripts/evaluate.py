@@ -70,7 +70,7 @@ LIBERO_DIR = "LIBERO"
 print("="*50)
 print("OCTO MODEL EVALUATION SCRIPT (DUMMY TEST)")
 print("="*50)
-print("Note: This is a simplified test using dummy VGGT tokens and proprioception.")
+print("Note: This test uses real proprioception but dummy VGGT tokens.")
 print("For full evaluation, live VGGT token extraction would be needed.")
 print("="*50)
 
