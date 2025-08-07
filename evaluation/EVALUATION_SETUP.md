@@ -92,6 +92,13 @@ The script will:
 
 ## Troubleshooting
 
+### JAX Compatibility Issues
+If you get errors about `jax.numpy.DeviceArray`, this is a version compatibility issue. Use the fixed script:
+```bash
+python evaluation/scripts/fix_jax_compatibility.py
+```
+Or run the regular script which now includes the fix automatically.
+
 ### Environment Issues
 If you get import errors, ensure:
 - The conda environment is activated

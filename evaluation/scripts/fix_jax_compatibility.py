@@ -1,3 +1,8 @@
+#!/usr/bin/env python3
+"""
+Fix JAX compatibility issue with transformers library.
+This script adds a compatibility shim for the deprecated DeviceArray.
+"""
 
 import sys
 import warnings
@@ -26,7 +31,6 @@ print('NumPy Path:', numpy.__file__)
 print('\n--- Attempting to import cv2 ---')
 import cv2
 print('cv2 imported successfully!')
-
 
 import os
 import cv2
@@ -68,7 +72,7 @@ os.makedirs(OUTPUT_DIR, exist_ok=True)
 LIBERO_DIR = "LIBERO"
 
 print("="*50)
-print("OCTO MODEL EVALUATION SCRIPT")
+print("OCTO MODEL EVALUATION SCRIPT (JAX FIXED)")
 print("="*50)
 
 # ==============================================================================
