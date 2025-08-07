@@ -108,7 +108,7 @@ If you get import errors, ensure:
 ### Path Issues
 If you get file not found errors:
 - Verify the model checkpoint path exists
-- Verify the LIBERO dataset path exists
+- Verify the LIBERO dataset path exists (Note: LIBERO datasets are handled automatically by the benchmark, not via data_dir parameter)
 - Ensure you're running from the `/workspace` directory
 
 ### Model Issues

@@ -90,8 +90,8 @@ try:
     print(f"[INFO] Accessing benchmark suite: {TASK_SUITE_NAME}")
     benchmark_dict = benchmark.get_benchmark_dict()
     
-    # CRITICAL: Pass the 'data_dir' to tell LIBERO where your datasets are
-    task_suite = benchmark_dict[TASK_SUITE_NAME](data_dir=DATASET_DIR)
+    # Initialize the task suite (LIBERO handles datasets differently)
+    task_suite = benchmark_dict[TASK_SUITE_NAME]()
 
     # Pick a random task if no specific ID is given
     if EVAL_TASK_ID is None:

@@ -32,7 +32,7 @@ try:
     # Initialize LIBERO environment
     print(f"[INFO] Accessing benchmark suite: {TASK_SUITE_NAME}")
     benchmark_dict = benchmark.get_benchmark_dict()
-    task_suite = benchmark_dict[TASK_SUITE_NAME](data_dir=DATASET_DIR)
+    task_suite = benchmark_dict[TASK_SUITE_NAME]()
     
     # Pick a random task
     EVAL_TASK_ID = random.randint(0, task_suite.n_tasks - 1)
