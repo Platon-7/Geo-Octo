@@ -171,31 +171,63 @@ try:
     
     # Initialize observation history for window_size=2
     obs_history = [obs["agentview_image"], obs["agentview_image"]]  # Duplicate first frame
+    
+    # Extract initial proprioceptive state
+    def extract_proprio(obs_dict):
+        """Extract proprioceptive information from LIBERO observations."""
+        # Combine relevant proprioceptive information
+        proprio_data = []
+        
+        # Robot joint positions (7 DOF)
+        if "robot0_joint_pos" in obs_dict:
+            proprio_data.append(obs_dict["robot0_joint_pos"])
+        
+        # End-effector position and orientation 
+        if "robot0_eef_pos" in obs_dict:
+            proprio_data.append(obs_dict["robot0_eef_pos"])
+        if "robot0_eef_quat" in obs_dict:
+            proprio_data.append(obs_dict["robot0_eef_quat"])
+            
+        # Gripper state
+        if "robot0_gripper_qpos" in obs_dict:
+            proprio_data.append(obs_dict["robot0_gripper_qpos"])
+            
+        # Concatenate all proprioceptive data
+        if proprio_data:
+            return np.concatenate(proprio_data)
+        else:
+            # Fallback if keys are different
+            return np.zeros(14)  # Reasonable size for robot state
+    
+    proprio_history = [extract_proprio(obs), extract_proprio(obs)]  # Duplicate first frame
 
     for step in range(NUM_TIMESTEPS):
         # Prepare observation for the model
         current_image = obs["agentview_image"]
+        current_proprio = extract_proprio(obs)
         
-        # Update observation history (window_size=2)
+        # Update observation histories (window_size=2)
         obs_history = obs_history[1:] + [current_image]
+        proprio_history = proprio_history[1:] + [current_proprio]
         
-        # Stack images for window
+        # Stack for window
         image_stack = np.stack(obs_history, axis=0)  # (window_size, H, W, C)
+        proprio_stack = np.stack(proprio_history, axis=0)  # (window_size, proprio_dim)
         
-        # Create simplified observation format for dummy testing
-        # We'll provide minimal required keys and dummy values for the rest
+        # Create observation format with real proprioception
         model_observation = {
             "image_primary": image_stack[None, ...],  # Add batch dimension: (1, window_size, H, W, C)
             "timestep_pad_mask": np.array([[True, True]], dtype=bool),  # No padding for both timesteps
-            # Dummy values for required keys (not extracted live for this test)
-            "vggt_tokens": np.zeros((1, 2, 512), dtype=np.float32),  # Dummy - would need live extraction for real use
-            "proprio": np.zeros((1, 2, 7), dtype=np.float32),  # Dummy - could be extracted from robot state if needed
+            # Real proprioceptive data from LIBERO
+            "proprio": proprio_stack[None, ...],  # Real robot state data
+            # Dummy values only for VGGT tokens (would need live extraction for real use)
+            "vggt_tokens": np.zeros((1, 2, 512), dtype=np.float32),  # Dummy - would need live extraction
             "timestep": np.array([[step, step+1]], dtype=np.int32),  # Actual timestep indices
             "task_completed": np.array([[False, False]], dtype=bool),  # Task completion status
             "pad_mask_dict": {
                 "image_primary": np.array([[True, True]], dtype=bool),
+                "proprio": np.array([[True, True]], dtype=bool),        # Real data - mark as valid
                 "vggt_tokens": np.array([[False, False]], dtype=bool),  # Mark as invalid/dummy
-                "proprio": np.array([[False, False]], dtype=bool),     # Mark as invalid/dummy  
                 "timestep": np.array([[True, True]], dtype=bool),
             }
         }
