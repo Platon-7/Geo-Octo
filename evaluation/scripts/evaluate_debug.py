@@ -1,0 +1,255 @@
+#!/usr/bin/env python3
+"""
+Debug version of the evaluation script that helps identify checkpoint path issues.
+"""
+
+import sys
+print('--- Python Executable ---')
+print(sys.executable)
+print('\n--- Python Path ---')
+print(sys.path)
+
+import os
+import cv2
+import numpy as np
+import jax
+import jax.numpy as jnp
+import random
+from functools import partial
+
+# Octo / LIBERO Imports
+from octo.model.octo_model import OctoModel
+from octo.utils.train_callbacks import supply_rng
+from libero.libero import benchmark
+from libero.libero.envs import OffScreenRenderEnv
+
+# ==============================================================================
+# (0) Configuration - WITH PATH DEBUGGING
+# ==============================================================================
+print("="*50)
+print("OCTO MODEL EVALUATION SCRIPT (DEBUG VERSION)")
+print("="*50)
+
+# Original path from user
+ORIGINAL_MODEL_PATH = "/home/pkarageorgis/geo_octo/octo/my_octo_vggt_model_offline/octo_vggt_finetune_staged/experiment_20250805_112710_BEST_RUN/150000/default/checkpoint"
+
+# Let's try to find the correct path
+print(f"\n[DEBUG] Original model path: {ORIGINAL_MODEL_PATH}")
+print(f"[DEBUG] Path exists: {os.path.exists(ORIGINAL_MODEL_PATH)}")
+print(f"[DEBUG] Is directory: {os.path.isdir(ORIGINAL_MODEL_PATH)}")
+
+if os.path.exists(ORIGINAL_MODEL_PATH):
+    print(f"[DEBUG] Path type: {'directory' if os.path.isdir(ORIGINAL_MODEL_PATH) else 'file'}")
+    if os.path.isdir(ORIGINAL_MODEL_PATH):
+        print(f"[DEBUG] Directory contents: {os.listdir(ORIGINAL_MODEL_PATH)}")
+
+# Try alternative paths
+alternative_paths = [
+    "/home/pkarageorgis/geo_octo/octo/my_octo_vggt_model_offline/octo_vggt_finetune_staged/experiment_20250805_112710_BEST_RUN/150000/default",
+    "/home/pkarageorgis/geo_octo/octo/my_octo_vggt_model_offline/octo_vggt_finetune_staged/experiment_20250805_112710_BEST_RUN/150000",
+    "/home/pkarageorgis/geo_octo/octo/my_octo_vggt_model_offline/octo_vggt_finetune_staged/experiment_20250805_112710_BEST_RUN",
+]
+
+MODEL_PATH = None
+for path in [ORIGINAL_MODEL_PATH] + alternative_paths:
+    print(f"\n[DEBUG] Checking path: {path}")
+    if os.path.exists(path) and os.path.isdir(path):
+        # Check if it contains the required Octo files
+        required_files = ['config.json', 'example_batch.msgpack', 'dataset_statistics.json']
+        contents = os.listdir(path)
+        print(f"[DEBUG] Directory contents: {contents}")
+        
+        has_required = all(f in contents for f in required_files)
+        print(f"[DEBUG] Has required files: {has_required}")
+        
+        if has_required:
+            MODEL_PATH = path
+            print(f"[SUCCESS] Found valid checkpoint directory: {MODEL_PATH}")
+            break
+    else:
+        print(f"[DEBUG] Path doesn't exist or not a directory")
+
+if MODEL_PATH is None:
+    print("\n[ERROR] Could not find a valid checkpoint directory!")
+    print("Please run the checkpoint finder script:")
+    print("python evaluation/scripts/find_checkpoint.py")
+    sys.exit(1)
+
+# Other configuration
+DATASET_DIR = "/scratch-shared/tmp.cwkV8vOvfY/libero_evaluation"
+TASK_SUITE_NAME = "libero_10" 
+EVAL_TASK_ID = None 
+NUM_TIMESTEPS = 200
+
+OUTPUT_DIR = "evaluation/test_outputs"
+os.makedirs(OUTPUT_DIR, exist_ok=True)
+LIBERO_DIR = "LIBERO"
+
+# ==============================================================================
+# (1) Load the Fine-Tuned Octo Model
+# ==============================================================================
+print(f"\n[INFO] Loading Octo model from: {MODEL_PATH}")
+
+try:
+    model = OctoModel.load_pretrained(MODEL_PATH)
+    print("[SUCCESS] Octo model loaded.\n")
+except Exception as e:
+    print(f"[ERROR] Failed to load model: {e}")
+    print("\nDebugging info:")
+    print(f"- Checkpoint path: {MODEL_PATH}")
+    print(f"- Directory exists: {os.path.exists(MODEL_PATH)}")
+    print(f"- Is directory: {os.path.isdir(MODEL_PATH)}")
+    if os.path.exists(MODEL_PATH):
+        print(f"- Contents: {os.listdir(MODEL_PATH)}")
+    sys.exit(1)
+
+# Main try block to ensure the environment is closed properly
+try:
+    # ==============================================================================
+    # (2) Initialize the LIBERO Environment
+    # ==============================================================================
+    print(f"[INFO] Accessing benchmark suite: {TASK_SUITE_NAME}")
+    benchmark_dict = benchmark.get_benchmark_dict()
+    
+    # CRITICAL: Pass the 'data_dir' to tell LIBERO where your datasets are
+    task_suite = benchmark_dict[TASK_SUITE_NAME](data_dir=DATASET_DIR)
+
+    # Pick a random task if no specific ID is given
+    if EVAL_TASK_ID is None:
+        EVAL_TASK_ID = random.randint(0, task_suite.n_tasks - 1)
+        print(f"[INFO] No task ID specified. Randomly selected task #{EVAL_TASK_ID}")
+
+    task = task_suite.get_task(EVAL_TASK_ID)
+    task_name = task.name
+    language_instruction = task.language # Get the language goal for the model
+
+    # Construct BDDL path (same as before)
+    bddl_file_path = os.path.join(LIBERO_DIR, "libero", "libero", "bddl_files", task.problem_folder, task.bddl_file)
+
+    print(f"[SUCCESS] Retrieved task '{task_name}'")
+    print(f"    - Language instruction: '{language_instruction}'\n")
+
+    # Initialize the simulation environment
+    env_args = {"bddl_file_name": bddl_file_path, "camera_heights": 128, "camera_widths": 128}
+    env = OffScreenRenderEnv(**env_args)
+    
+    # ==============================================================================
+    # (3) Create Task Specification and Policy Function
+    # ==============================================================================
+    # Create task specification using model's utility function
+    task_spec = model.create_tasks(texts=[language_instruction])
+    print(f"[INFO] Created task specification for: '{language_instruction}'")
+    
+    # Create policy function with proper normalization
+    print("[INFO] Setting up policy function...")
+    
+    # Get the available dataset statistics
+    available_datasets = list(model.dataset_statistics.keys())
+    print(f"[INFO] Available dataset statistics: {available_datasets}")
+    
+    # Try to find appropriate action statistics - use the first available dataset
+    if available_datasets:
+        action_stats = model.dataset_statistics[available_datasets[0]]["action"]
+        print(f"[INFO] Using action statistics from: {available_datasets[0]}")
+    else:
+        # Fallback: create basic statistics for 7-DOF actions (robot joint + gripper)
+        action_stats = {
+            "mean": np.zeros(7),
+            "std": np.ones(7)
+        }
+        print("[WARNING] No dataset statistics found, using default normalization")
+    
+    # Create policy function
+    policy_fn = supply_rng(
+        partial(
+            model.sample_actions,
+            unnormalization_statistics=action_stats,
+            train=False,
+        ),
+    )
+    
+    # ==============================================================================
+    # (4) Run the Evaluation Loop
+    # ==============================================================================
+    print("[INFO] Starting evaluation loop...")
+    
+    # Reset env and set a deterministic initial state from the dataset
+    env.seed(0)
+    env.reset()
+    init_states = task_suite.get_task_init_states(EVAL_TASK_ID)
+    env.set_init_state(init_states[0]) # Use the first initial state
+
+    # Get the first observation by stepping with a dummy action
+    obs, _, _, _ = env.step([0.0] * 7)
+    
+    # List to store frames for video
+    frames = []
+
+    for step in range(NUM_TIMESTEPS):
+        # Prepare observation for the model
+        image = obs["agentview_image"]
+        
+        # Create proper observation format with batch and sequence dimensions
+        # Model expects: (batch_size, window_size, height, width, channels)
+        model_observation = {
+            "image_primary": image[None, None, ...],  # Add batch and window dimensions
+            "timestep_pad_mask": np.array([[True]], dtype=bool)  # No padding
+        }
+
+        # Get action from the model
+        actions = policy_fn(model_observation, task_spec)
+        
+        # Remove batch dimension and take first action if action chunking is used
+        if actions.ndim == 3:  # (batch, action_horizon, action_dim)
+            predicted_action = actions[0, 0]  # Take first action from sequence
+        else:
+            predicted_action = actions[0]  # Just remove batch dim
+        
+        # Convert to numpy if needed
+        if hasattr(predicted_action, 'numpy'):
+            predicted_action = predicted_action.numpy()
+        
+        # Step the environment with the model's action
+        obs, reward, done, info = env.step(predicted_action)
+        
+        # Render the frame for the video
+        current_frame = obs["agentview_image"]
+        frames.append(cv2.cvtColor(current_frame, cv2.COLOR_RGB2BGR)) # Convert to BGR for OpenCV
+
+        print(f"    - Step {step+1}/{NUM_TIMESTEPS}: Reward={reward}, Done={done}")
+
+        if done:
+            print("[INFO] Task succeeded! Episode finished early.")
+            break
+            
+    print("[SUCCESS] Evaluation loop completed.\n")
+
+    # ==============================================================================
+    # (5) Save Video of the Episode
+    # ==============================================================================
+    if frames:
+        print("[INFO] Saving episode video...")
+        video_path = os.path.join(OUTPUT_DIR, f"octo_eval_{TASK_SUITE_NAME}_{EVAL_TASK_ID}.mp4")
+        height, width, layers = frames[0].shape
+        # Use 'mp4v' codec for MP4 files
+        video_writer = cv2.VideoWriter(video_path, cv2.VideoWriter_fourcc(*'mp4v'), 20, (width, height))
+        for frame in frames:
+            video_writer.write(frame)
+        video_writer.release()
+        print(f"[SUCCESS] Video saved to: {video_path}\n")
+
+except Exception as e:
+    print(f"\n[ERROR] An error occurred during the evaluation: {e}")
+    import traceback
+    traceback.print_exc()
+
+finally:
+    # ==============================================================================
+    # (6) Clean Up
+    # ==============================================================================
+    if 'env' in locals() and 'env' in vars():
+        env.close()
+        print("[INFO] Environment closed.")
+    print("="*50)
+    print("EVALUATION SCRIPT FINISHED")
+    print("="*50)
