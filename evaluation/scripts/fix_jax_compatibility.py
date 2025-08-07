@@ -175,29 +175,25 @@ try:
     # Extract initial proprioceptive state
     def extract_proprio(obs_dict):
         """Extract proprioceptive information from LIBERO observations."""
-        # Combine relevant proprioceptive information
-        proprio_data = []
+        # Model expects exactly 7 dimensions for proprioception
+        # Use only the most essential robot state information
         
-        # Robot joint positions (7 DOF)
+        # Robot joint positions (7 DOF) - this should be exactly what we need
         if "robot0_joint_pos" in obs_dict:
-            proprio_data.append(obs_dict["robot0_joint_pos"])
-        
-        # End-effector position and orientation 
-        if "robot0_eef_pos" in obs_dict:
-            proprio_data.append(obs_dict["robot0_eef_pos"])
-        if "robot0_eef_quat" in obs_dict:
-            proprio_data.append(obs_dict["robot0_eef_quat"])
-            
-        # Gripper state
-        if "robot0_gripper_qpos" in obs_dict:
-            proprio_data.append(obs_dict["robot0_gripper_qpos"])
-            
-        # Concatenate all proprioceptive data
-        if proprio_data:
-            return np.concatenate(proprio_data)
+            joint_pos = obs_dict["robot0_joint_pos"]
+            if len(joint_pos) == 7:
+                return joint_pos
+            else:
+                # Pad or truncate to 7 dimensions
+                if len(joint_pos) > 7:
+                    return joint_pos[:7]
+                else:
+                    padded = np.zeros(7)
+                    padded[:len(joint_pos)] = joint_pos
+                    return padded
         else:
-            # Fallback if keys are different
-            return np.zeros(14)  # Reasonable size for robot state
+            # Fallback: use zeros for 7-DOF robot
+            return np.zeros(7)
     
     proprio_history = [extract_proprio(obs), extract_proprio(obs)]  # Duplicate first frame
 
@@ -214,16 +210,16 @@ try:
         image_stack = np.stack(obs_history, axis=0)  # (window_size, H, W, C)
         proprio_stack = np.stack(proprio_history, axis=0)  # (window_size, proprio_dim)
         
-        # Create observation format with real proprioception
+        # Create observation format with correct shapes
         model_observation = {
             "image_primary": image_stack[None, ...],  # Add batch dimension: (1, window_size, H, W, C)
             "timestep_pad_mask": np.array([[True, True]], dtype=bool),  # No padding for both timesteps
-            # Real proprioceptive data from LIBERO
-            "proprio": proprio_stack[None, ...],  # Real robot state data
-            # Dummy values only for VGGT tokens (would need live extraction for real use)
-            "vggt_tokens": np.zeros((1, 2, 512), dtype=np.float32),  # Dummy - would need live extraction
+            # Real proprioceptive data from LIBERO (7-DOF)
+            "proprio": proprio_stack[None, ...],  # Real robot state data (1, 2, 7)
+            # Dummy values with correct shapes based on model expectations
+            "vggt_tokens": np.zeros((1, 2, 32, 48), dtype=np.float32),  # Correct VGGT shape
             "timestep": np.array([[step, step+1]], dtype=np.int32),  # Actual timestep indices
-            "task_completed": np.array([[False, False]], dtype=bool),  # Task completion status
+            "task_completed": np.array([[[False, False, False, False], [False, False, False, False]]], dtype=bool),  # (1, 2, 4)
             "pad_mask_dict": {
                 "image_primary": np.array([[True, True]], dtype=bool),
                 "proprio": np.array([[True, True]], dtype=bool),        # Real data - mark as valid
