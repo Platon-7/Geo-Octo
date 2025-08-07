@@ -70,8 +70,9 @@ LIBERO_DIR = "LIBERO"
 print("="*50)
 print("OCTO MODEL EVALUATION SCRIPT (DUMMY TEST)")
 print("="*50)
-print("Note: This test uses real proprioception but dummy VGGT tokens.")
-print("For full evaluation, live VGGT token extraction would be needed.")
+print("Note: This test uses real proprioception but dummy VGGT tokens and may bypass language.")
+print("For full evaluation, live VGGT token extraction and proper language tokenization would be needed.")
+print("This is primarily to test if the model inference pipeline works.")
 print("="*50)
 
 # ==============================================================================
@@ -118,9 +119,24 @@ try:
     # ==============================================================================
     # (3) Create Task Specification and Policy Function
     # ==============================================================================
-    # Create task specification using model's utility function
-    task_spec = model.create_tasks(texts=[language_instruction])
-    print(f"[INFO] Created task specification for: '{language_instruction}'")
+    # For this dummy test, let's try bypassing language completely or using a minimal approach
+    print("[INFO] Creating minimal task specification (bypassing complex language processing)...")
+    
+    # Try to create a minimal task that doesn't require the problematic language tokenizer
+    try:
+        # First try the standard approach
+        task_spec = model.create_tasks(texts=[language_instruction])
+        print(f"[INFO] Created standard task specification for: '{language_instruction}'")
+    except Exception as e:
+        print(f"[WARNING] Standard task creation failed: {e}")
+        print("[INFO] Using dummy task specification for this test...")
+        
+        # Create a completely dummy task spec that matches the model's structure
+        # but avoids the problematic language tokenizer
+        task_spec = {
+            "pad_mask_dict": {}
+        }
+        print(f"[INFO] Created dummy task specification (language bypassed for testing)")
     
     # Create policy function with proper normalization
     # We'll try to find appropriate statistics or use default ones
