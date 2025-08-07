@@ -175,6 +175,7 @@ def libero_dataset_download(datasets="all", download_dir=None, check_overwrite=T
         "libero_goal",
         "libero_spatial",
         "libero_100",
+        "libero_10"
     ]
 
     datasets_to_download = [
@@ -182,6 +183,7 @@ def libero_dataset_download(datasets="all", download_dir=None, check_overwrite=T
         "libero_goal",
         "libero_spatial",
         "libero_100",
+        "libero_10"
     ] if datasets == "all" else [datasets]
 
     for dataset_name in datasets_to_download:

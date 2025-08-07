@@ -34,8 +34,10 @@ octo/model/components/transformer.py
 octo/model/components/unet.py
 octo/model/components/vit_encoders.py
 octo/utils/__init__.py
+octo/utils/custom_transforms.py
 octo/utils/gym_wrappers.py
 octo/utils/jax_utils.py
+octo/utils/offline_dataset_transforms.py
 octo/utils/spec.py
 octo/utils/train_callbacks.py
 octo/utils/train_utils.py

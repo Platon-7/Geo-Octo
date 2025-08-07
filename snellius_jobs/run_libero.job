@@ -19,8 +19,11 @@ export WANDB_API_KEY="5d3260b21e8729601f20bfe817abc713a0dcc047"
 export WANDB_ENTITY="nlp-squad"
 export WANDB_PROJECT="Geo_Octo"
 
-source activate libero
+eval "$(conda shell.bash hook)"
 
-#srun -u python run_octo.py
+source activate octo-libero-eval
 
-srun /gpfs/home4/pkarageorgis/.conda/envs/libero/bin/python evaluate_model.py
+export PYTHONPATH=/gpfs/home4/pkarageorgis/geo_octo/LIBERO:$PYTHONPATH
+
+# 2. Now run the srun command. It will inherit the PYTHONPATH we just set.
+srun python /gpfs/home4/pkarageorgis/geo_octo/evaluation/scripts/check_libero.py
