@@ -182,19 +182,20 @@ try:
         # Stack images for window
         image_stack = np.stack(obs_history, axis=0)  # (window_size, H, W, C)
         
-        # Create proper observation format matching model's expectations
+        # Create simplified observation format for dummy testing
+        # We'll provide minimal required keys and dummy values for the rest
         model_observation = {
             "image_primary": image_stack[None, ...],  # Add batch dimension: (1, window_size, H, W, C)
             "timestep_pad_mask": np.array([[True, True]], dtype=bool),  # No padding for both timesteps
-            # Add other required keys with dummy values
-            "vggt_tokens": np.zeros((1, 2, 512), dtype=np.float32),  # Dummy VGGT tokens
-            "proprio": np.zeros((1, 2, 7), dtype=np.float32),  # Dummy proprioception
-            "timestep": np.array([[0, 1]], dtype=np.int32),  # Timestep indices
+            # Dummy values for required keys (not extracted live for this test)
+            "vggt_tokens": np.zeros((1, 2, 512), dtype=np.float32),  # Dummy - would need live extraction for real use
+            "proprio": np.zeros((1, 2, 7), dtype=np.float32),  # Dummy - could be extracted from robot state if needed
+            "timestep": np.array([[step, step+1]], dtype=np.int32),  # Actual timestep indices
             "task_completed": np.array([[False, False]], dtype=bool),  # Task completion status
             "pad_mask_dict": {
                 "image_primary": np.array([[True, True]], dtype=bool),
-                "vggt_tokens": np.array([[True, True]], dtype=bool),
-                "proprio": np.array([[True, True]], dtype=bool),
+                "vggt_tokens": np.array([[False, False]], dtype=bool),  # Mark as invalid/dummy
+                "proprio": np.array([[False, False]], dtype=bool),     # Mark as invalid/dummy  
                 "timestep": np.array([[True, True]], dtype=bool),
             }
         }
