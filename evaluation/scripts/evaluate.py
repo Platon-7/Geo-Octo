@@ -32,7 +32,7 @@ from libero.libero.envs import OffScreenRenderEnv
 # ==============================================================================
 # --- REQUIRED PATHS ---
 # Path to your fine-tuned Octo model checkpoint directory
-MODEL_PATH = "/home/pkarageorgis/geo_octo/octo/my_octo_vggt_model_offline/octo_vggt_finetune_staged/experiment_20250805_112710_BEST_RUN/150000/default/checkpoint"
+MODEL_PATH = "/home/pkarageorgis/geo_octo/octo/my_octo_vggt_model_offline/octo_vggt_finetune_staged/experiment_20250805_112710_BEST_RUN"
 
 # Path to the PARENT directory where you downloaded the datasets
 # This should be the path that CONTAINS the "libero_10", "libero_goal", etc. folders

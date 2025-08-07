@@ -30,8 +30,8 @@ print("="*50)
 print("OCTO MODEL EVALUATION SCRIPT (DEBUG VERSION)")
 print("="*50)
 
-# Original path from user
-ORIGINAL_MODEL_PATH = "/home/pkarageorgis/geo_octo/octo/my_octo_vggt_model_offline/octo_vggt_finetune_staged/experiment_20250805_112710_BEST_RUN/150000/default/checkpoint"
+# Original path from user (CORRECTED)
+ORIGINAL_MODEL_PATH = "/home/pkarageorgis/geo_octo/octo/my_octo_vggt_model_offline/octo_vggt_finetune_staged/experiment_20250805_112710_BEST_RUN"
 
 # Let's try to find the correct path
 print(f"\n[DEBUG] Original model path: {ORIGINAL_MODEL_PATH}")
