@@ -108,8 +108,8 @@ try:
     print(f"[SUCCESS] Retrieved task '{task_name}'")
     print(f"    - Language instruction: '{language_instruction}'\n")
 
-    # Initialize the simulation environment
-    env_args = {"bddl_file_name": bddl_file_path, "camera_heights": 128, "camera_widths": 128}
+    # Initialize the simulation environment with model's expected image size
+    env_args = {"bddl_file_name": bddl_file_path, "camera_heights": 224, "camera_widths": 224}
     env = OffScreenRenderEnv(**env_args)
     
     # ==============================================================================
@@ -164,16 +164,35 @@ try:
     
     # List to store frames for video
     frames = []
+    
+    # Initialize observation history for window_size=2
+    obs_history = [obs["agentview_image"], obs["agentview_image"]]  # Duplicate first frame
 
     for step in range(NUM_TIMESTEPS):
         # Prepare observation for the model
-        image = obs["agentview_image"]
+        current_image = obs["agentview_image"]
         
-        # Create proper observation format with batch and sequence dimensions
-        # Model expects: (batch_size, window_size, height, width, channels)
+        # Update observation history (window_size=2)
+        obs_history = obs_history[1:] + [current_image]
+        
+        # Stack images for window
+        image_stack = np.stack(obs_history, axis=0)  # (window_size, H, W, C)
+        
+        # Create proper observation format matching model's expectations
         model_observation = {
-            "image_primary": image[None, None, ...],  # Add batch and window dimensions
-            "timestep_pad_mask": np.array([[True]], dtype=bool)  # No padding
+            "image_primary": image_stack[None, ...],  # Add batch dimension: (1, window_size, H, W, C)
+            "timestep_pad_mask": np.array([[True, True]], dtype=bool),  # No padding for both timesteps
+            # Add other required keys with dummy values
+            "vggt_tokens": np.zeros((1, 2, 512), dtype=np.float32),  # Dummy VGGT tokens
+            "proprio": np.zeros((1, 2, 7), dtype=np.float32),  # Dummy proprioception
+            "timestep": np.array([[0, 1]], dtype=np.int32),  # Timestep indices
+            "task_completed": np.array([[False, False]], dtype=bool),  # Task completion status
+            "pad_mask_dict": {
+                "image_primary": np.array([[True, True]], dtype=bool),
+                "vggt_tokens": np.array([[True, True]], dtype=bool),
+                "proprio": np.array([[True, True]], dtype=bool),
+                "timestep": np.array([[True, True]], dtype=bool),
+            }
         }
 
         # Get action from the model
@@ -193,8 +212,7 @@ try:
         obs, reward, done, info = env.step(predicted_action)
         
         # Render the frame for the video
-        current_frame = obs["agentview_image"]
-        frames.append(cv2.cvtColor(current_frame, cv2.COLOR_RGB2BGR)) # Convert to BGR for OpenCV
+        frames.append(cv2.cvtColor(current_image, cv2.COLOR_RGB2BGR)) # Convert to BGR for OpenCV
 
         print(f"    - Step {step+1}/{NUM_TIMESTEPS}: Reward={reward}, Done={done}")
 
