@@ -16,16 +16,14 @@ print('cv2 imported successfully!')
 import os
 import cv2
 import numpy as np
-import tensorflow as tf
+import jax
+import jax.numpy as jnp
 import random
-
-
-# Suppress verbose TensorFlow logging
-os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2' 
-tf.get_logger().setLevel('ERROR')
+from functools import partial
 
 # Octo / LIBERO Imports
 from octo.model.octo_model import OctoModel
+from octo.utils.train_callbacks import supply_rng
 from libero.libero import benchmark
 from libero.libero.envs import OffScreenRenderEnv
 
@@ -65,9 +63,8 @@ print(f"\n[INFO] Loading Octo model from: {MODEL_PATH}")
 if not os.path.exists(MODEL_PATH):
     raise FileNotFoundError(f"FATAL: Model checkpoint not found at {MODEL_PATH}")
 
-# This loads the model from the checkpoint.
-# The 'check_uninitialized_vars=False' is sometimes needed depending on how the model was saved.
-model = OctoModel.load_from_checkpoint(MODEL_PATH, check_uninitialized_vars=False)
+# Load the model using the correct API
+model = OctoModel.load_pretrained(MODEL_PATH)
 print("[SUCCESS] Octo model loaded.\n")
 
 # Main try block to ensure the environment is closed properly
@@ -101,7 +98,43 @@ try:
     env = OffScreenRenderEnv(**env_args)
     
     # ==============================================================================
-    # (3) Run the Evaluation Loop
+    # (3) Create Task Specification and Policy Function
+    # ==============================================================================
+    # Create task specification using model's utility function
+    task_spec = model.create_tasks(texts=[language_instruction])
+    print(f"[INFO] Created task specification for: '{language_instruction}'")
+    
+    # Create policy function with proper normalization
+    # We'll try to find appropriate statistics or use default ones
+    print("[INFO] Setting up policy function...")
+    
+    # Get the available dataset statistics
+    available_datasets = list(model.dataset_statistics.keys())
+    print(f"[INFO] Available dataset statistics: {available_datasets}")
+    
+    # Try to find appropriate action statistics - use the first available dataset
+    if available_datasets:
+        action_stats = model.dataset_statistics[available_datasets[0]]["action"]
+        print(f"[INFO] Using action statistics from: {available_datasets[0]}")
+    else:
+        # Fallback: create basic statistics for 7-DOF actions (robot joint + gripper)
+        action_stats = {
+            "mean": np.zeros(7),
+            "std": np.ones(7)
+        }
+        print("[WARNING] No dataset statistics found, using default normalization")
+    
+    # Create policy function
+    policy_fn = supply_rng(
+        partial(
+            model.sample_actions,
+            unnormalization_statistics=action_stats,
+            train=False,
+        ),
+    )
+    
+    # ==============================================================================
+    # (4) Run the Evaluation Loop
     # ==============================================================================
     print("[INFO] Starting evaluation loop...")
     
@@ -111,7 +144,7 @@ try:
     init_states = task_suite.get_task_init_states(EVAL_TASK_ID)
     env.set_init_state(init_states[0]) # Use the first initial state
 
-    # Get the first observation
+    # Get the first observation by stepping with a dummy action
     obs, _, _, _ = env.step([0.0] * 7)
     
     # List to store frames for video
@@ -121,24 +154,30 @@ try:
         # Prepare observation for the model
         image = obs["agentview_image"]
         
-        # Add a batch dimension to the image (from H,W,C to 1,H,W,C)
-        model_observation = {"image_primary": np.expand_dims(image, axis=0)}
-
-        # Prepare the language instruction for the model
-        task_payload = {"language_instruction": tf.constant([language_instruction])}
+        # Create proper observation format with batch and sequence dimensions
+        # Model expects: (batch_size, window_size, height, width, channels)
+        model_observation = {
+            "image_primary": image[None, None, ...],  # Add batch and window dimensions
+            "timestep_pad_mask": np.array([[True]], dtype=bool)  # No padding
+        }
 
         # Get action from the model
-        # The .sample() method is used for inference (i.e., getting a single action)
-        predicted_action = model.sample(model_observation, task_payload)
+        actions = policy_fn(model_observation, task_spec)
         
-        # Convert action to a numpy array and remove the batch dimension
-        predicted_action = predicted_action.numpy().squeeze()
+        # Remove batch dimension and take first action if action chunking is used
+        if actions.ndim == 3:  # (batch, action_horizon, action_dim)
+            predicted_action = actions[0, 0]  # Take first action from sequence
+        else:
+            predicted_action = actions[0]  # Just remove batch dim
+        
+        # Convert to numpy if needed
+        if hasattr(predicted_action, 'numpy'):
+            predicted_action = predicted_action.numpy()
         
         # Step the environment with the model's action
         obs, reward, done, info = env.step(predicted_action)
         
         # Render the frame for the video
-        # We need to render explicitly to get the most up-to-date image after the step
         current_frame = obs["agentview_image"]
         frames.append(cv2.cvtColor(current_frame, cv2.COLOR_RGB2BGR)) # Convert to BGR for OpenCV
 
@@ -151,7 +190,7 @@ try:
     print("[SUCCESS] Evaluation loop completed.\n")
 
     # ==============================================================================
-    # (4) Save Video of the Episode
+    # (5) Save Video of the Episode
     # ==============================================================================
     if frames:
         print("[INFO] Saving episode video...")
@@ -171,7 +210,7 @@ except Exception as e:
 
 finally:
     # ==============================================================================
-    # (5) Clean Up
+    # (6) Clean Up
     # ==============================================================================
     if 'env' in locals() and 'env' in vars():
         env.close()
