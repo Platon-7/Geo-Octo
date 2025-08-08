@@ -85,36 +85,75 @@ try:
     env = OffScreenRenderEnv(**env_args)
     
     # ==============================================================================
-    # (3) Create Task - Fix Language Format Issue
+    # (3) Create Task - Fix Language + Goal Image Format
     # ==============================================================================
     print(f"[INFO] Creating task specification...")
     
-    # Create task and fix the format mismatch
+    # First, let's get initial state to collect some images for goal image
+    init_states = task_suite.get_task_init_states(EVAL_TASK_ID)
+    env.reset_to(init_states[0])
+    
+    # Take a few steps to get a reasonable goal state image
+    for _ in range(10):
+        obs = env.get_observation()
+        env.step(np.random.randn(7) * 0.1)  # Small random actions
+    goal_obs = env.get_observation()
+    goal_image = goal_obs["agentview_image"]
+    goal_image_resized = cv2.resize(goal_image, (224, 224))
+    
+    # Reset environment to initial state for actual evaluation
+    env.reset_to(init_states[0])
+    
+    # Create task with BOTH language instruction AND goal image (multimodal)
     try:
-        raw_task = model.create_tasks(texts=[language_instruction])
-        print(f"[INFO] Raw task creation succeeded")
+        # Create language task
+        raw_task_lang = model.create_tasks(texts=[language_instruction])
         
-        # Fix the language instruction format
-        # Model expects: language_instruction as tensor (1, 16)
-        # But create_tasks gives: language_instruction as dict with 'input_ids' and 'attention_mask'
+        # Create goal image task  
+        raw_task_goal = model.create_tasks(goals={"image_primary": goal_image_resized[None]})
         
-        if 'language_instruction' in raw_task and isinstance(raw_task['language_instruction'], dict):
-            # Extract just the input_ids (which is what the model expects)
-            task_dict = {
-                'language_instruction': raw_task['language_instruction']['input_ids'],
-                'pad_mask_dict': raw_task['pad_mask_dict']
-            }
-            print(f"[SUCCESS] Fixed language instruction format")
-            print(f"[INFO] Language instruction shape: {task_dict['language_instruction'].shape}")
+        print(f"[INFO] Both task creations succeeded")
+        
+        # Combine both modalities
+        # Extract language instruction format
+        if 'language_instruction' in raw_task_lang and isinstance(raw_task_lang['language_instruction'], dict):
+            language_tokens = raw_task_lang['language_instruction']['input_ids']
         else:
-            task_dict = raw_task
-            print(f"[INFO] Using raw task format")
+            language_tokens = raw_task_lang['language_instruction']
             
+        # Extract goal image
+        goal_image_tokens = raw_task_goal['image_primary']
+        
+        # Create combined task dict with both modalities
+        task_dict = {
+            'language_instruction': language_tokens,
+            'image_primary': goal_image_tokens,
+            'pad_mask_dict': {
+                **raw_task_lang.get('pad_mask_dict', {}),
+                **raw_task_goal.get('pad_mask_dict', {})
+            }
+        }
+        
+        print(f"[SUCCESS] Created multimodal task (language + goal image)")
+        print(f"[INFO] Language instruction shape: {task_dict['language_instruction'].shape}")
+        print(f"[INFO] Goal image shape: {task_dict['image_primary'].shape}")
+        
     except Exception as e:
         print(f"[ERROR] Task creation failed: {e}")
-        # Fallback to dummy task
-        task_dict = {"pad_mask_dict": {}}
-        print(f"[INFO] Using dummy task as fallback")
+        # Fallback: try language only
+        try:
+            raw_task = model.create_tasks(texts=[language_instruction])
+            if 'language_instruction' in raw_task and isinstance(raw_task['language_instruction'], dict):
+                task_dict = {
+                    'language_instruction': raw_task['language_instruction']['input_ids'],
+                    'pad_mask_dict': raw_task['pad_mask_dict']
+                }
+            else:
+                task_dict = raw_task
+            print(f"[FALLBACK] Using language-only task")
+        except:
+            task_dict = {"pad_mask_dict": {}}
+            print(f"[FALLBACK] Using dummy task")
     
     # ==============================================================================
     # (4) Setup for Inference Loop - Following Official Pattern
