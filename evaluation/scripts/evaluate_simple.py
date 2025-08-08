@@ -91,7 +91,9 @@ try:
     
     # First, let's get initial state to collect some images for goal image
     init_states = task_suite.get_task_init_states(EVAL_TASK_ID)
-    env.reset_to(init_states[0])
+    env.seed(0)  # for reproducibility
+    env.reset()
+    env.set_init_state(init_states[0])
     
     # Take a few steps to get a reasonable goal state image
     for _ in range(10):
@@ -102,7 +104,8 @@ try:
     goal_image_resized = cv2.resize(goal_image, (224, 224))
     
     # Reset environment to initial state for actual evaluation
-    env.reset_to(init_states[0])
+    env.reset()
+    env.set_init_state(init_states[0])
     
     # Create task with BOTH language instruction AND goal image (multimodal)
     try:
