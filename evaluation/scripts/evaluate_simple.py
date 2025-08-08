@@ -85,14 +85,36 @@ try:
     env = OffScreenRenderEnv(**env_args)
     
     # ==============================================================================
-    # (3) Create Task - Bypass Language Due to Missing Parameters
+    # (3) Create Task - Fix Language Format Issue
     # ==============================================================================
     print(f"[INFO] Creating task specification...")
-    print(f"[WARNING] Language tokenizer has missing parameters, using dummy task for testing")
     
-    # Use dummy task to bypass language issues for now
-    task_dict = {"pad_mask_dict": {}}
-    print(f"[INFO] Created dummy task (language bypassed due to missing T5 parameters)")
+    # Create task and fix the format mismatch
+    try:
+        raw_task = model.create_tasks(texts=[language_instruction])
+        print(f"[INFO] Raw task creation succeeded")
+        
+        # Fix the language instruction format
+        # Model expects: language_instruction as tensor (1, 16)
+        # But create_tasks gives: language_instruction as dict with 'input_ids' and 'attention_mask'
+        
+        if 'language_instruction' in raw_task and isinstance(raw_task['language_instruction'], dict):
+            # Extract just the input_ids (which is what the model expects)
+            task_dict = {
+                'language_instruction': raw_task['language_instruction']['input_ids'],
+                'pad_mask_dict': raw_task['pad_mask_dict']
+            }
+            print(f"[SUCCESS] Fixed language instruction format")
+            print(f"[INFO] Language instruction shape: {task_dict['language_instruction'].shape}")
+        else:
+            task_dict = raw_task
+            print(f"[INFO] Using raw task format")
+            
+    except Exception as e:
+        print(f"[ERROR] Task creation failed: {e}")
+        # Fallback to dummy task
+        task_dict = {"pad_mask_dict": {}}
+        print(f"[INFO] Using dummy task as fallback")
     
     # ==============================================================================
     # (4) Setup for Inference Loop - Following Official Pattern
