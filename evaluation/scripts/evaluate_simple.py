@@ -96,10 +96,9 @@ try:
     env.set_init_state(init_states[0])
     
     # Take a few steps to get a reasonable goal state image
+    goal_obs = None
     for _ in range(10):
-        obs = env.get_observation()
-        env.step(np.random.randn(7) * 0.1)  # Small random actions
-    goal_obs = env.get_observation()
+        goal_obs, _, _, _ = env.step(np.random.randn(7) * 0.1)  # Small random actions
     goal_image = goal_obs["agentview_image"]
     goal_image_resized = cv2.resize(goal_image, (224, 224))
     
