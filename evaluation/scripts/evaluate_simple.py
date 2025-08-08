@@ -85,13 +85,14 @@ try:
     env = OffScreenRenderEnv(**env_args)
     
     # ==============================================================================
-    # (3) Create Task - Following Official Pattern
+    # (3) Create Task - Bypass Language Due to Missing Parameters
     # ==============================================================================
     print(f"[INFO] Creating task specification...")
+    print(f"[WARNING] Language tokenizer has missing parameters, using dummy task for testing")
     
-    # Create task dict exactly like the official example
-    task_dict = model.create_tasks(texts=[language_instruction])
-    print(f"[INFO] Created task for: '{language_instruction}'")
+    # Use dummy task to bypass language issues for now
+    task_dict = {"pad_mask_dict": {}}
+    print(f"[INFO] Created dummy task (language bypassed due to missing T5 parameters)")
     
     # ==============================================================================
     # (4) Setup for Inference Loop - Following Official Pattern
