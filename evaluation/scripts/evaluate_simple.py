@@ -79,9 +79,9 @@ try:
     print(f"[SUCCESS] Retrieved task '{task_name}'")
     print(f"    - Language instruction: '{language_instruction}'\n")
 
-    # Initialize environment with 256x256 images (like the official example)
+    # Initialize environment with 224x224 images (matching your training config)
     bddl_file_path = os.path.join(LIBERO_DIR, "libero", "libero", "bddl_files", task.problem_folder, task.bddl_file)
-    env_args = {"bddl_file_name": bddl_file_path, "camera_heights": 256, "camera_widths": 256}
+    env_args = {"bddl_file_name": bddl_file_path, "camera_heights": 224, "camera_widths": 224}
     env = OffScreenRenderEnv(**env_args)
     
     # ==============================================================================
@@ -107,8 +107,24 @@ try:
     # Get initial observation
     obs, _, _, _ = env.step([0.0] * 7)
     
-    # Collect images for window
+    # Extract proprio exactly like in training (7-DOF only)
+    def extract_proprio(obs_dict):
+        """Extract 7-DOF proprioception matching training format."""
+        if "robot0_joint_pos" in obs_dict:
+            joint_pos = obs_dict["robot0_joint_pos"]
+            # Ensure exactly 7 dimensions (matching training standardization)
+            if len(joint_pos) >= 7:
+                return joint_pos[:7]
+            else:
+                padded = np.zeros(7)
+                padded[:len(joint_pos)] = joint_pos
+                return padded
+        else:
+            return np.zeros(7)
+    
+    # Collect images and proprio for window
     images = []
+    proprios = []
     frames = []  # For video
     
     print(f"[INFO] Starting evaluation loop with {WINDOW_SIZE}-frame window...")
@@ -117,23 +133,39 @@ try:
     # (5) Inference Loop - Following Official Pattern
     # ==============================================================================
     for step in range(NUM_TIMESTEPS):
-        # Get current image
+        # Get current image and proprio
         current_image = obs["agentview_image"]
-        images.append(current_image)
+        current_proprio = extract_proprio(obs)
         
-        # Keep only the last WINDOW_SIZE images
+        images.append(current_image)
+        proprios.append(current_proprio)
+        
+        # Keep only the last WINDOW_SIZE items
         if len(images) > WINDOW_SIZE:
             images = images[-WINDOW_SIZE:]
+            proprios = proprios[-WINDOW_SIZE:]
         
-        # Only start predicting after we have enough images for the window
+        # Only start predicting after we have enough frames for the window
         if len(images) == WINDOW_SIZE:
-            # Stack images for window - exactly like official example
+            # Stack for window
             input_images = np.stack(images)[None]  # Add batch dimension
+            input_proprios = np.stack(proprios)[None]  # Add batch dimension
             
-            # Create observation dict - exactly like official example  
+            # Create observation dict matching your training format
             observation = {
-                'image_primary': input_images,
-                'timestep_pad_mask': np.full((1, input_images.shape[1]), True, dtype=bool)
+                'image_primary': input_images,  # (1, 2, 224, 224, 3)
+                'proprio': input_proprios,      # (1, 2, 7)
+                'timestep_pad_mask': np.full((1, input_images.shape[1]), True, dtype=bool),
+                # Add missing keys with dummy values matching training
+                'vggt_tokens': np.zeros((1, 2, 32, 48), dtype=np.float32),  # Dummy VGGT
+                'timestep': np.array([[step-1, step]], dtype=np.int32),     # Timestep indices
+                'task_completed': np.array([[[False, False, False, False], [False, False, False, False]]], dtype=bool),  # (1, 2, 4)
+                'pad_mask_dict': {
+                    'image_primary': np.array([[True, True]], dtype=bool),
+                    'proprio': np.array([[True, True]], dtype=bool),
+                    'vggt_tokens': np.array([[False, False]], dtype=bool),  # Mark VGGT as dummy
+                    'timestep': np.array([[True, True]], dtype=bool),
+                }
             }
             
             # Sample actions - exactly like official example
