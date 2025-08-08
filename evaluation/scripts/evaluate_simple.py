@@ -99,6 +99,11 @@ try:
     # This matches finetune.py line 146: batch["task"]["image_primary"] = batch["observation"]["image_primary"][:, 0]
     initial_obs, _, _, _ = env.step([0.0] * 7)  # Minimal step to get first observation
     goal_image = initial_obs["agentview_image"]  # Use FIRST frame as goal (like training)
+    
+    # FIX: Check if we need to flip the image to match training data orientation
+    # If the camera appears upside down, try flipping it
+    goal_image = np.flipud(goal_image)  # Flip vertically (upside down fix)
+    
     goal_image_resized = cv2.resize(goal_image, (224, 224))
     
     # Reset environment to initial state for actual evaluation
@@ -196,6 +201,10 @@ try:
     for step in range(NUM_TIMESTEPS):
         # Get current image and proprio
         current_image = obs["agentview_image"]
+        
+        # FIX: Apply same image flipping as for goal image
+        current_image = np.flipud(current_image)  # Flip vertically (upside down fix)
+        
         current_proprio = extract_proprio(obs)
         
         images.append(current_image)
@@ -257,8 +266,8 @@ try:
         # Step environment
         obs, reward, done, info = env.step(action_to_execute)
         
-        # Save frame for video
-        frames.append(cv2.cvtColor(current_image, cv2.COLOR_RGB2BGR))
+        # Save frame for video (using current_image which is already flipped)
+        frames.append(current_image.copy())
         
         print(f"    - Step {step+1}/{NUM_TIMESTEPS}: Reward={reward}, Done={done}")
         
@@ -277,7 +286,9 @@ try:
         height, width, layers = frames[0].shape
         video_writer = cv2.VideoWriter(video_path, cv2.VideoWriter_fourcc(*'mp4v'), 20, (width, height))
         for frame in frames:
-            video_writer.write(frame)
+            # Convert RGB to BGR for video writing
+            bgr_frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+            video_writer.write(bgr_frame)
         video_writer.release()
         print(f"[SUCCESS] Video saved to: {video_path}")
 
