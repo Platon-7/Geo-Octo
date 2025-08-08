@@ -89,17 +89,16 @@ try:
     # ==============================================================================
     print(f"[INFO] Creating task specification...")
     
-    # First, let's get initial state to collect some images for goal image
+    # Get initial state and use FIRST observation as goal image (like training)
     init_states = task_suite.get_task_init_states(EVAL_TASK_ID)
     env.seed(0)  # for reproducibility
     env.reset()
     env.set_init_state(init_states[0])
     
-    # Take a few steps to get a reasonable goal state image
-    goal_obs = None
-    for _ in range(10):
-        goal_obs, _, _, _ = env.step(np.random.randn(7) * 0.1)  # Small random actions
-    goal_image = goal_obs["agentview_image"]
+    # Get the FIRST observation as goal image (matching training format)
+    # This matches finetune.py line 146: batch["task"]["image_primary"] = batch["observation"]["image_primary"][:, 0]
+    initial_obs, _, _, _ = env.step([0.0] * 7)  # Minimal step to get first observation
+    goal_image = initial_obs["agentview_image"]  # Use FIRST frame as goal (like training)
     goal_image_resized = cv2.resize(goal_image, (224, 224))
     
     # Reset environment to initial state for actual evaluation
