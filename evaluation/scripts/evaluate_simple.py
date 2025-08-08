@@ -127,13 +127,11 @@ try:
         goal_image_tokens = raw_task_goal['image_primary']
         
         # Create combined task dict with both modalities
+        # Only include language-related pad_mask_dict entries, not image ones
         task_dict = {
             'language_instruction': language_tokens,
             'image_primary': goal_image_tokens,
-            'pad_mask_dict': {
-                **raw_task_lang.get('pad_mask_dict', {}),
-                **raw_task_goal.get('pad_mask_dict', {})
-            }
+            'pad_mask_dict': raw_task_lang.get('pad_mask_dict', {})
         }
         
         print(f"[SUCCESS] Created multimodal task (language + goal image)")
