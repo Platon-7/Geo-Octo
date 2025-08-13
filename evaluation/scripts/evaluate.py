@@ -91,10 +91,6 @@ else:
     a_min = np.array(ds_stats["action"]["min"])[:7]
     a_max = np.array(ds_stats["action"]["max"])[:7]
     print("[DEBUG] Dataset action min/max (first 7 dims):", a_min, a_max)
-    if "proprio" in ds_stats:
-        p_mean = np.array(ds_stats["proprio"]["mean"])[:7]
-        p_std = np.array(ds_stats["proprio"]["std"])[:7]
-        print("[DEBUG] Dataset proprio mean/std (first 7 dims):", p_mean, p_std)
 
 try:
     # 2. Initialize LIBERO Environment
@@ -160,7 +156,6 @@ try:
         return proprio[:7] if len(proprio) >= 7 else np.zeros(7)
 
     images = []
-    proprios = []
     frames = []
 
     print(f"[INFO] Starting evaluation loop with {WINDOW_SIZE}-frame window...")
@@ -168,38 +163,25 @@ try:
     # 5. Inference Loop
     for step in range(NUM_TIMESTEPS):
         current_image = obs["agentview_image"]
-        current_proprio = extract_proprio(obs)
         images.append(current_image)
-        proprios.append(current_proprio)
 
         if len(images) > WINDOW_SIZE:
             images.pop(0)
-            proprios.pop(0)
 
         if len(images) == WINDOW_SIZE:
-            # Normalize proprio to match training distribution
-            proprio_stats = model.dataset_statistics[DATASET_STATISTICS_KEY].get("proprio", None)
-            if proprio_stats is not None:
-                norm_proprios = (np.stack(proprios) - proprio_stats["mean"]) / (proprio_stats["std"] + 1e-8)
-            else:
-                norm_proprios = np.stack(proprios)
-
             observation = {
                 'image_primary': np.stack(images)[None],
-                'proprio': norm_proprios[None],
                 'timestep_pad_mask': np.full((1, WINDOW_SIZE), True, dtype=bool),
                 'timestep': np.array([[step-(WINDOW_SIZE-1), step]], dtype=np.int32),
                 'task_completed': np.zeros((1, WINDOW_SIZE, 4), dtype=bool),
                 'pad_mask_dict': {
                     'image_primary': np.full((1, WINDOW_SIZE), True, dtype=bool),
-                    'proprio': np.full((1, WINDOW_SIZE), True, dtype=bool),
                     'timestep': np.full((1, WINDOW_SIZE), True, dtype=bool),
                 }
             }
 
             # Print observation diagnostics
             print("[STEP", step, "] obs image shape/dtype:", observation['image_primary'].shape, observation['image_primary'].dtype)
-            print("[STEP", step, "] obs proprio mean/std:", observation['proprio'].mean(), observation['proprio'].std())
 
             actions = model.sample_actions(
                 observation,
