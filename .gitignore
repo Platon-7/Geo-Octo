@@ -6,3 +6,4 @@ my_octo_vggt_model_offline/
 # THIS IS THE NEW RULE:
 # Recursively find and ignore all .tfrecord files inside libero_datasets
 libero_datasets/**/*tfrecord*
+evaluation/test_outputs/

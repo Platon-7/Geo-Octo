@@ -74,6 +74,7 @@ tensorflow_datasets==4.9.2
 tensorflow_graphics==2021.12.3
 tensorflow_probability==0.23.0
 plotly>=5.16.1
+safetensors>=0.6.1
 
 # ==============================================================================
 # BLOCK 6: GIT DEPENDENCIES (INSTALLED LAST)

@@ -165,7 +165,6 @@ def main(_):
     if current_memory > 200:
         print("WARNING: High memory usage detected. Consider reducing batch_size or buffer sizes.")
     
-    #train_dataset_processed = train_dataset_with_stats.map(process_batch_tf, num_parallel_calls=tf.data.AUTOTUNE).prefetch(tf.data.AUTOTUNE)
     gc.collect()
     log_memory_usage(0, "AFTER training dataset creation: ")
     train_dataset_processed = train_dataset_with_stats.map(process_batch_tf, num_parallel_calls=4).prefetch(2)

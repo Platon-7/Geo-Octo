@@ -31,14 +31,14 @@ from libero.libero.envs import OffScreenRenderEnv
 # Configuration
 # ==============================================================================
 MODEL_PATH = "/home/pkarageorgis/geo_octo/octo/my_octo_vggt_model_offline/octo_vggt_finetune_staged/experiment_20250808_130401_BASELINE_RUN"
-TASK_SUITE_NAME = "libero_spatial"
+TASK_SUITE_NAME = "libero_10"
 EVAL_TASK_ID = 6
 NUM_TIMESTEPS = 400
 WINDOW_SIZE = 2
 OUTPUT_DIR = "evaluation/test_outputs"
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 BASE_DATA_DIR = "/scratch-shared/tmp.cwkV8vOvfY/libero_datasets"
-DATASET_STATISTICS_KEY = "libero_spatial_no_noops"
+DATASET_STATISTICS_KEY = "libero_10_no_noops"
 LIBERO_DIR = "LIBERO"
 
 # ==============================================================================
@@ -181,8 +181,6 @@ try:
             action_to_execute = np.zeros(7)
 
         obs, reward, done, info = env.step(action_to_execute)
-        
-        # flip the video because it is upside-down for some reason
         flipped_image = cv2.flip(current_image, 0)
         frames.append(cv2.cvtColor(flipped_image, cv2.COLOR_RGB2BGR))
         

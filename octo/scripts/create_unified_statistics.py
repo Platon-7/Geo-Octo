@@ -6,12 +6,20 @@ import os
 import glob
 
 # --- Configuration ---
-BASE_DATA_DIR = "/scratch-shared/tmp.cwkV8vOvfY/libero_vggt_compressed"
+# BASE_DATA_DIR = "/scratch-shared/tmp.cwkV8vOvfY/libero_vggt_compressed"
+# DATASET_NAMES = [
+#     "libero_object_vggt_compressed",
+#     "libero_spatial_vggt_compressed",
+#     "libero_goal_vggt_compressed",
+#     "liber_o10_vggt_compressed",
+# ]
+
+BASE_DATA_DIR = "/scratch-shared/tmp.cwkV8vOvfY/libero_datasets"
 DATASET_NAMES = [
-    "libero_object_vggt_compressed",
-    "libero_spatial_vggt_compressed",
-    "libero_goal_vggt_compressed",
-    "liber_o10_vggt_compressed",
+    "libero_object_no_noops",
+    "libero_spatial_no_noops",
+    "libero_goal_no_noops",
+    "libero_10_no_noops",
 ]
 
 TFRECORD_FILES = []
@@ -36,7 +44,7 @@ FEATURE_DESCRIPTION = {
 
 # Define the output directory and filename
 OUTPUT_DIR = "/home/pkarageorgis/geo_octo/libero_datasets/unified_stats"
-OUTPUT_STATS_FILE = os.path.join(OUTPUT_DIR, "unified_dataset_statistics.json")
+OUTPUT_STATS_FILE = os.path.join(OUTPUT_DIR, "unified_dataset_statistics_no_vggt.json")
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 

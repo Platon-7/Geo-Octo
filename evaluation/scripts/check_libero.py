@@ -1,35 +1,6 @@
 import os
 import cv2
 import numpy as np
-
-import sys
-import pprint
-
-print("=============================================")
-print("PYTHON ENVIRONMENT DIAGNOSTIC REPORT")
-print("=============================================")
-
-print("\n--- Python Executable ---")
-print("This is the Python being run:")
-print(sys.executable)
-
-print("\n--- Environment Root (sys.prefix) ---")
-print("This is the root of the detected Conda environment:")
-print(sys.prefix)
-
-print("\n--- Current Working Directory ---")
-print("The script is being run from this folder:")
-print(os.getcwd())
-
-print("\n--- Python Search Path (sys.path) ---")
-print("Python will look for modules in these directories, in this order:")
-# Using pprint for clean, readable output
-pprint.pprint(sys.path)
-
-print("\n=============================================")
-print("DIAGNOSTIC REPORT END")
-print("=============================================")
-
 from libero.libero import benchmark
 from libero.libero.envs import OffScreenRenderEnv
 

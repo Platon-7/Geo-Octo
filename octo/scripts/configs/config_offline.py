@@ -10,13 +10,70 @@ def get_config(config_string="full,multimodal"):
     assert mode in ["full", "head_only", "head_mlp_only"]
 
     # Define the path to your single, unified statistics file.
-    UNIFIED_STATS_PATH = "/home/pkarageorgis/geo_octo/libero_datasets/unified_stats/unified_dataset_statistics.json"
-
+    #UNIFIED_STATS_PATH = "/home/pkarageorgis/geo_octo/libero_datasets/unified_stats/unified_dataset_statistics.json"
+    UNIFIED_STATS_PATH = "/home/pkarageorgis/geo_octo/libero_datasets/unified_stats/unified_dataset_statistics_no_vggt.json"
+    
+    
     # Use ALL your VGGT datasets for training
+    # DATASET_KWARGS_LIST = [
+    #     {
+    #         "name": "libero_object_vggt_compressed",
+    #         "data_dir": "/scratch-shared/tmp.cwkV8vOvfY/libero_vggt_compressed",
+    #         "dataset_statistics": UNIFIED_STATS_PATH,  # Use the unified file
+    #         "standardize_fn": ModuleSpec.create(
+    #             "octo.data.utils.data_utils:standardize_libero_vggt"
+    #         ),
+    #         "image_obs_keys": {"primary": "image_primary"},
+    #         "proprio_obs_key": "proprio",
+    #         "language_key": "language_instruction",
+    #         "action_proprio_normalization_type": "normal",
+    #         "filter_functions": [],
+    #     },
+    #     {
+    #         "name": "libero_spatial_vggt_compressed",
+    #         "data_dir": "/scratch-shared/tmp.cwkV8vOvfY/libero_vggt_compressed",
+    #         "dataset_statistics": UNIFIED_STATS_PATH,  # Use the unified file
+    #         "standardize_fn": ModuleSpec.create(
+    #             "octo.data.utils.data_utils:standardize_libero_vggt"
+    #         ),
+    #         "image_obs_keys": {"primary": "image_primary"},
+    #         "proprio_obs_key": "proprio",
+    #         "language_key": "language_instruction",
+    #         "action_proprio_normalization_type": "normal",
+    #         "filter_functions": [],
+    #     },
+    #     {
+    #         "name": "libero_goal_vggt_compressed",
+    #         "data_dir": "/scratch-shared/tmp.cwkV8vOvfY/libero_vggt_compressed",
+    #         "dataset_statistics": UNIFIED_STATS_PATH,  # Use the unified file
+    #         "standardize_fn": ModuleSpec.create(
+    #             "octo.data.utils.data_utils:standardize_libero_vggt"
+    #         ),
+    #         "image_obs_keys": {"primary": "image_primary"},
+    #         "proprio_obs_key": "proprio",
+    #         "language_key": "language_instruction",
+    #         "action_proprio_normalization_type": "normal",
+    #         "filter_functions": [],
+    #     },
+    #     {
+    #         "name": "liber_o10_vggt_compressed",
+    #         "data_dir": "/scratch-shared/tmp.cwkV8vOvfY/libero_vggt_compressed",
+    #         "dataset_statistics": UNIFIED_STATS_PATH,  # Use the unified file
+    #         "standardize_fn": ModuleSpec.create(
+    #             "octo.data.utils.data_utils:standardize_libero_vggt"
+    #         ),
+    #         "image_obs_keys": {"primary": "image_primary"},
+    #         "proprio_obs_key": "proprio",
+    #         "language_key": "language_instruction",
+    #         "action_proprio_normalization_type": "normal",
+    #         "filter_functions": [],
+    #     },
+    # ]
+    
     DATASET_KWARGS_LIST = [
         {
-            "name": "libero_object_vggt_compressed",
-            "data_dir": "/scratch-shared/tmp.cwkV8vOvfY/libero_vggt_compressed",
+            "name": "libero_object_no_noops",
+            "data_dir": "/scratch-shared/tmp.cwkV8vOvfY/libero_datasets",
             "dataset_statistics": UNIFIED_STATS_PATH,  # Use the unified file
             "standardize_fn": ModuleSpec.create(
                 "octo.data.utils.data_utils:standardize_libero_vggt"
@@ -28,8 +85,8 @@ def get_config(config_string="full,multimodal"):
             "filter_functions": [],
         },
         {
-            "name": "libero_spatial_vggt_compressed",
-            "data_dir": "/scratch-shared/tmp.cwkV8vOvfY/libero_vggt_compressed",
+            "name": "libero_spatial_no_noops",
+            "data_dir": "/scratch-shared/tmp.cwkV8vOvfY/libero_datasets",
             "dataset_statistics": UNIFIED_STATS_PATH,  # Use the unified file
             "standardize_fn": ModuleSpec.create(
                 "octo.data.utils.data_utils:standardize_libero_vggt"
@@ -41,8 +98,8 @@ def get_config(config_string="full,multimodal"):
             "filter_functions": [],
         },
         {
-            "name": "libero_goal_vggt_compressed",
-            "data_dir": "/scratch-shared/tmp.cwkV8vOvfY/libero_vggt_compressed",
+            "name": "libero_goal_no_noops",
+            "data_dir": "/scratch-shared/tmp.cwkV8vOvfY/libero_datasets",
             "dataset_statistics": UNIFIED_STATS_PATH,  # Use the unified file
             "standardize_fn": ModuleSpec.create(
                 "octo.data.utils.data_utils:standardize_libero_vggt"
@@ -54,8 +111,8 @@ def get_config(config_string="full,multimodal"):
             "filter_functions": [],
         },
         {
-            "name": "liber_o10_vggt_compressed",
-            "data_dir": "/scratch-shared/tmp.cwkV8vOvfY/libero_vggt_compressed",
+            "name": "libero_10_no_noops",
+            "data_dir": "/scratch-shared/tmp.cwkV8vOvfY/libero_datasets",
             "dataset_statistics": UNIFIED_STATS_PATH,  # Use the unified file
             "standardize_fn": ModuleSpec.create(
                 "octo.data.utils.data_utils:standardize_libero_vggt"
@@ -67,7 +124,7 @@ def get_config(config_string="full,multimodal"):
             "filter_functions": [],
         },
     ]
-    
+        
     total_steps = 150000
     stage1_steps = 5000
 

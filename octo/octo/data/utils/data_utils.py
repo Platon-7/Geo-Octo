@@ -461,39 +461,6 @@ def standardize_libero_vggt(traj: dict) -> dict:
         #print("DEBUG: Removing joint_state to avoid conflicts")
         traj['observation'].pop('joint_state')
     
-    # # VGGT TOKEN NORMALIZATION - Add this for training stability
-    # if 'vggt_tokens' in traj['observation']:
-    #     import tensorflow as tf
-    #     vggt_tokens = tf.cast(traj['observation']['vggt_tokens'], tf.float32)
-        
-    #     # Numerical stability epsilon
-    #     eps = 1e-6
-        
-    #     # Normalize across spatial dimensions (-2, -1) for each token independently
-    #     # This preserves the token structure while standardizing values
-    #     mean = tf.reduce_mean(vggt_tokens, axis=[-2, -1], keepdims=True)
-    #     # Use tf.nn.moments for more stable variance calculation
-    #     _, variance = tf.nn.moments(vggt_tokens, axes=[-2, -1], keepdims=True)
-    #     std = tf.sqrt(variance + eps)  # Add eps for numerical stability
-        
-    #     # Apply normalization
-    #     normalized_tokens = (vggt_tokens - mean) / std
-        
-    #     # Optional: clip extreme values for additional stability
-    #     # This prevents any outliers from causing training instability
-    #     normalized_tokens = tf.clip_by_value(normalized_tokens, -5.0, 5.0)
-        
-    #     # Convert back to original dtype
-    #     original_dtype = traj['observation']['vggt_tokens'].dtype
-    #     normalized_tokens = tf.cast(normalized_tokens, original_dtype)
-        
-    #     traj['observation']['vggt_tokens'] = normalized_tokens
-        
-        #print(f"DEBUG: Normalized VGGT tokens - mean: {tf.reduce_mean(normalized_tokens):.4f}, std: {tf.math.reduce_std(normalized_tokens):.4f}")
-    
-    #print("DEBUG: Observation keys after standardization:", list(traj['observation'].keys()))
-    #print("DEBUG: Proprio shape after slicing:", traj['observation']['proprio'].shape)
-    
     # Add task_description if missing (fix for TFDS compatibility)
     if 'episode_metadata' not in traj:
         traj['episode_metadata'] = {}
