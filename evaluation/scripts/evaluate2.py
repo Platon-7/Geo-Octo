@@ -110,19 +110,8 @@ try:
         exit()
     
     # Restoring your original, successful method for creating the task dictionary
-    raw_task_lang = model.create_tasks(texts=[language_instruction])
-    raw_task_goal = model.create_tasks(goals={"image_primary": goal_image_resized[None]})
-    if 'language_instruction' in raw_task_lang and isinstance(raw_task_lang['language_instruction'], dict):
-        language_tokens = raw_task_lang['language_instruction']['input_ids']  # ✅ EXTRACT input_ids
-    else:
-        language_tokens = raw_task_lang['language_instruction']
-
-    task_dict = {
-        'language_instruction': language_tokens,  # ✅ CORRECT
-        'image_primary': raw_task_goal['image_primary'],
-        'pad_mask_dict': raw_task_lang.get('pad_mask_dict', {})
-    }
-    print("[SUCCESS] Multimodal task prompt created using your original structure.")
+    tasks = model.create_tasks(goals={"image_primary": goal_image_resized[None]}, texts=[language_instruction])
+    print("[SUCCESS] Multimodal task prompt created.")
 
     # 4. Setup for Inference Loop
     print("\n[INFO] Setting up inference...")
@@ -154,11 +143,16 @@ try:
             proprios.pop(0)
 
         if len(images) == WINDOW_SIZE:
-            ### CHANGED ### - Restored your original, fully-detailed observation dictionary.
-            # This directly addresses all previous errors (KeyError, AssertionError, and ScopeParamNotFoundError).
+            # Normalize proprio to match training distribution
+            proprio_stats = model.dataset_statistics[DATASET_STATISTICS_KEY].get("proprio", None)
+            if proprio_stats is not None:
+                norm_proprios = (np.stack(proprios) - proprio_stats["mean"]) / (proprio_stats["std"] + 1e-8)
+            else:
+                norm_proprios = np.stack(proprios)
+
             observation = {
                 'image_primary': np.stack(images)[None],
-                'proprio': np.stack(proprios)[None],
+                'proprio': norm_proprios[None],
                 'timestep_pad_mask': np.full((1, WINDOW_SIZE), True, dtype=bool),
                 'timestep': np.array([[step-(WINDOW_SIZE-1), step]], dtype=np.int32),
                 'task_completed': np.zeros((1, WINDOW_SIZE, 4), dtype=bool),
@@ -171,9 +165,10 @@ try:
             
             actions = model.sample_actions(
                 observation,
-                task_dict,
+                tasks,
                 unnormalization_statistics=model.dataset_statistics[DATASET_STATISTICS_KEY]["action"],
-                rng=jax.random.PRNGKey(step)
+                rng=jax.random.PRNGKey(step),
+                argmax=True
             )
             predicted_action = actions[0]
             action_to_execute = predicted_action[0] if predicted_action.ndim == 2 else predicted_action
