@@ -113,7 +113,6 @@ try:
         "bddl_file_name": bddl_file_path,
         "camera_heights": 224,
         "camera_widths": 224,
-        "controller_configs": {"robot0": {"type": "JOINT_POSITION"}},
     }
     env = OffScreenRenderEnv(**env_args)
     # Print env action space for comparison
