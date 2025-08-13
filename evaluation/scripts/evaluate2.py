@@ -111,6 +111,9 @@ try:
     
     # Restoring your original, successful method for creating the task dictionary
     tasks = model.create_tasks(goals={"image_primary": goal_image_resized[None]}, texts=[language_instruction])
+    # Ensure we pass token ids (like during finetuning), not HF model dict
+    if isinstance(tasks.get("language_instruction"), dict) and "input_ids" in tasks["language_instruction"]:
+        tasks["language_instruction"] = tasks["language_instruction"]["input_ids"]
     print("[SUCCESS] Multimodal task prompt created.")
 
     # 4. Setup for Inference Loop
