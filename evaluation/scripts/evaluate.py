@@ -62,6 +62,38 @@ def get_goal_image_from_tfrecord(dataset_dir, episode_index):
     goal_image = tf.io.decode_jpeg(image_tensors[-1]).numpy()
     return goal_image
 
+# ==== Optional image crop to approximate training aug average ====
+USE_CENTER_CROP = False
+CROP_SCALE = 0.9
+CROP_RATIO = 1.0
+
+def average_crop_resize(img, out=(224, 224), scale=0.9, ratio=1.0):
+    h, w = img.shape[:2]
+    new_h = int(h * np.sqrt(scale / max(ratio, 1e-6)))
+    new_w = int(w * np.sqrt(scale * ratio))
+    new_h = max(1, min(new_h, h))
+    new_w = max(1, min(new_w, w))
+    y0 = max(0, (h - new_h) // 2)
+    x0 = max(0, (w - new_w) // 2)
+    crop = img[y0:y0 + new_h, x0:x0 + new_w]
+    return cv2.resize(crop, out, interpolation=cv2.INTER_LINEAR)
+
+# ==== Action remap to align dataset semantics with env controller ====
+USE_ACTION_REMAP = True
+TRANS_SCALE = 0.03   # scale for xyz (first 3 dims)
+ROT_SCALE = 0.2     # scale for rpy (next 3 dims)
+ROT_SIGN = 1.0      # set to -1.0 if rotation feels inverted
+
+def remap_action(a: np.ndarray) -> np.ndarray:
+    arr = np.array(a, dtype=np.float32, copy=True)
+    if arr.ndim == 2:
+        arr[:, :3] *= TRANS_SCALE
+        arr[:, 3:6] *= (ROT_SCALE * ROT_SIGN)
+    else:
+        arr[:3] *= TRANS_SCALE
+        arr[3:6] *= (ROT_SCALE * ROT_SIGN)
+    return arr
+
 # ==============================================================================
 # Main evaluation logic
 # ==============================================================================
@@ -163,6 +195,8 @@ try:
     # 5. Inference Loop
     for step in range(NUM_TIMESTEPS):
         current_image = obs["agentview_image"]
+        if USE_CENTER_CROP:
+            current_image = average_crop_resize(current_image, out=(224, 224), scale=CROP_SCALE, ratio=CROP_RATIO)
         images.append(current_image)
 
         if len(images) > WINDOW_SIZE:
@@ -195,14 +229,22 @@ try:
         else:
             action_to_execute = np.zeros(7)
 
+        # Optional action remap (scale/flip) before clamping
+        if USE_ACTION_REMAP:
+            pre_remap = action_to_execute.copy()
+            action_to_execute = remap_action(action_to_execute)
+            if (step % 25) == 0:
+                print("[STEP", step, "] pre-remap min/max:", pre_remap.min(), pre_remap.max())
+                print("[STEP", step, "] post-remap min/max:", action_to_execute.min(), action_to_execute.max())
+
         # Clamp to env bounds
         try:
             low, high = env.action_space.low, env.action_space.high
             unclipped = action_to_execute.copy()
             action_to_execute = np.clip(action_to_execute, low, high)
             if (step % 25) == 0:
-                print("[STEP", step, "] action unclipped min/max:", unclipped.min(), unclipped.max())
-                print("[STEP", step, "] action clipped min/max:", action_to_execute.min(), action_to_execute.max())
+                print("[STEP", step, "] remapped unclipped min/max:", unclipped.min(), unclipped.max())
+                print("[STEP", step, "] remapped+clipped min/max:", action_to_execute.min(), action_to_execute.max())
         except Exception:
             pass
 
