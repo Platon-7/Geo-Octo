@@ -80,19 +80,42 @@ def average_crop_resize(img, out=(224, 224), scale=0.9, ratio=1.0):
 
 # ==== Action remap to align dataset semantics with env controller ====
 USE_ACTION_REMAP = True
-TRANS_SCALE = 0.03   # scale for xyz (first 3 dims)
-ROT_SCALE = 0.2     # scale for rpy (next 3 dims)
-ROT_SIGN = 1.0      # set to -1.0 if rotation feels inverted
+# Choose between modes: "ee_delta" (xyz+rpy+gripper) or "joint_delta" (7 joint deltas)
+ACTION_MODE = "ee_delta"  # alternatives: "joint_delta", "none"
+
+# Scales for ee_delta mode
+TRANS_SCALE = 0.15   # try 0.05–0.25
+ROT_SCALE = 0.7      # try 0.3–1.0
+ROT_SIGN = 1.0       # set to -1.0 if rotation seems inverted
+
+# Scale for joint_delta mode
+JOINT_SCALE = 0.2    # try 0.1–0.5
+
+# Sampling controls
+USE_ARGMAX = False    # deterministic often collapses to tiny actions
+SAMPLE_TEMPERATURE = 0.7
+
 
 def remap_action(a: np.ndarray) -> np.ndarray:
+    if not USE_ACTION_REMAP or ACTION_MODE == "none":
+        return a
     arr = np.array(a, dtype=np.float32, copy=True)
-    if arr.ndim == 2:
-        arr[:, :3] *= TRANS_SCALE
-        arr[:, 3:6] *= (ROT_SCALE * ROT_SIGN)
+    if ACTION_MODE == "ee_delta":
+        if arr.ndim == 2:
+            arr[:, :3] *= TRANS_SCALE
+            arr[:, 3:6] *= (ROT_SCALE * ROT_SIGN)
+        else:
+            arr[:3] *= TRANS_SCALE
+            arr[3:6] *= (ROT_SCALE * ROT_SIGN)
+        return arr
+    elif ACTION_MODE == "joint_delta":
+        if arr.ndim == 2:
+            arr[:, :6] *= JOINT_SCALE
+        else:
+            arr[:6] *= JOINT_SCALE
+        return arr
     else:
-        arr[:3] *= TRANS_SCALE
-        arr[3:6] *= (ROT_SCALE * ROT_SIGN)
-    return arr
+        return arr
 
 # ==============================================================================
 # Main evaluation logic
@@ -222,7 +245,8 @@ try:
                 tasks,
                 unnormalization_statistics=model.dataset_statistics[DATASET_STATISTICS_KEY]["action"],
                 rng=jax.random.PRNGKey(step),
-                argmax=True
+                argmax=USE_ARGMAX,
+                temperature=SAMPLE_TEMPERATURE
             )
             predicted_action = actions[0]
             action_to_execute = predicted_action[0] if predicted_action.ndim == 2 else predicted_action
@@ -234,8 +258,8 @@ try:
             pre_remap = action_to_execute.copy()
             action_to_execute = remap_action(action_to_execute)
             if (step % 25) == 0:
-                print("[STEP", step, "] pre-remap min/max:", pre_remap.min(), pre_remap.max())
-                print("[STEP", step, "] post-remap min/max:", action_to_execute.min(), action_to_execute.max())
+                print("[STEP", step, "] pre-remap first6:", pre_remap[:6])
+                print("[STEP", step, "] post-remap first6:", action_to_execute[:6])
 
         # Clamp to env bounds
         try:
@@ -243,8 +267,8 @@ try:
             unclipped = action_to_execute.copy()
             action_to_execute = np.clip(action_to_execute, low, high)
             if (step % 25) == 0:
-                print("[STEP", step, "] remapped unclipped min/max:", unclipped.min(), unclipped.max())
-                print("[STEP", step, "] remapped+clipped min/max:", action_to_execute.min(), action_to_execute.max())
+                print("[STEP", step, "] unclipped first6:", unclipped[:6])
+                print("[STEP", step, "] clipped first6:", action_to_execute[:6])
         except Exception:
             pass
 
