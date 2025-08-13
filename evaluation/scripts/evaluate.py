@@ -86,7 +86,11 @@ ACTION_MODE = "ee_delta"  # alternatives: "joint_delta", "none"
 # Scales for ee_delta mode
 TRANS_SCALE = 0.15   # try 0.05–0.25
 ROT_SCALE = 0.7      # try 0.3–1.0
-ROT_SIGN = 1.0       # set to -1.0 if rotation seems inverted
+# Per-axis permutation/signs (applied to first 3 for translation, next 3 for rotation)
+TRANS_PERM = (0, 1, 2)
+ROT_PERM = (0, 1, 2)
+TRANS_SIGN = ( -1.0, 1.0, 1.0 )  # flip X by default since motion drifts right
+ROT_SIGN_VEC = ( 1.0, 1.0, 1.0 )
 
 # Scale for joint_delta mode
 JOINT_SCALE = 0.2    # try 0.1–0.5
@@ -95,19 +99,30 @@ JOINT_SCALE = 0.2    # try 0.1–0.5
 USE_ARGMAX = False    # deterministic often collapses to tiny actions
 SAMPLE_TEMPERATURE = 0.7
 
+# Task modality toggles
+USE_LANGUAGE = True
+USE_GOAL_IMAGE = True
+
 
 def remap_action(a: np.ndarray) -> np.ndarray:
     if not USE_ACTION_REMAP or ACTION_MODE == "none":
         return a
     arr = np.array(a, dtype=np.float32, copy=True)
     if ACTION_MODE == "ee_delta":
+        # apply permutation + sign on translation and rotation separately, then scale
+        def map_ee(vec):
+            t = vec[:3]
+            r = vec[3:6]
+            t = t[list(TRANS_PERM)] * np.array(TRANS_SIGN, dtype=np.float32)
+            r = r[list(ROT_PERM)] * np.array(ROT_SIGN_VEC, dtype=np.float32)
+            t = t * TRANS_SCALE
+            r = r * ROT_SCALE
+            out = np.concatenate([t, r, vec[6:7]], axis=0)
+            return out
         if arr.ndim == 2:
-            arr[:, :3] *= TRANS_SCALE
-            arr[:, 3:6] *= (ROT_SCALE * ROT_SIGN)
+            return np.stack([map_ee(v) for v in arr], axis=0)
         else:
-            arr[:3] *= TRANS_SCALE
-            arr[3:6] *= (ROT_SCALE * ROT_SIGN)
-        return arr
+            return map_ee(arr)
     elif ACTION_MODE == "joint_delta":
         if arr.ndim == 2:
             arr[:, :6] *= JOINT_SCALE
@@ -188,15 +203,19 @@ try:
         exit()
     
     # Restoring your original, successful method for creating the task dictionary
-    tasks = model.create_tasks(goals={"image_primary": goal_image_resized[None]}, texts=[language_instruction])
+    # Build tasks per toggles
+    goals = {"image_primary": goal_image_resized[None]} if USE_GOAL_IMAGE else None
+    texts = [language_instruction] if USE_LANGUAGE else None
+    tasks = model.create_tasks(goals=goals, texts=texts)
     # Ensure we pass token ids (like during finetuning), not HF model dict
-    if isinstance(tasks.get("language_instruction"), dict) and "input_ids" in tasks["language_instruction"]:
+    if USE_LANGUAGE and isinstance(tasks.get("language_instruction"), dict) and "input_ids" in tasks["language_instruction"]:
         tasks["language_instruction"] = np.array(tasks["language_instruction"]["input_ids"]).astype(np.int32)
         # ensure pad mask marks language present
         if "pad_mask_dict" not in tasks:
             tasks["pad_mask_dict"] = {}
         tasks["pad_mask_dict"]["language_instruction"] = np.ones(tasks["language_instruction"].shape[0], dtype=bool)
-    print("[SUCCESS] Multimodal task prompt created.")
+    print("[SUCCESS] Task prompt created. USE_GOAL_IMAGE=", USE_GOAL_IMAGE, " USE_LANGUAGE=", USE_LANGUAGE)
+    print("[DEBUG] Action mode:", ACTION_MODE, "TRANS_SCALE=", TRANS_SCALE, "ROT_SCALE=", ROT_SCALE, "TRANS_SIGN=", TRANS_SIGN)
 
     # 4. Setup for Inference Loop
     print("\n[INFO] Setting up inference...")
