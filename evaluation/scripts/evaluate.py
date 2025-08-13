@@ -74,10 +74,27 @@ print(f"\n[INFO] Loading Octo model from: {MODEL_PATH}")
 model = OctoModel.load_pretrained(MODEL_PATH)
 print("[SUCCESS] Octo model loaded.\n")
 
+# Print model spec
+try:
+    print("[DEBUG] Model spec:")
+    print(model.get_pretty_spec())
+except Exception as _:
+    pass
+
+# Print dataset action stats
 if DATASET_STATISTICS_KEY not in model.dataset_statistics:
     print(f"[ERROR] Statistics key '{DATASET_STATISTICS_KEY}' not found in model.")
     print(f"Available keys: {list(model.dataset_statistics.keys())}")
     exit()
+else:
+    ds_stats = model.dataset_statistics[DATASET_STATISTICS_KEY]
+    a_min = np.array(ds_stats["action"]["min"])[:7]
+    a_max = np.array(ds_stats["action"]["max"])[:7]
+    print("[DEBUG] Dataset action min/max (first 7 dims):", a_min, a_max)
+    if "proprio" in ds_stats:
+        p_mean = np.array(ds_stats["proprio"]["mean"])[:7]
+        p_std = np.array(ds_stats["proprio"]["std"])[:7]
+        print("[DEBUG] Dataset proprio mean/std (first 7 dims):", p_mean, p_std)
 
 try:
     # 2. Initialize LIBERO Environment
@@ -92,8 +109,19 @@ try:
     bddl_file_path = os.path.join(LIBERO_DIR, "libero", "libero", "bddl_files", task.problem_folder, task.bddl_file)
     print(f"[INFO] Using BDDL file path: {bddl_file_path}")
     
-    env_args = {"bddl_file_name": bddl_file_path, "camera_heights": 224, "camera_widths": 224}
+    env_args = {
+        "bddl_file_name": bddl_file_path,
+        "camera_heights": 224,
+        "camera_widths": 224,
+        "controller_configs": {"robot0": {"type": "JOINT_POSITION"}},
+    }
     env = OffScreenRenderEnv(**env_args)
+    # Print env action space for comparison
+    try:
+        print("[DEBUG] Env action space low/high (first 7 dims):",
+              env.action_space.low[:7], env.action_space.high[:7])
+    except Exception:
+        pass
 
     # 3. Create Task - Using YOUR structure with the CORRECT goal image
     print(f"\n[INFO] Creating task specification...")
@@ -113,7 +141,11 @@ try:
     tasks = model.create_tasks(goals={"image_primary": goal_image_resized[None]}, texts=[language_instruction])
     # Ensure we pass token ids (like during finetuning), not HF model dict
     if isinstance(tasks.get("language_instruction"), dict) and "input_ids" in tasks["language_instruction"]:
-        tasks["language_instruction"] = tasks["language_instruction"]["input_ids"]
+        tasks["language_instruction"] = np.array(tasks["language_instruction"]["input_ids"]).astype(np.int32)
+        # ensure pad mask marks language present
+        if "pad_mask_dict" not in tasks:
+            tasks["pad_mask_dict"] = {}
+        tasks["pad_mask_dict"]["language_instruction"] = np.ones(tasks["language_instruction"].shape[0], dtype=bool)
     print("[SUCCESS] Multimodal task prompt created.")
 
     # 4. Setup for Inference Loop
@@ -165,7 +197,11 @@ try:
                     'timestep': np.full((1, WINDOW_SIZE), True, dtype=bool),
                 }
             }
-            
+
+            # Print observation diagnostics
+            print("[STEP", step, "] obs image shape/dtype:", observation['image_primary'].shape, observation['image_primary'].dtype)
+            print("[STEP", step, "] obs proprio mean/std:", observation['proprio'].mean(), observation['proprio'].std())
+
             actions = model.sample_actions(
                 observation,
                 tasks,
@@ -178,13 +214,24 @@ try:
         else:
             action_to_execute = np.zeros(7)
 
+        # Clamp to env bounds
+        try:
+            low, high = env.action_space.low, env.action_space.high
+            unclipped = action_to_execute.copy()
+            action_to_execute = np.clip(action_to_execute, low, high)
+            if (step % 25) == 0:
+                print("[STEP", step, "] action unclipped min/max:", unclipped.min(), unclipped.max())
+                print("[STEP", step, "] action clipped min/max:", action_to_execute.min(), action_to_execute.max())
+        except Exception:
+            pass
+
         obs, reward, done, info = env.step(action_to_execute)
-        
+
         # flip the video because it is upside-down for some reason
         flipped_image = cv2.flip(current_image, 0)
         frames.append(cv2.cvtColor(flipped_image, cv2.COLOR_RGB2BGR))
-        
-        if (step + 1) % 50 == 0:
+
+        if (step + 1) % 25 == 0:
             print(f"    - Step {step+1}/{NUM_TIMESTEPS}: Reward={reward}, Done={done}")
         if done:
             print("\n[INFO] Task completed!")
