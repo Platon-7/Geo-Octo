@@ -24,7 +24,6 @@ import jax.numpy as jnp
 import tensorflow as tf
 
 from octo.model.octo_model import OctoModel
-from octo.scripts.configs.config_offline import get_config
 from octo.data.dataset import make_interleaved_dataset
 
 
@@ -57,7 +56,47 @@ def main():
     print("[OK] Model loaded")
 
     # Build validation dataset using the same config as training (no augmentation)
-    cfg = get_config(args.config_string)
+    cfg = None
+    try:
+        # Lazy import to avoid packaging path issues
+        from octo.scripts.configs.config_offline import get_config as _get_config
+        cfg = _get_config(args.config_string)
+    except Exception as e:
+        print(f"[WARN] Could not import training config (octo.scripts.configs.config_offline): {e}")
+        print("[INFO] Falling back to constructing dataset kwargs from checkpoint statistics")
+        # Minimal shim: emulate the parts of config we need
+        class CfgShim:
+            pass
+        cfg = CfgShim()
+        cfg.window_size = 2
+        cfg.val_kwargs = {"val_shuffle_buffer_size": 50}
+        cfg.traj_transform_kwargs = {"action_horizon": 4}
+        cfg.frame_transform_kwargs = {"resize_size": {"primary": (224, 224)}}
+        # Build dataset kwargs list from dataset_statistics keys
+        dataset_names = list(model.dataset_statistics.keys())
+        # Heuristic: ignore non-dataset meta keys if present
+        dataset_names = [n for n in dataset_names if isinstance(model.dataset_statistics.get(n), dict) and
+                         "action" in model.dataset_statistics[n]]
+        if not args.data_root:
+            raise RuntimeError("--data_root is required when training config cannot be imported.")
+        cfg.dataset_kwargs_list = []
+        for name in dataset_names:
+            cfg.dataset_kwargs_list.append(
+                dict(
+                    name=name,
+                    data_dir=args.data_root,
+                    dataset_statistics=None,  # let loader compute or find per-dataset cache
+                    standardize_fn=dict(
+                        module="octo.data.utils.data_utils:standardize_libero_vggt"
+                    ),
+                    image_obs_keys={"primary": "image_primary"},
+                    proprio_obs_key="proprio",
+                    language_key="language_instruction",
+                    action_proprio_normalization_type="normal",
+                    filter_functions=[],
+                )
+            )
+
     # Patch dataset paths and missing statistics for this machine
     for ds_kwargs in cfg.dataset_kwargs_list:
         if args.data_root:

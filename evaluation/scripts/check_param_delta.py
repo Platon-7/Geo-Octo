@@ -34,7 +34,7 @@ def tree_leaves_with_path(pytree, path=()):
 def main():
     parser = argparse.ArgumentParser(description="Compare finetuned params against base pretrained params")
     parser.add_argument("--finetuned", required=True, help="Path to finetuned checkpoint dir")
-    parser.add_argument("--base", required=True, help="Path to base pretrained checkpoint dir or hf://MODEL_ID")
+    parser.add_argument("--base", required=True, help="Base checkpoint path or hf://rail-berkeley/octo-small-1.5")
     parser.add_argument("--topk", type=int, default=30, help="Show top-k largest relative changes")
     args = parser.parse_args()
 
