@@ -131,6 +131,9 @@ try:
         tasks = model.create_tasks(texts=[language_instruction])
     else:
         raise ValueError(f"Unknown EVAL_MODE: {EVAL_MODE}")
+    # Ensure language is passed as numeric token ids like during finetuning
+    if isinstance(tasks.get("language_instruction"), dict) and "input_ids" in tasks["language_instruction"]:
+        tasks["language_instruction"] = np.asarray(tasks["language_instruction"]["input_ids"], dtype=np.int32)
     print(f"[SUCCESS] Task prompt created (mode={EVAL_MODE}).")
 
     # 4. Setup for Inference Loop
