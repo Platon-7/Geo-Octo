@@ -40,6 +40,8 @@ os.makedirs(OUTPUT_DIR, exist_ok=True)
 BASE_DATA_DIR = "/scratch-shared/tmp.cwkV8vOvfY/libero_datasets"
 DATASET_STATISTICS_KEY = "libero_spatial_no_noops"
 LIBERO_DIR = "LIBERO"
+# Ablation: one of {"multimodal", "image_conditioned", "language_conditioned"}
+EVAL_MODE = "multimodal"
 
 # ==============================================================================
 # Helper function to correctly load the goal image from TFRecord files
@@ -73,6 +75,17 @@ print("="*50)
 print(f"\n[INFO] Loading Octo model from: {MODEL_PATH}")
 model = OctoModel.load_pretrained(MODEL_PATH)
 print("[SUCCESS] Octo model loaded.\n")
+
+# Print model spec and config summary
+try:
+    print("[DEBUG] Model spec:")
+    print(model.get_pretty_spec())
+    if "model" in model.config:
+        mcfg = model.config["model"]
+        print("[DEBUG] Observation tokenizers:", list(mcfg.get("observation_tokenizers", {}).keys()))
+        print("[DEBUG] Task tokenizers:", list(mcfg.get("task_tokenizers", {}).keys()))
+except Exception:
+    pass
 
 if DATASET_STATISTICS_KEY not in model.dataset_statistics:
     print(f"[ERROR] Statistics key '{DATASET_STATISTICS_KEY}' not found in model.")
@@ -109,20 +122,16 @@ try:
         traceback.print_exc()
         exit()
     
-    # Restoring your original, successful method for creating the task dictionary
-    raw_task_lang = model.create_tasks(texts=[language_instruction])
-    raw_task_goal = model.create_tasks(goals={"image_primary": goal_image_resized[None]})
-    if 'language_instruction' in raw_task_lang and isinstance(raw_task_lang['language_instruction'], dict):
-        language_tokens = raw_task_lang['language_instruction']['input_ids']  # ✅ EXTRACT input_ids
+    # Create tasks using both goal image and language so tokenization matches training
+    if EVAL_MODE == "multimodal":
+        tasks = model.create_tasks(goals={"image_primary": goal_image_resized[None]}, texts=[language_instruction])
+    elif EVAL_MODE == "image_conditioned":
+        tasks = model.create_tasks(goals={"image_primary": goal_image_resized[None]})
+    elif EVAL_MODE == "language_conditioned":
+        tasks = model.create_tasks(texts=[language_instruction])
     else:
-        language_tokens = raw_task_lang['language_instruction']
-
-    task_dict = {
-        'language_instruction': language_tokens,  # ✅ CORRECT
-        'image_primary': raw_task_goal['image_primary'],
-        'pad_mask_dict': raw_task_lang.get('pad_mask_dict', {})
-    }
-    print("[SUCCESS] Multimodal task prompt created using your original structure.")
+        raise ValueError(f"Unknown EVAL_MODE: {EVAL_MODE}")
+    print(f"[SUCCESS] Task prompt created (mode={EVAL_MODE}).")
 
     # 4. Setup for Inference Loop
     print("\n[INFO] Setting up inference...")
@@ -171,7 +180,7 @@ try:
             
             actions = model.sample_actions(
                 observation,
-                task_dict,
+                tasks,
                 unnormalization_statistics=model.dataset_statistics[DATASET_STATISTICS_KEY]["action"],
                 rng=jax.random.PRNGKey(step)
             )
@@ -179,6 +188,16 @@ try:
             action_to_execute = predicted_action[0] if predicted_action.ndim == 2 else predicted_action
         else:
             action_to_execute = np.zeros(7)
+
+        # Clamp to environment bounds for safety
+        try:
+            low, high = env.action_space.low, env.action_space.high
+            pre_clip = action_to_execute.copy()
+            action_to_execute = np.clip(action_to_execute, low, high)
+            if (step % 50) == 0:
+                print("[STEP", step, "] pre-clip first6:", pre_clip[:6], "clipped first6:", action_to_execute[:6])
+        except Exception:
+            pass
 
         obs, reward, done, info = env.step(action_to_execute)
         
