@@ -85,10 +85,13 @@ def main():
                 dict(
                     name=name,
                     data_dir=args.data_root,
-                    dataset_statistics=None,  # let loader compute or find per-dataset cache
-                    standardize_fn=dict(
-                        module="octo.data.utils.data_utils:standardize_libero_vggt"
-                    ),
+                    # Leave statistics missing; we'll precompute below per dataset
+                    standardize_fn={
+                        "module": "octo.octo.data.utils.data_utils",
+                        "name": "standardize_libero_vggt",
+                        "args": tuple(),
+                        "kwargs": {},
+                    },
                     image_obs_keys={"primary": "image_primary"},
                     proprio_obs_key="proprio",
                     language_key="language_instruction",
@@ -96,6 +99,24 @@ def main():
                     filter_functions=[],
                 )
             )
+        # Precompute dataset statistics for each dataset to satisfy make_interleaved_dataset
+        from octo.data.dataset import make_single_dataset
+        computed_stats = {}
+        for ds in cfg.dataset_kwargs_list:
+            single, stats = make_single_dataset(
+                ds, train=False,
+                traj_transform_kwargs=dict(window_size=cfg.window_size, action_horizon=cfg.traj_transform_kwargs.get("action_horizon", 4)),
+                frame_transform_kwargs=dict(resize_size=cfg.frame_transform_kwargs.get("resize_size", {"primary": (224, 224)})),
+            ), None
+            # make_single_dataset returns a dataset with .dataset_statistics
+            stats = getattr(single, "dataset_statistics", None)
+            if stats is None:
+                # Fallback: compute via underlying builder
+                from octo.data.utils.data_utils import get_dataset_statistics
+                stats = get_dataset_statistics(single, hash_dependencies=(ds["name"],), save_dir=ds["data_dir"], force_recompute=False)
+            computed_stats[ds["name"]] = stats
+        for ds in cfg.dataset_kwargs_list:
+            ds["dataset_statistics"] = computed_stats[ds["name"]]
 
     # Patch dataset paths and missing statistics for this machine
     for ds_kwargs in cfg.dataset_kwargs_list:
