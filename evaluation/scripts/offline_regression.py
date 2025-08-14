@@ -3,6 +3,15 @@ import sys
 import warnings
 from typing import List
 
+# JAX/Transformers compatibility shim (pre-import)
+try:
+	import jax.numpy as jnp
+	if not hasattr(jnp, "DeviceArray"):
+		jnp.DeviceArray = jnp.ndarray
+		print("[FIX] Added DeviceArray compatibility shim")
+except Exception:
+	pass
+
 # Suppress noisy warnings and tokenizer parallelism
 os.environ.setdefault('TOKENIZERS_PARALLELISM', 'false')
 os.environ.setdefault('TF_CPP_MIN_LOG_LEVEL', '2')

@@ -5,6 +5,15 @@ import argparse
 import numpy as np
 import jax
 
+# JAX/Transformers compatibility shim (pre-import)
+try:
+	import jax.numpy as jnp
+	if not hasattr(jnp, "DeviceArray"):
+		jnp.DeviceArray = jnp.ndarray
+		print("[FIX] Added DeviceArray compatibility shim")
+except Exception:
+	pass
+
 from octo.model.octo_model import OctoModel
 
 
