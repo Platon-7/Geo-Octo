@@ -38,6 +38,8 @@ def main():
     parser.add_argument("--batch_size", type=int, default=8, help="Validation batch size")
     parser.add_argument("--config_string", type=str, default="full,multimodal",
                         help="Offline finetuning config string used during training")
+    parser.add_argument("--data_root", type=str, default=os.environ.get("LIBERO_DATA_ROOT", ""),
+                        help="Override dataset root directory if config_offline points to a different machine path")
     args = parser.parse_args()
 
     print("=== OFFLINE REGRESSION CHECK ===")
@@ -47,6 +49,18 @@ def main():
 
     # Build validation dataset using the same config as training (no augmentation)
     cfg = get_config(args.config_string)
+    # Patch dataset paths and missing statistics for this machine
+    for ds_kwargs in cfg.dataset_kwargs_list:
+        if args.data_root:
+            ds_kwargs["data_dir"] = args.data_root
+        stats_path = ds_kwargs.get("dataset_statistics")
+        if isinstance(stats_path, str):
+            try:
+                if not tf.io.gfile.exists(stats_path):
+                    # Drop stats so they are computed / loaded per-dataset
+                    ds_kwargs.pop("dataset_statistics", None)
+            except Exception:
+                ds_kwargs.pop("dataset_statistics", None)
 
     # Reduce threads for stability in ad-hoc runs
     val_ds = make_interleaved_dataset(
