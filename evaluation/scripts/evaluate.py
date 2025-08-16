@@ -117,6 +117,16 @@ try:
     print(f"[DEBUG] Env action_space: {getattr(env, 'action_space', None)}")
     print(f"[DEBUG] Env action_dim (if available): {env_action_dim}")
 
+    def get_target_dim() -> int:
+        aspace = getattr(env, "action_space", None)
+        if aspace is None and hasattr(env, "env"):
+            aspace = getattr(env.env, "action_space", None)
+        if env_action_dim is not None:
+            return int(env_action_dim)
+        if aspace is not None and hasattr(aspace, "shape") and aspace.shape is not None:
+            return int(aspace.shape[0])
+        return 7
+
     def map_action_for_env(action7: np.ndarray, target_dim: Optional[int]):
         a = np.array(action7, dtype=np.float32)
         if target_dim == 4:
@@ -131,6 +141,25 @@ try:
             if target_dim is not None:
                 return a[:target_dim]
             return a
+        # target_dim provided
+        return a[:target_dim]
+
+    def prepare_action(action7: np.ndarray) -> np.ndarray:
+        td = get_target_dim()
+        try:
+            mapped = map_action_for_env(action7, td)
+            arr = np.asarray(mapped, dtype=np.float32).reshape(-1)
+        except Exception:
+            arr = np.zeros(td, dtype=np.float32)
+        # pad / trim
+        if arr.shape[0] < td:
+            arr = np.pad(arr, (0, td - arr.shape[0]))
+        elif arr.shape[0] > td:
+            arr = arr[:td]
+        # finite check
+        if not np.all(np.isfinite(arr)):
+            arr = np.zeros(td, dtype=np.float32)
+        return arr
 
     def get_eef_pos(obs_dict):
         return np.array(obs_dict.get("robot0_eef_pos", np.zeros(3, dtype=np.float32)))
@@ -138,11 +167,7 @@ try:
     def probe_env_response(env_obj, steps=3, delta=0.03):
         print("[INFO] Probing env response to small action impulses...")
         try:
-            aspace = getattr(env_obj, "action_space", None)
-            if aspace is None and hasattr(env_obj, "env"):
-                aspace = getattr(env_obj.env, "action_space", None)
-            dim = env_action_dim if env_action_dim is not None else int(getattr(aspace, "shape", (7,))[0])
-            base_obs, _, _, _ = env_obj.step(np.zeros(dim, dtype=np.float32))
+            base_obs, _, _, _ = env_obj.step(np.zeros(get_target_dim(), dtype=np.float32))
         except Exception:
             base_obs = {}
         base_eef = get_eef_pos(base_obs)
@@ -151,7 +176,7 @@ try:
             v = np.zeros(7, dtype=np.float32)
             v[i] = delta if i < 6 else 1.0
             try:
-                mapped = map_action_for_env(v, env_action_dim)
+                mapped = prepare_action(v)
                 obs_before = base_obs
                 eef_before = get_eef_pos(obs_before)
                 last_obs = obs_before
@@ -251,8 +276,8 @@ try:
         else:
             action_to_execute = np.zeros(7)
 
-        # Map to env action dimension
-        action_to_execute = map_action_for_env(action_to_execute, env_action_dim)
+        # Map to env action dimension and sanitize
+        action_to_execute = prepare_action(action_to_execute)
 
         # Clamp to environment bounds for safety and log clipping
         try:
