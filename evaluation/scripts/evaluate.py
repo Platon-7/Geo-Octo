@@ -68,6 +68,20 @@ CALIBRATE_TRANSLATION = True
 CALIB_DELTA = 0.02
 CALIB_STEPS = 2
 
+# Image orientation correction (apply to both goal and observation)
+IMG_VFLIP = True   # vertical flip to correct upside-down feed
+IMG_HFLIP = True   # horizontal flip to correct left-right mirroring
+
+def apply_image_orientation(img: np.ndarray) -> np.ndarray:
+    out = img
+    if IMG_VFLIP and IMG_HFLIP:
+        out = cv2.flip(out, -1)
+    elif IMG_VFLIP:
+        out = cv2.flip(out, 0)
+    elif IMG_HFLIP:
+        out = cv2.flip(out, 1)
+    return out
+
 # ==============================================================================
 # Helper function to correctly load the goal image from TFRecord files
 # ==============================================================================
@@ -252,6 +266,7 @@ try:
         print(f"[INFO] Loading goal image from: {dataset_dir_for_eval}")
         goal_image = get_goal_image_from_tfrecord(dataset_dir_for_eval, EVAL_TASK_ID)
         goal_image_resized = cv2.resize(goal_image, (224, 224))
+        goal_image_resized = apply_image_orientation(goal_image_resized)
         print("[SUCCESS] Correct goal image loaded from demonstration.")
     except Exception as e:
         print(f"[FATAL] Could not load goal image: {e}")
@@ -302,6 +317,7 @@ try:
     # 5. Inference Loop
     for step in range(NUM_TIMESTEPS):
         current_image = obs["agentview_image"]
+        current_image = apply_image_orientation(current_image)
         current_proprio = extract_proprio(obs)
         images.append(current_image)
         proprios.append(current_proprio)
