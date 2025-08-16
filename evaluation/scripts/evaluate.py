@@ -47,9 +47,9 @@ EVAL_MODE = "multimodal"
 # Optional control ablations / safety
 ZERO_ROTATION = True         # Zero out orientation deltas to test position-only control
 MAP_GRIPPER_ABS_TO_REL = True  # Map gripper from [0,1] -> [-1,1]
-LPF_ALPHA = 0.3             # Exponential moving average for action smoothing (0 disables if <=0)
+LPF_ALPHA = 0.0             # Exponential moving average; set 0.0 to disable smoothing for snappier motion
 MANUAL_CLAMP_IF_NO_SPACE = True
-TRANS_MAX = 0.01            # meters per step cap if no env.action_space (tighter for stability)
+TRANS_MAX = 0.03            # meters per step cap if no env.action_space (raise for faster motion)
 ROT_MAX = 0.15              # rad per step cap if no env.action_space
 GRIP_MAX = 1.0
 
@@ -67,6 +67,11 @@ GRIPPER_SIGN = -1.0   # invert if open/close seems reversed
 CALIBRATE_TRANSLATION = True
 CALIB_DELTA = 0.02
 CALIB_STEPS = 2
+
+# Gains to amplify model outputs (apply before clamping)
+TRANS_GAIN = 3.0
+ROT_GAIN = 1.0
+GRIP_GAIN = 1.0
 
 # Image orientation correction (apply to both goal and observation)
 IMG_VFLIP = True   # vertical flip to correct upside-down feed
@@ -372,6 +377,10 @@ try:
                 a[:3] = (calib_P @ a[:3]).astype(np.float32)
             except Exception:
                 pass
+        # Apply gains
+        a[:3] *= TRANS_GAIN
+        a[3:6] *= ROT_GAIN
+        a[6] *= GRIP_GAIN
         # Gripper mapping
         if GRIPPER_MODE == 'rel':
             # Ensure in [-1,1] and apply sign
