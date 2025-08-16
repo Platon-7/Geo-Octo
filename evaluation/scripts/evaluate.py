@@ -54,7 +54,7 @@ ROT_MAX = 0.15              # rad per step cap if no env.action_space
 GRIP_MAX = 1.0
 
 # Axis/sign remap toggles
-FLIP_X = True    # invert X if robot moves right instead of left
+FLIP_X = False   # start neutral; calibration will correct mapping
 FLIP_Y = False
 FLIP_Z = False
 
@@ -62,6 +62,11 @@ FLIP_Z = False
 # If your model outputs relative [-1,1], set GRIPPER_MODE='rel'; if absolute [0,1], set 'abs'.
 GRIPPER_MODE = 'rel'
 GRIPPER_SIGN = -1.0   # invert if open/close seems reversed
+
+# Optional translation calibration
+CALIBRATE_TRANSLATION = True
+CALIB_DELTA = 0.02
+CALIB_STEPS = 2
 
 # ==============================================================================
 # Helper function to correctly load the goal image from TFRecord files
@@ -208,6 +213,38 @@ try:
                 break
         print("[INFO] Probe complete.")
 
+    def calibrate_translation_mapping(env_obj, delta=0.02, steps=2):
+        """Estimate 3x3 Jacobian J s.t. Δeef ≈ J * a_xyz for small commands, then return P ≈ pinv(J)."""
+        print("[INFO] Calibrating translation mapping (3x3)...")
+        J = np.zeros((3, 3), dtype=np.float32)
+        try:
+            # zero action to get baseline
+            base_obs, _, _, _ = env_obj.step(np.zeros(get_target_dim(), dtype=np.float32))
+            base_eef = get_eef_pos(base_obs)
+            for k in range(3):
+                cmd = np.zeros(7, dtype=np.float32)
+                cmd[k] = delta
+                mapped = prepare_action(cmd)
+                last_obs = base_obs
+                for _ in range(steps):
+                    last_obs, _, _, _ = env_obj.step(mapped)
+                eef_after = get_eef_pos(last_obs)
+                d = (eef_after - base_eef) / max(delta, 1e-6)
+                J[:, k] = d
+                # small settle back
+                settle = prepare_action(-cmd)
+                for _ in range(steps):
+                    env_obj.step(settle)
+            # Pseudoinverse for stability
+            U, S, Vt = np.linalg.svd(J, full_matrices=False)
+            S_inv = np.diag([1/s if s > 1e-6 else 0.0 for s in S])
+            P = Vt.T @ S_inv @ U.T
+            print(f"[CALIB] J=\n{J}\n[CALIB] P=\n{P}")
+            return P
+        except Exception as e:
+            print(f"[WARN] Calibration failed: {e}")
+            return None
+
     # 3. Create Task - Using YOUR structure with the CORRECT goal image
     print(f"\n[INFO] Creating task specification...")
     try:
@@ -246,6 +283,10 @@ try:
 
     # Probe once before the loop
     probe_env_response(env, steps=3, delta=0.03)
+
+    calib_P = None
+    if CALIBRATE_TRANSLATION:
+        calib_P = calibrate_translation_mapping(env, delta=CALIB_DELTA, steps=CALIB_STEPS)
 
     def extract_proprio(obs_dict):
         proprio = obs_dict.get("robot0_joint_pos", np.zeros(7))
@@ -309,6 +350,12 @@ try:
             a[1] = -a[1]
         if FLIP_Z:
             a[2] = -a[2]
+        # Apply calibrated mapping for translation
+        if CALIBRATE_TRANSLATION and calib_P is not None:
+            try:
+                a[:3] = (calib_P @ a[:3]).astype(np.float32)
+            except Exception:
+                pass
         # Gripper mapping
         if GRIPPER_MODE == 'rel':
             # Ensure in [-1,1] and apply sign
