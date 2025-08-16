@@ -108,6 +108,53 @@ try:
     env_args = {"bddl_file_name": bddl_file_path, "camera_heights": 224, "camera_widths": 224}
     env = OffScreenRenderEnv(**env_args)
 
+    # === Env action diagnostics and mapping ===
+    try:
+        env_action_dim = getattr(env.env, "action_dim", None)
+    except Exception:
+        env_action_dim = None
+    print(f"[DEBUG] Env action_space: {getattr(env, 'action_space', None)}")
+    print(f"[DEBUG] Env action_dim (if available): {env_action_dim}")
+
+    def map_action_for_env(action7: np.ndarray, target_dim: int | None):
+        a = np.array(action7, dtype=np.float32)
+        if target_dim == 4:
+            # Map [dx, dy, dz, dRx, dRy, dRz, g] -> [dx, dy, dz, g]
+            return np.array([a[0], a[1], a[2], a[6]], dtype=np.float32)
+        if target_dim is None and hasattr(env, "action_space") and hasattr(env.action_space, "shape"):
+            return a[: int(env.action_space.shape[0])]
+        if target_dim is not None:
+            return a[:target_dim]
+        return a
+
+    def get_eef_pos(obs_dict):
+        return np.array(obs_dict.get("robot0_eef_pos", np.zeros(3, dtype=np.float32)))
+
+    def probe_env_response(env_obj, steps=3, delta=0.03):
+        print("[INFO] Probing env response to small action impulses...")
+        try:
+            base_obs, _, _, _ = env_obj.step(np.zeros(getattr(env_obj.action_space, "shape", (7,))[0], dtype=np.float32))
+        except Exception:
+            base_obs = {}
+        base_eef = get_eef_pos(base_obs)
+        # Build 7D basis; gripper as 1.0 toggle
+        for i in range(7):
+            v = np.zeros(7, dtype=np.float32)
+            v[i] = delta if i < 6 else 1.0
+            try:
+                mapped = map_action_for_env(v, env_action_dim)
+                obs_before = base_obs
+                eef_before = get_eef_pos(obs_before)
+                last_obs = obs_before
+                for _ in range(steps):
+                    last_obs, _, _, _ = env_obj.step(mapped)
+                eef_after = get_eef_pos(last_obs)
+                print(f"[PROBE] Axis {i}: action={mapped} -> Δeef={eef_after - eef_before}")
+            except Exception as e:
+                print(f"[PROBE] Axis {i} probing failed: {e}")
+                break
+        print("[INFO] Probe complete.")
+
     # 3. Create Task - Using YOUR structure with the CORRECT goal image
     print(f"\n[INFO] Creating task specification...")
     try:
@@ -143,6 +190,9 @@ try:
     init_states = task_suite.get_task_init_states(EVAL_TASK_ID)
     env.set_init_state(init_states[0])
     obs, _, _, _ = env.step(np.zeros(7))
+
+    # Probe once before the loop
+    probe_env_response(env, steps=3, delta=0.03)
 
     def extract_proprio(obs_dict):
         proprio = obs_dict.get("robot0_joint_pos", np.zeros(7))
@@ -192,13 +242,18 @@ try:
         else:
             action_to_execute = np.zeros(7)
 
-        # Clamp to environment bounds for safety
+        # Map to env action dimension
+        action_to_execute = map_action_for_env(action_to_execute, env_action_dim)
+
+        # Clamp to environment bounds for safety and log clipping
         try:
             low, high = env.action_space.low, env.action_space.high
             pre_clip = action_to_execute.copy()
             action_to_execute = np.clip(action_to_execute, low, high)
-            if (step % 50) == 0:
-                print("[STEP", step, "] pre-clip first6:", pre_clip[:6], "clipped first6:", action_to_execute[:6])
+            clipped_frac = float(np.mean(np.abs(pre_clip - action_to_execute) > 1e-6))
+            if (step % 25) == 0:
+                mu, sd = float(np.mean(action_to_execute)), float(np.std(action_to_execute))
+                print(f"[STEP {step}] clipped_frac={clipped_frac:.2f} action(mean,std)={mu:.3f},{sd:.3f}")
         except Exception:
             pass
 
