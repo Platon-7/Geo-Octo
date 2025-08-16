@@ -34,7 +34,7 @@ from libero.libero.envs import OffScreenRenderEnv
 MODEL_PATH = "/home/pkarageorgis/geo_octo/octo/my_octo_vggt_model_offline/octo_vggt_finetune_staged/experiment_20250808_130401_BASELINE_RUN"
 TASK_SUITE_NAME = "libero_spatial"
 EVAL_TASK_ID = 6
-NUM_TIMESTEPS = 400
+NUM_TIMESTEPS = 800
 WINDOW_SIZE = 2
 OUTPUT_DIR = "evaluation/test_outputs"
 os.makedirs(OUTPUT_DIR, exist_ok=True)
@@ -69,13 +69,19 @@ CALIB_DELTA = 0.02
 CALIB_STEPS = 2
 
 # Gains to amplify model outputs (apply before clamping)
-TRANS_GAIN = 3.0
+TRANS_GAIN = 5.0
 ROT_GAIN = 1.0
 GRIP_GAIN = 1.0
 
+# Gripper gating / debounce
+GRIPPER_HOLD_ENABLED = True
+GRIPPER_HOLD_PROPORTION = 0.6    # hold for first 60% of steps
+GRIPPER_HOLD_VALUE = +1.0        # relative: +1 open, -1 close (depending on controller)
+GRIPPER_DEBOUNCE_STEPS = 8
+
 # Image orientation correction (apply to both goal and observation)
-IMG_VFLIP = True   # vertical flip to correct upside-down feed
-IMG_HFLIP = True   # horizontal flip to correct left-right mirroring
+IMG_VFLIP = True    # vertical flip for model inputs
+IMG_HFLIP = False   # horizontal flip off to preserve left-right
 
 def apply_image_orientation(img: np.ndarray) -> np.ndarray:
     out = img
@@ -86,6 +92,23 @@ def apply_image_orientation(img: np.ndarray) -> np.ndarray:
     elif IMG_HFLIP:
         out = cv2.flip(out, 1)
     return out
+
+# Video rendering orientation (separate from model)
+VIDEO_USE_MODEL_ORIENTATION = False
+VIDEO_VFLIP = True
+VIDEO_HFLIP = False
+
+def apply_video_orientation(img: np.ndarray, model_img: np.ndarray) -> np.ndarray:
+    frame = model_img if VIDEO_USE_MODEL_ORIENTATION else img
+    if VIDEO_USE_MODEL_ORIENTATION:
+        return frame
+    if VIDEO_VFLIP and VIDEO_HFLIP:
+        return cv2.flip(frame, -1)
+    if VIDEO_VFLIP:
+        return cv2.flip(frame, 0)
+    if VIDEO_HFLIP:
+        return cv2.flip(frame, 1)
+    return frame
 
 # ==============================================================================
 # Helper function to correctly load the goal image from TFRecord files
@@ -316,13 +339,15 @@ try:
     proprios = []
     frames = []
     prev_action_exec = None
+    grip_last_value = 0.0
+    grip_stable_count = 0
 
     print(f"[INFO] Starting evaluation loop with {WINDOW_SIZE}-frame window...")
 
     # 5. Inference Loop
     for step in range(NUM_TIMESTEPS):
-        current_image = obs["agentview_image"]
-        current_image = apply_image_orientation(current_image)
+        raw_image = obs["agentview_image"]
+        current_image = apply_image_orientation(raw_image)
         current_proprio = extract_proprio(obs)
         images.append(current_image)
         proprios.append(current_proprio)
@@ -389,6 +414,20 @@ try:
             # Treat as absolute [0,1], with possible inversion
             g = np.clip(a[6], 0.0, 1.0)
             a[6] = (GRIPPER_SIGN * (g * 2.0 - 1.0))  # convert to rel for controller
+        # Gripper gating
+        if GRIPPER_HOLD_ENABLED:
+            if step < int(NUM_TIMESTEPS * GRIPPER_HOLD_PROPORTION):
+                a[6] = GRIPPER_HOLD_VALUE
+            else:
+                # debounce small toggles
+                if np.sign(a[6]) == np.sign(grip_last_value) or abs(a[6]) < 0.3:
+                    grip_stable_count += 1
+                else:
+                    grip_stable_count = 0
+                if grip_stable_count < GRIPPER_DEBOUNCE_STEPS:
+                    a[6] = grip_last_value
+                else:
+                    grip_last_value = float(np.clip(a[6], -1.0, 1.0))
         action_to_execute = a
 
         # Map to env action dimension and sanitize
@@ -432,8 +471,9 @@ try:
 
         obs, reward, done, info = env.step(action_to_execute)
         
-        # Use orientation-corrected image directly for video
-        frames.append(cv2.cvtColor(current_image, cv2.COLOR_RGB2BGR))
+        # Use separate orientation settings for video
+        video_frame = apply_video_orientation(raw_image, current_image)
+        frames.append(cv2.cvtColor(video_frame, cv2.COLOR_RGB2BGR))
         
         if (step + 1) % 50 == 0:
             print(f"    - Step {step+1}/{NUM_TIMESTEPS}: Reward={reward}, Done={done}")
