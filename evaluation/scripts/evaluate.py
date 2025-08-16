@@ -44,6 +44,15 @@ LIBERO_DIR = "LIBERO"
 # Ablation: one of {"multimodal", "image_conditioned", "language_conditioned"}
 EVAL_MODE = "multimodal"
 
+# Optional control ablations / safety
+ZERO_ROTATION = True         # Zero out orientation deltas to test position-only control
+MAP_GRIPPER_ABS_TO_REL = True  # Map gripper from [0,1] -> [-1,1]
+LPF_ALPHA = 0.3             # Exponential moving average for action smoothing (0 disables if <=0)
+MANUAL_CLAMP_IF_NO_SPACE = True
+TRANS_MAX = 0.03            # meters per step cap if no env.action_space
+ROT_MAX = 0.15              # rad per step cap if no env.action_space
+GRIP_MAX = 1.0
+
 # ==============================================================================
 # Helper function to correctly load the goal image from TFRecord files
 # ==============================================================================
@@ -235,6 +244,7 @@ try:
     images = []
     proprios = []
     frames = []
+    prev_action_exec = None
 
     print(f"[INFO] Starting evaluation loop with {WINDOW_SIZE}-frame window...")
 
@@ -276,8 +286,25 @@ try:
         else:
             action_to_execute = np.zeros(7)
 
+        # Control ablations / preprocessing
+        a = np.array(action_to_execute, dtype=np.float32)
+        if a.shape[0] < 7:
+            a = np.pad(a, (0, 7 - a.shape[0]))
+        if ZERO_ROTATION:
+            a[3:6] = 0.0
+        if MAP_GRIPPER_ABS_TO_REL:
+            a[6] = np.clip(a[6] * 2.0 - 1.0, -1.0, 1.0)
+        action_to_execute = a
+
         # Map to env action dimension and sanitize
         action_to_execute = prepare_action(action_to_execute)
+
+        # Optional smoothing
+        if LPF_ALPHA and LPF_ALPHA > 0:
+            if prev_action_exec is None or prev_action_exec.shape != action_to_execute.shape:
+                prev_action_exec = np.zeros_like(action_to_execute)
+            action_to_execute = LPF_ALPHA * action_to_execute + (1.0 - LPF_ALPHA) * prev_action_exec
+            prev_action_exec = action_to_execute.copy()
 
         # Clamp to environment bounds for safety and log clipping
         try:
@@ -292,6 +319,19 @@ try:
                 if (step % 25) == 0:
                     mu, sd = float(np.mean(action_to_execute)), float(np.std(action_to_execute))
                     print(f"[STEP {step}] clipped_frac={clipped_frac:.2f} action(mean,std)={mu:.3f},{sd:.3f}")
+            elif MANUAL_CLAMP_IF_NO_SPACE:
+                # Apply manual caps if env doesn't expose action_space
+                td = get_target_dim()
+                pre_clip = action_to_execute.copy()
+                if td >= 3:
+                    action_to_execute[0:3] = np.clip(action_to_execute[0:3], -TRANS_MAX, TRANS_MAX)
+                if td >= 6:
+                    action_to_execute[3:6] = np.clip(action_to_execute[3:6], -ROT_MAX, ROT_MAX)
+                action_to_execute[-1] = np.clip(action_to_execute[-1], -GRIP_MAX, GRIP_MAX)
+                clipped_frac = float(np.mean(np.abs(pre_clip - action_to_execute) > 1e-6))
+                if (step % 25) == 0:
+                    mu, sd = float(np.mean(action_to_execute)), float(np.std(action_to_execute))
+                    print(f"[STEP {step}] manual_clamp clipped_frac={clipped_frac:.2f} action(mean,std)={mu:.3f},{sd:.3f}")
         except Exception:
             pass
 
