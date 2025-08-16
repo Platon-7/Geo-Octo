@@ -423,9 +423,8 @@ try:
 
         obs, reward, done, info = env.step(action_to_execute)
         
-        # flip the video because it is upside-down for some reason
-        flipped_image = cv2.flip(current_image, 0)
-        frames.append(cv2.cvtColor(flipped_image, cv2.COLOR_RGB2BGR))
+        # Use orientation-corrected image directly for video
+        frames.append(cv2.cvtColor(current_image, cv2.COLOR_RGB2BGR))
         
         if (step + 1) % 50 == 0:
             print(f"    - Step {step+1}/{NUM_TIMESTEPS}: Reward={reward}, Done={done}")
