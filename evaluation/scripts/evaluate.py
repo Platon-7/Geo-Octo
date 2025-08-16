@@ -49,9 +49,19 @@ ZERO_ROTATION = True         # Zero out orientation deltas to test position-only
 MAP_GRIPPER_ABS_TO_REL = True  # Map gripper from [0,1] -> [-1,1]
 LPF_ALPHA = 0.3             # Exponential moving average for action smoothing (0 disables if <=0)
 MANUAL_CLAMP_IF_NO_SPACE = True
-TRANS_MAX = 0.03            # meters per step cap if no env.action_space
+TRANS_MAX = 0.01            # meters per step cap if no env.action_space (tighter for stability)
 ROT_MAX = 0.15              # rad per step cap if no env.action_space
 GRIP_MAX = 1.0
+
+# Axis/sign remap toggles
+FLIP_X = True    # invert X if robot moves right instead of left
+FLIP_Y = False
+FLIP_Z = False
+
+# Gripper handling
+# If your model outputs relative [-1,1], set GRIPPER_MODE='rel'; if absolute [0,1], set 'abs'.
+GRIPPER_MODE = 'rel'
+GRIPPER_SIGN = -1.0   # invert if open/close seems reversed
 
 # ==============================================================================
 # Helper function to correctly load the goal image from TFRecord files
@@ -292,8 +302,21 @@ try:
             a = np.pad(a, (0, 7 - a.shape[0]))
         if ZERO_ROTATION:
             a[3:6] = 0.0
-        if MAP_GRIPPER_ABS_TO_REL:
-            a[6] = np.clip(a[6] * 2.0 - 1.0, -1.0, 1.0)
+        # Axis flips
+        if FLIP_X:
+            a[0] = -a[0]
+        if FLIP_Y:
+            a[1] = -a[1]
+        if FLIP_Z:
+            a[2] = -a[2]
+        # Gripper mapping
+        if GRIPPER_MODE == 'rel':
+            # Ensure in [-1,1] and apply sign
+            a[6] = np.clip(a[6], -1.0, 1.0) * GRIPPER_SIGN
+        else:
+            # Treat as absolute [0,1], with possible inversion
+            g = np.clip(a[6], 0.0, 1.0)
+            a[6] = (GRIPPER_SIGN * (g * 2.0 - 1.0))  # convert to rel for controller
         action_to_execute = a
 
         # Map to env action dimension and sanitize
