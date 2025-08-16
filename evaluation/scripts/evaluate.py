@@ -17,6 +17,7 @@ import cv2
 import numpy as np
 import jax
 import tensorflow as tf
+from typing import Optional
 
 # Disable tokenizer parallelism to avoid warnings
 os.environ['TOKENIZERS_PARALLELISM'] = 'false'
@@ -116,16 +117,20 @@ try:
     print(f"[DEBUG] Env action_space: {getattr(env, 'action_space', None)}")
     print(f"[DEBUG] Env action_dim (if available): {env_action_dim}")
 
-    def map_action_for_env(action7: np.ndarray, target_dim: int | None):
+    def map_action_for_env(action7: np.ndarray, target_dim: Optional[int]):
         a = np.array(action7, dtype=np.float32)
         if target_dim == 4:
             # Map [dx, dy, dz, dRx, dRy, dRz, g] -> [dx, dy, dz, g]
             return np.array([a[0], a[1], a[2], a[6]], dtype=np.float32)
-        if target_dim is None and hasattr(env, "action_space") and hasattr(env.action_space, "shape"):
-            return a[: int(env.action_space.shape[0])]
-        if target_dim is not None:
-            return a[:target_dim]
-        return a
+        if target_dim is None:
+            aspace = getattr(env, "action_space", None)
+            if aspace is None and hasattr(env, "env"):
+                aspace = getattr(env.env, "action_space", None)
+            if aspace is not None and hasattr(aspace, "shape"):
+                return a[: int(aspace.shape[0])]
+            if target_dim is not None:
+                return a[:target_dim]
+            return a
 
     def get_eef_pos(obs_dict):
         return np.array(obs_dict.get("robot0_eef_pos", np.zeros(3, dtype=np.float32)))
@@ -133,7 +138,11 @@ try:
     def probe_env_response(env_obj, steps=3, delta=0.03):
         print("[INFO] Probing env response to small action impulses...")
         try:
-            base_obs, _, _, _ = env_obj.step(np.zeros(getattr(env_obj.action_space, "shape", (7,))[0], dtype=np.float32))
+            aspace = getattr(env_obj, "action_space", None)
+            if aspace is None and hasattr(env_obj, "env"):
+                aspace = getattr(env_obj.env, "action_space", None)
+            dim = env_action_dim if env_action_dim is not None else int(getattr(aspace, "shape", (7,))[0])
+            base_obs, _, _, _ = env_obj.step(np.zeros(dim, dtype=np.float32))
         except Exception:
             base_obs = {}
         base_eef = get_eef_pos(base_obs)
@@ -247,13 +256,17 @@ try:
 
         # Clamp to environment bounds for safety and log clipping
         try:
-            low, high = env.action_space.low, env.action_space.high
-            pre_clip = action_to_execute.copy()
-            action_to_execute = np.clip(action_to_execute, low, high)
-            clipped_frac = float(np.mean(np.abs(pre_clip - action_to_execute) > 1e-6))
-            if (step % 25) == 0:
-                mu, sd = float(np.mean(action_to_execute)), float(np.std(action_to_execute))
-                print(f"[STEP {step}] clipped_frac={clipped_frac:.2f} action(mean,std)={mu:.3f},{sd:.3f}")
+            aspace = getattr(env, "action_space", None)
+            if aspace is None and hasattr(env, "env"):
+                aspace = getattr(env.env, "action_space", None)
+            if aspace is not None:
+                low, high = aspace.low, aspace.high
+                pre_clip = action_to_execute.copy()
+                action_to_execute = np.clip(action_to_execute, low, high)
+                clipped_frac = float(np.mean(np.abs(pre_clip - action_to_execute) > 1e-6))
+                if (step % 25) == 0:
+                    mu, sd = float(np.mean(action_to_execute)), float(np.std(action_to_execute))
+                    print(f"[STEP {step}] clipped_frac={clipped_frac:.2f} action(mean,std)={mu:.3f},{sd:.3f}")
         except Exception:
             pass
 
