@@ -88,6 +88,14 @@ ROT_DEADZONE = 0.02          # ignore tiny rotation signals
 ROT_STEP_MAX = 0.03          # max per-step rotation magnitude per axis (rad)
 ROT_SMOOTH = 0.5             # simple smoothing for rotation
 
+# State-based descent control
+XY_APPROACH_THRESH = 0.02       # command magnitude considered "centered" over target
+APPROACH_WINDOW_STEPS = 8       # consecutive steps to confirm approach
+DESCENT_DELTA = 0.08            # desired descent relative to start (m)
+DESCENT_PUSH = 0.03             # base downward push when descending
+DESCENT_PUSH_MAX = 0.08         # cap downward push
+NO_DESCENT_PATIENCE = 12        # steps to wait before increasing push
+
 # Gripper gating / debounce
 GRIPPER_HOLD_ENABLED = True
 GRIPPER_HOLD_PROPORTION = 0.6    # hold for first 60% of steps
@@ -431,6 +439,16 @@ try:
         proprio = obs_dict.get("robot0_joint_pos", np.zeros(7))
         return proprio[:7] if len(proprio) >= 7 else np.zeros(7)
 
+    # Initialize descent state
+    eef_pos_start = get_eef_pos(obs)
+    eef_z_start = float(eef_pos_start[2]) if len(eef_pos_start) >= 3 else 0.0
+    z_target = eef_z_start - DESCENT_DELTA
+    z_guard_lower = eef_z_start - (DESCENT_DELTA * 2.5)
+    last_eef_z = eef_z_start
+    approach_counter = 0
+    dynamic_descent_push = DESCENT_PUSH
+    no_descent_count = 0
+
     images = []
     proprios = []
     frames = []
@@ -513,12 +531,31 @@ try:
         a[0:2] *= TRANS_GAIN_XY
         a[2] *= TRANS_GAIN_Z
         a[6] *= GRIP_GAIN
-        # Descent bias after approach
-        if step > int(NUM_TIMESTEPS * 0.6):
-            a[2] += Z_DESCENT_BIAS
+        # State-based descent: descend when approaching target and above z_target
+        try:
+            eef_z = float(get_eef_pos(obs)[2])
+        except Exception:
+            eef_z = last_eef_z
+        xy_mag = float(np.sqrt(float(a[0] ** 2 + a[1] ** 2)))
+        if xy_mag < XY_APPROACH_THRESH:
+            approach_counter += 1
+        else:
+            approach_counter = max(0, approach_counter - 1)
+        descending = (approach_counter >= APPROACH_WINDOW_STEPS) and (eef_z > z_target)
+        if descending and (eef_z > z_guard_lower):
+            a[2] = min(a[2], -dynamic_descent_push)
+            # Progress check to adapt push
+            if eef_z < (last_eef_z - 5e-4):
+                no_descent_count = 0
+            else:
+                no_descent_count += 1
+                if no_descent_count >= NO_DESCENT_PATIENCE:
+                    dynamic_descent_push = float(min(dynamic_descent_push * 1.25, DESCENT_PUSH_MAX))
+                    no_descent_count = 0
+        last_eef_z = eef_z
         if (step % 25) == 0:
             try:
-                print(f"[STEP {step}] z_cmd={a[2]:.3f} rot_cmd={a[3]:.3f},{a[4]:.3f},{a[5]:.3f}")
+                print(f"[STEP {step}] z_cmd={a[2]:.3f} rot_cmd={a[3]:.3f},{a[4]:.3f},{a[5]:.3f} eef_z={eef_z:.3f} approach_cnt={approach_counter} z_target={z_target:.3f} push={dynamic_descent_push:.3f}")
             except Exception:
                 pass
         # Gripper mapping
