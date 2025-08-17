@@ -18,6 +18,7 @@ import numpy as np
 import jax
 import tensorflow as tf
 from typing import Optional
+import json
 
 # Disable tokenizer parallelism to avoid warnings
 os.environ['TOKENIZERS_PARALLELISM'] = 'false'
@@ -43,6 +44,8 @@ DATASET_STATISTICS_KEY = "libero_spatial_no_noops"
 LIBERO_DIR = "LIBERO"
 # Ablation: one of {"multimodal", "image_conditioned", "language_conditioned"}
 EVAL_MODE = "multimodal"
+MAPPING_VERSION = "1.0.0"
+MAPPING_DIR = "/gpfs/home4/pkarageorgis/geo_octo/evaluation/task_to_episode_map"
 
 # Optional control ablations / safety
 ZERO_ROTATION = True         # Zero out orientation deltas to test position-only control
@@ -290,12 +293,22 @@ try:
     # 3. Create Task - Using YOUR structure with the CORRECT goal image
     print(f"\n[INFO] Creating task specification...")
     try:
-        dataset_dir_for_eval = os.path.join(BASE_DATA_DIR, DATASET_STATISTICS_KEY, "1.0.0")
+        dataset_dir_for_eval = os.path.join(BASE_DATA_DIR, DATASET_STATISTICS_KEY, MAPPING_VERSION)
+        map_path = os.path.join(MAPPING_DIR, f"{DATASET_STATISTICS_KEY}_{MAPPING_VERSION}.json")
+        print(f"[INFO] Loading mapping: {map_path}")
+        with open(map_path, "r") as f:
+            mapping = json.load(f)
+        lang_key = language_instruction.strip()
+        episode_indices = mapping.get("by_language", {}).get(lang_key, [])
+        if not episode_indices:
+            raise RuntimeError(f"No episode indices found for language: {lang_key!r} in mapping {map_path}")
+        episode_index = int(episode_indices[0])
+        print(f"[INFO] Using mapped episode index {episode_index} for this task")
         print(f"[INFO] Loading goal image from: {dataset_dir_for_eval}")
-        goal_image = get_goal_image_from_tfrecord(dataset_dir_for_eval, EVAL_TASK_ID)
+        goal_image = get_goal_image_from_tfrecord(dataset_dir_for_eval, episode_index)
         goal_image_resized = cv2.resize(goal_image, (224, 224))
         goal_image_resized = apply_image_orientation(goal_image_resized)
-        print("[SUCCESS] Correct goal image loaded from demonstration.")
+        print("[SUCCESS] Correct goal image loaded from demonstration (via mapping).")
     except Exception as e:
         print(f"[FATAL] Could not load goal image: {e}")
         import traceback
@@ -321,8 +334,25 @@ try:
     env.seed(0)
     env.reset()
     init_states = task_suite.get_task_init_states(EVAL_TASK_ID)
-    env.set_init_state(init_states[0])
-    obs, _, _, _ = env.step(np.zeros(7))
+    # Choose best init_state by image similarity to goal
+    best_idx = 0
+    best_mse = float("inf")
+    for i, st in enumerate(init_states):
+        try:
+            env.set_init_state(st)
+            tmp_obs, _, _, _ = env.step(np.zeros(get_target_dim(), dtype=np.float32))
+            tmp_img = apply_image_orientation(tmp_obs.get("agentview_image", np.zeros((224, 224, 3), dtype=np.uint8)))
+            if tmp_img.shape != goal_image_resized.shape:
+                tmp_img = cv2.resize(tmp_img, (goal_image_resized.shape[1], goal_image_resized.shape[0]))
+            mse = float(np.mean((tmp_img.astype(np.float32) - goal_image_resized.astype(np.float32)) ** 2))
+            if mse < best_mse:
+                best_mse = mse
+                best_idx = i
+        except Exception:
+            continue
+    env.set_init_state(init_states[best_idx])
+    print(f"[INFO] Chosen init_state index {best_idx} with MSE={best_mse:.2f}")
+    obs, _, _, _ = env.step(np.zeros(get_target_dim(), dtype=np.float32))
 
     # Probe once before the loop
     probe_env_response(env, steps=3, delta=0.03)
