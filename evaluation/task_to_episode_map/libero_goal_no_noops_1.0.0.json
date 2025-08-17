@@ -1,0 +1,2168 @@
+{
+  "dataset_dir": "/gpfs/home4/pkarageorgis/geo_octo/libero_datasets/libero_goal_no_noops/1.0.0",
+  "num_episodes_scanned": 428,
+  "by_language": {
+    "push the plate to the front of the stove": [
+      0,
+      3,
+      41,
+      44,
+      52,
+      71,
+      76,
+      83,
+      107,
+      116,
+      121,
+      129,
+      140,
+      172,
+      177,
+      229,
+      254,
+      262,
+      286,
+      292,
+      297,
+      301,
+      314,
+      317,
+      336,
+      337,
+      340,
+      342,
+      350,
+      360,
+      361,
+      406,
+      418
+    ],
+    "put the bowl on the stove": [
+      1,
+      9,
+      13,
+      15,
+      17,
+      20,
+      32,
+      33,
+      38,
+      47,
+      51,
+      55,
+      65,
+      79,
+      101,
+      104,
+      111,
+      120,
+      146,
+      148,
+      151,
+      155,
+      157,
+      161,
+      167,
+      184,
+      185,
+      203,
+      236,
+      239,
+      250,
+      257,
+      270,
+      271,
+      278,
+      294,
+      306,
+      325,
+      330,
+      366,
+      367,
+      384,
+      390,
+      398,
+      399,
+      401,
+      407,
+      420
+    ],
+    "turn on the stove": [
+      2,
+      6,
+      10,
+      14,
+      16,
+      46,
+      60,
+      63,
+      82,
+      91,
+      92,
+      97,
+      102,
+      108,
+      114,
+      124,
+      142,
+      144,
+      154,
+      166,
+      168,
+      180,
+      200,
+      205,
+      210,
+      211,
+      222,
+      227,
+      228,
+      242,
+      245,
+      248,
+      267,
+      280,
+      282,
+      284,
+      290,
+      310,
+      319,
+      329,
+      334,
+      344,
+      349,
+      365,
+      377,
+      383,
+      393,
+      394,
+      412,
+      425
+    ],
+    "put the bowl on the plate": [
+      4,
+      12,
+      37,
+      39,
+      49,
+      50,
+      57,
+      58,
+      61,
+      70,
+      86,
+      88,
+      93,
+      105,
+      118,
+      122,
+      133,
+      153,
+      156,
+      169,
+      174,
+      187,
+      191,
+      193,
+      202,
+      208,
+      209,
+      218,
+      220,
+      233,
+      252,
+      261,
+      263,
+      276,
+      281,
+      343,
+      345,
+      348,
+      355,
+      375,
+      376,
+      381,
+      389,
+      395,
+      397,
+      400,
+      417,
+      424,
+      426
+    ],
+    "put the bowl on top of the cabinet": [
+      5,
+      22,
+      24,
+      25,
+      43,
+      45,
+      54,
+      56,
+      62,
+      66,
+      68,
+      72,
+      96,
+      99,
+      103,
+      126,
+      127,
+      128,
+      131,
+      150,
+      152,
+      176,
+      194,
+      201,
+      206,
+      213,
+      225,
+      232,
+      237,
+      243,
+      260,
+      283,
+      298,
+      305,
+      309,
+      311,
+      323,
+      331,
+      335,
+      339,
+      363,
+      364,
+      371,
+      385,
+      404,
+      408
+    ],
+    "put the cream cheese in the bowl": [
+      7,
+      18,
+      28,
+      48,
+      67,
+      106,
+      109,
+      123,
+      138,
+      145,
+      147,
+      158,
+      164,
+      173,
+      188,
+      190,
+      198,
+      212,
+      221,
+      226,
+      240,
+      251,
+      264,
+      275,
+      277,
+      287,
+      291,
+      295,
+      308,
+      312,
+      313,
+      321,
+      322,
+      341,
+      347,
+      353,
+      373,
+      387,
+      391,
+      421
+    ],
+    "open the middle drawer of the cabinet": [
+      8,
+      23,
+      29,
+      35,
+      40,
+      53,
+      69,
+      78,
+      95,
+      100,
+      117,
+      125,
+      130,
+      162,
+      178,
+      196,
+      199,
+      204,
+      207,
+      224,
+      235,
+      247,
+      255,
+      258,
+      265,
+      274,
+      279,
+      285,
+      307,
+      315,
+      316,
+      326,
+      327,
+      352,
+      358,
+      362,
+      368,
+      386,
+      388,
+      396,
+      405,
+      411,
+      416
+    ],
+    "open the top drawer and put the bowl inside": [
+      11,
+      21,
+      36,
+      59,
+      75,
+      94,
+      98,
+      110,
+      112,
+      136,
+      137,
+      141,
+      160,
+      163,
+      171,
+      175,
+      181,
+      182,
+      186,
+      246,
+      272,
+      273,
+      289,
+      293,
+      302,
+      318,
+      320,
+      324,
+      328,
+      338,
+      351,
+      354,
+      369,
+      379,
+      382,
+      415
+    ],
+    "put the wine bottle on top of the cabinet": [
+      19,
+      26,
+      31,
+      34,
+      42,
+      64,
+      73,
+      77,
+      80,
+      81,
+      84,
+      85,
+      87,
+      113,
+      115,
+      119,
+      139,
+      143,
+      149,
+      159,
+      165,
+      170,
+      179,
+      192,
+      195,
+      214,
+      217,
+      219,
+      223,
+      231,
+      244,
+      259,
+      268,
+      269,
+      296,
+      299,
+      300,
+      304,
+      357,
+      359,
+      372,
+      374,
+      402,
+      403,
+      410,
+      419,
+      427
+    ],
+    "put the wine bottle on the rack": [
+      27,
+      30,
+      74,
+      89,
+      90,
+      132,
+      134,
+      135,
+      183,
+      189,
+      197,
+      215,
+      216,
+      230,
+      234,
+      238,
+      241,
+      249,
+      253,
+      256,
+      266,
+      288,
+      303,
+      332,
+      333,
+      346,
+      356,
+      370,
+      378,
+      380,
+      392,
+      409,
+      413,
+      414,
+      422,
+      423
+    ]
+  },
+  "episodes": [
+    {
+      "index": 0,
+      "language": "push the plate to the front of the stove"
+    },
+    {
+      "index": 1,
+      "language": "put the bowl on the stove"
+    },
+    {
+      "index": 2,
+      "language": "turn on the stove"
+    },
+    {
+      "index": 3,
+      "language": "push the plate to the front of the stove"
+    },
+    {
+      "index": 4,
+      "language": "put the bowl on the plate"
+    },
+    {
+      "index": 5,
+      "language": "put the bowl on top of the cabinet"
+    },
+    {
+      "index": 6,
+      "language": "turn on the stove"
+    },
+    {
+      "index": 7,
+      "language": "put the cream cheese in the bowl"
+    },
+    {
+      "index": 8,
+      "language": "open the middle drawer of the cabinet"
+    },
+    {
+      "index": 9,
+      "language": "put the bowl on the stove"
+    },
+    {
+      "index": 10,
+      "language": "turn on the stove"
+    },
+    {
+      "index": 11,
+      "language": "open the top drawer and put the bowl inside"
+    },
+    {
+      "index": 12,
+      "language": "put the bowl on the plate"
+    },
+    {
+      "index": 13,
+      "language": "put the bowl on the stove"
+    },
+    {
+      "index": 14,
+      "language": "turn on the stove"
+    },
+    {
+      "index": 15,
+      "language": "put the bowl on the stove"
+    },
+    {
+      "index": 16,
+      "language": "turn on the stove"
+    },
+    {
+      "index": 17,
+      "language": "put the bowl on the stove"
+    },
+    {
+      "index": 18,
+      "language": "put the cream cheese in the bowl"
+    },
+    {
+      "index": 19,
+      "language": "put the wine bottle on top of the cabinet"
+    },
+    {
+      "index": 20,
+      "language": "put the bowl on the stove"
+    },
+    {
+      "index": 21,
+      "language": "open the top drawer and put the bowl inside"
+    },
+    {
+      "index": 22,
+      "language": "put the bowl on top of the cabinet"
+    },
+    {
+      "index": 23,
+      "language": "open the middle drawer of the cabinet"
+    },
+    {
+      "index": 24,
+      "language": "put the bowl on top of the cabinet"
+    },
+    {
+      "index": 25,
+      "language": "put the bowl on top of the cabinet"
+    },
+    {
+      "index": 26,
+      "language": "put the wine bottle on top of the cabinet"
+    },
+    {
+      "index": 27,
+      "language": "put the wine bottle on the rack"
+    },
+    {
+      "index": 28,
+      "language": "put the cream cheese in the bowl"
+    },
+    {
+      "index": 29,
+      "language": "open the middle drawer of the cabinet"
+    },
+    {
+      "index": 30,
+      "language": "put the wine bottle on the rack"
+    },
+    {
+      "index": 31,
+      "language": "put the wine bottle on top of the cabinet"
+    },
+    {
+      "index": 32,
+      "language": "put the bowl on the stove"
+    },
+    {
+      "index": 33,
+      "language": "put the bowl on the stove"
+    },
+    {
+      "index": 34,
+      "language": "put the wine bottle on top of the cabinet"
+    },
+    {
+      "index": 35,
+      "language": "open the middle drawer of the cabinet"
+    },
+    {
+      "index": 36,
+      "language": "open the top drawer and put the bowl inside"
+    },
+    {
+      "index": 37,
+      "language": "put the bowl on the plate"
+    },
+    {
+      "index": 38,
+      "language": "put the bowl on the stove"
+    },
+    {
+      "index": 39,
+      "language": "put the bowl on the plate"
+    },
+    {
+      "index": 40,
+      "language": "open the middle drawer of the cabinet"
+    },
+    {
+      "index": 41,
+      "language": "push the plate to the front of the stove"
+    },
+    {
+      "index": 42,
+      "language": "put the wine bottle on top of the cabinet"
+    },
+    {
+      "index": 43,
+      "language": "put the bowl on top of the cabinet"
+    },
+    {
+      "index": 44,
+      "language": "push the plate to the front of the stove"
+    },
+    {
+      "index": 45,
+      "language": "put the bowl on top of the cabinet"
+    },
+    {
+      "index": 46,
+      "language": "turn on the stove"
+    },
+    {
+      "index": 47,
+      "language": "put the bowl on the stove"
+    },
+    {
+      "index": 48,
+      "language": "put the cream cheese in the bowl"
+    },
+    {
+      "index": 49,
+      "language": "put the bowl on the plate"
+    },
+    {
+      "index": 50,
+      "language": "put the bowl on the plate"
+    },
+    {
+      "index": 51,
+      "language": "put the bowl on the stove"
+    },
+    {
+      "index": 52,
+      "language": "push the plate to the front of the stove"
+    },
+    {
+      "index": 53,
+      "language": "open the middle drawer of the cabinet"
+    },
+    {
+      "index": 54,
+      "language": "put the bowl on top of the cabinet"
+    },
+    {
+      "index": 55,
+      "language": "put the bowl on the stove"
+    },
+    {
+      "index": 56,
+      "language": "put the bowl on top of the cabinet"
+    },
+    {
+      "index": 57,
+      "language": "put the bowl on the plate"
+    },
+    {
+      "index": 58,
+      "language": "put the bowl on the plate"
+    },
+    {
+      "index": 59,
+      "language": "open the top drawer and put the bowl inside"
+    },
+    {
+      "index": 60,
+      "language": "turn on the stove"
+    },
+    {
+      "index": 61,
+      "language": "put the bowl on the plate"
+    },
+    {
+      "index": 62,
+      "language": "put the bowl on top of the cabinet"
+    },
+    {
+      "index": 63,
+      "language": "turn on the stove"
+    },
+    {
+      "index": 64,
+      "language": "put the wine bottle on top of the cabinet"
+    },
+    {
+      "index": 65,
+      "language": "put the bowl on the stove"
+    },
+    {
+      "index": 66,
+      "language": "put the bowl on top of the cabinet"
+    },
+    {
+      "index": 67,
+      "language": "put the cream cheese in the bowl"
+    },
+    {
+      "index": 68,
+      "language": "put the bowl on top of the cabinet"
+    },
+    {
+      "index": 69,
+      "language": "open the middle drawer of the cabinet"
+    },
+    {
+      "index": 70,
+      "language": "put the bowl on the plate"
+    },
+    {
+      "index": 71,
+      "language": "push the plate to the front of the stove"
+    },
+    {
+      "index": 72,
+      "language": "put the bowl on top of the cabinet"
+    },
+    {
+      "index": 73,
+      "language": "put the wine bottle on top of the cabinet"
+    },
+    {
+      "index": 74,
+      "language": "put the wine bottle on the rack"
+    },
+    {
+      "index": 75,
+      "language": "open the top drawer and put the bowl inside"
+    },
+    {
+      "index": 76,
+      "language": "push the plate to the front of the stove"
+    },
+    {
+      "index": 77,
+      "language": "put the wine bottle on top of the cabinet"
+    },
+    {
+      "index": 78,
+      "language": "open the middle drawer of the cabinet"
+    },
+    {
+      "index": 79,
+      "language": "put the bowl on the stove"
+    },
+    {
+      "index": 80,
+      "language": "put the wine bottle on top of the cabinet"
+    },
+    {
+      "index": 81,
+      "language": "put the wine bottle on top of the cabinet"
+    },
+    {
+      "index": 82,
+      "language": "turn on the stove"
+    },
+    {
+      "index": 83,
+      "language": "push the plate to the front of the stove"
+    },
+    {
+      "index": 84,
+      "language": "put the wine bottle on top of the cabinet"
+    },
+    {
+      "index": 85,
+      "language": "put the wine bottle on top of the cabinet"
+    },
+    {
+      "index": 86,
+      "language": "put the bowl on the plate"
+    },
+    {
+      "index": 87,
+      "language": "put the wine bottle on top of the cabinet"
+    },
+    {
+      "index": 88,
+      "language": "put the bowl on the plate"
+    },
+    {
+      "index": 89,
+      "language": "put the wine bottle on the rack"
+    },
+    {
+      "index": 90,
+      "language": "put the wine bottle on the rack"
+    },
+    {
+      "index": 91,
+      "language": "turn on the stove"
+    },
+    {
+      "index": 92,
+      "language": "turn on the stove"
+    },
+    {
+      "index": 93,
+      "language": "put the bowl on the plate"
+    },
+    {
+      "index": 94,
+      "language": "open the top drawer and put the bowl inside"
+    },
+    {
+      "index": 95,
+      "language": "open the middle drawer of the cabinet"
+    },
+    {
+      "index": 96,
+      "language": "put the bowl on top of the cabinet"
+    },
+    {
+      "index": 97,
+      "language": "turn on the stove"
+    },
+    {
+      "index": 98,
+      "language": "open the top drawer and put the bowl inside"
+    },
+    {
+      "index": 99,
+      "language": "put the bowl on top of the cabinet"
+    },
+    {
+      "index": 100,
+      "language": "open the middle drawer of the cabinet"
+    },
+    {
+      "index": 101,
+      "language": "put the bowl on the stove"
+    },
+    {
+      "index": 102,
+      "language": "turn on the stove"
+    },
+    {
+      "index": 103,
+      "language": "put the bowl on top of the cabinet"
+    },
+    {
+      "index": 104,
+      "language": "put the bowl on the stove"
+    },
+    {
+      "index": 105,
+      "language": "put the bowl on the plate"
+    },
+    {
+      "index": 106,
+      "language": "put the cream cheese in the bowl"
+    },
+    {
+      "index": 107,
+      "language": "push the plate to the front of the stove"
+    },
+    {
+      "index": 108,
+      "language": "turn on the stove"
+    },
+    {
+      "index": 109,
+      "language": "put the cream cheese in the bowl"
+    },
+    {
+      "index": 110,
+      "language": "open the top drawer and put the bowl inside"
+    },
+    {
+      "index": 111,
+      "language": "put the bowl on the stove"
+    },
+    {
+      "index": 112,
+      "language": "open the top drawer and put the bowl inside"
+    },
+    {
+      "index": 113,
+      "language": "put the wine bottle on top of the cabinet"
+    },
+    {
+      "index": 114,
+      "language": "turn on the stove"
+    },
+    {
+      "index": 115,
+      "language": "put the wine bottle on top of the cabinet"
+    },
+    {
+      "index": 116,
+      "language": "push the plate to the front of the stove"
+    },
+    {
+      "index": 117,
+      "language": "open the middle drawer of the cabinet"
+    },
+    {
+      "index": 118,
+      "language": "put the bowl on the plate"
+    },
+    {
+      "index": 119,
+      "language": "put the wine bottle on top of the cabinet"
+    },
+    {
+      "index": 120,
+      "language": "put the bowl on the stove"
+    },
+    {
+      "index": 121,
+      "language": "push the plate to the front of the stove"
+    },
+    {
+      "index": 122,
+      "language": "put the bowl on the plate"
+    },
+    {
+      "index": 123,
+      "language": "put the cream cheese in the bowl"
+    },
+    {
+      "index": 124,
+      "language": "turn on the stove"
+    },
+    {
+      "index": 125,
+      "language": "open the middle drawer of the cabinet"
+    },
+    {
+      "index": 126,
+      "language": "put the bowl on top of the cabinet"
+    },
+    {
+      "index": 127,
+      "language": "put the bowl on top of the cabinet"
+    },
+    {
+      "index": 128,
+      "language": "put the bowl on top of the cabinet"
+    },
+    {
+      "index": 129,
+      "language": "push the plate to the front of the stove"
+    },
+    {
+      "index": 130,
+      "language": "open the middle drawer of the cabinet"
+    },
+    {
+      "index": 131,
+      "language": "put the bowl on top of the cabinet"
+    },
+    {
+      "index": 132,
+      "language": "put the wine bottle on the rack"
+    },
+    {
+      "index": 133,
+      "language": "put the bowl on the plate"
+    },
+    {
+      "index": 134,
+      "language": "put the wine bottle on the rack"
+    },
+    {
+      "index": 135,
+      "language": "put the wine bottle on the rack"
+    },
+    {
+      "index": 136,
+      "language": "open the top drawer and put the bowl inside"
+    },
+    {
+      "index": 137,
+      "language": "open the top drawer and put the bowl inside"
+    },
+    {
+      "index": 138,
+      "language": "put the cream cheese in the bowl"
+    },
+    {
+      "index": 139,
+      "language": "put the wine bottle on top of the cabinet"
+    },
+    {
+      "index": 140,
+      "language": "push the plate to the front of the stove"
+    },
+    {
+      "index": 141,
+      "language": "open the top drawer and put the bowl inside"
+    },
+    {
+      "index": 142,
+      "language": "turn on the stove"
+    },
+    {
+      "index": 143,
+      "language": "put the wine bottle on top of the cabinet"
+    },
+    {
+      "index": 144,
+      "language": "turn on the stove"
+    },
+    {
+      "index": 145,
+      "language": "put the cream cheese in the bowl"
+    },
+    {
+      "index": 146,
+      "language": "put the bowl on the stove"
+    },
+    {
+      "index": 147,
+      "language": "put the cream cheese in the bowl"
+    },
+    {
+      "index": 148,
+      "language": "put the bowl on the stove"
+    },
+    {
+      "index": 149,
+      "language": "put the wine bottle on top of the cabinet"
+    },
+    {
+      "index": 150,
+      "language": "put the bowl on top of the cabinet"
+    },
+    {
+      "index": 151,
+      "language": "put the bowl on the stove"
+    },
+    {
+      "index": 152,
+      "language": "put the bowl on top of the cabinet"
+    },
+    {
+      "index": 153,
+      "language": "put the bowl on the plate"
+    },
+    {
+      "index": 154,
+      "language": "turn on the stove"
+    },
+    {
+      "index": 155,
+      "language": "put the bowl on the stove"
+    },
+    {
+      "index": 156,
+      "language": "put the bowl on the plate"
+    },
+    {
+      "index": 157,
+      "language": "put the bowl on the stove"
+    },
+    {
+      "index": 158,
+      "language": "put the cream cheese in the bowl"
+    },
+    {
+      "index": 159,
+      "language": "put the wine bottle on top of the cabinet"
+    },
+    {
+      "index": 160,
+      "language": "open the top drawer and put the bowl inside"
+    },
+    {
+      "index": 161,
+      "language": "put the bowl on the stove"
+    },
+    {
+      "index": 162,
+      "language": "open the middle drawer of the cabinet"
+    },
+    {
+      "index": 163,
+      "language": "open the top drawer and put the bowl inside"
+    },
+    {
+      "index": 164,
+      "language": "put the cream cheese in the bowl"
+    },
+    {
+      "index": 165,
+      "language": "put the wine bottle on top of the cabinet"
+    },
+    {
+      "index": 166,
+      "language": "turn on the stove"
+    },
+    {
+      "index": 167,
+      "language": "put the bowl on the stove"
+    },
+    {
+      "index": 168,
+      "language": "turn on the stove"
+    },
+    {
+      "index": 169,
+      "language": "put the bowl on the plate"
+    },
+    {
+      "index": 170,
+      "language": "put the wine bottle on top of the cabinet"
+    },
+    {
+      "index": 171,
+      "language": "open the top drawer and put the bowl inside"
+    },
+    {
+      "index": 172,
+      "language": "push the plate to the front of the stove"
+    },
+    {
+      "index": 173,
+      "language": "put the cream cheese in the bowl"
+    },
+    {
+      "index": 174,
+      "language": "put the bowl on the plate"
+    },
+    {
+      "index": 175,
+      "language": "open the top drawer and put the bowl inside"
+    },
+    {
+      "index": 176,
+      "language": "put the bowl on top of the cabinet"
+    },
+    {
+      "index": 177,
+      "language": "push the plate to the front of the stove"
+    },
+    {
+      "index": 178,
+      "language": "open the middle drawer of the cabinet"
+    },
+    {
+      "index": 179,
+      "language": "put the wine bottle on top of the cabinet"
+    },
+    {
+      "index": 180,
+      "language": "turn on the stove"
+    },
+    {
+      "index": 181,
+      "language": "open the top drawer and put the bowl inside"
+    },
+    {
+      "index": 182,
+      "language": "open the top drawer and put the bowl inside"
+    },
+    {
+      "index": 183,
+      "language": "put the wine bottle on the rack"
+    },
+    {
+      "index": 184,
+      "language": "put the bowl on the stove"
+    },
+    {
+      "index": 185,
+      "language": "put the bowl on the stove"
+    },
+    {
+      "index": 186,
+      "language": "open the top drawer and put the bowl inside"
+    },
+    {
+      "index": 187,
+      "language": "put the bowl on the plate"
+    },
+    {
+      "index": 188,
+      "language": "put the cream cheese in the bowl"
+    },
+    {
+      "index": 189,
+      "language": "put the wine bottle on the rack"
+    },
+    {
+      "index": 190,
+      "language": "put the cream cheese in the bowl"
+    },
+    {
+      "index": 191,
+      "language": "put the bowl on the plate"
+    },
+    {
+      "index": 192,
+      "language": "put the wine bottle on top of the cabinet"
+    },
+    {
+      "index": 193,
+      "language": "put the bowl on the plate"
+    },
+    {
+      "index": 194,
+      "language": "put the bowl on top of the cabinet"
+    },
+    {
+      "index": 195,
+      "language": "put the wine bottle on top of the cabinet"
+    },
+    {
+      "index": 196,
+      "language": "open the middle drawer of the cabinet"
+    },
+    {
+      "index": 197,
+      "language": "put the wine bottle on the rack"
+    },
+    {
+      "index": 198,
+      "language": "put the cream cheese in the bowl"
+    },
+    {
+      "index": 199,
+      "language": "open the middle drawer of the cabinet"
+    },
+    {
+      "index": 200,
+      "language": "turn on the stove"
+    },
+    {
+      "index": 201,
+      "language": "put the bowl on top of the cabinet"
+    },
+    {
+      "index": 202,
+      "language": "put the bowl on the plate"
+    },
+    {
+      "index": 203,
+      "language": "put the bowl on the stove"
+    },
+    {
+      "index": 204,
+      "language": "open the middle drawer of the cabinet"
+    },
+    {
+      "index": 205,
+      "language": "turn on the stove"
+    },
+    {
+      "index": 206,
+      "language": "put the bowl on top of the cabinet"
+    },
+    {
+      "index": 207,
+      "language": "open the middle drawer of the cabinet"
+    },
+    {
+      "index": 208,
+      "language": "put the bowl on the plate"
+    },
+    {
+      "index": 209,
+      "language": "put the bowl on the plate"
+    },
+    {
+      "index": 210,
+      "language": "turn on the stove"
+    },
+    {
+      "index": 211,
+      "language": "turn on the stove"
+    },
+    {
+      "index": 212,
+      "language": "put the cream cheese in the bowl"
+    },
+    {
+      "index": 213,
+      "language": "put the bowl on top of the cabinet"
+    },
+    {
+      "index": 214,
+      "language": "put the wine bottle on top of the cabinet"
+    },
+    {
+      "index": 215,
+      "language": "put the wine bottle on the rack"
+    },
+    {
+      "index": 216,
+      "language": "put the wine bottle on the rack"
+    },
+    {
+      "index": 217,
+      "language": "put the wine bottle on top of the cabinet"
+    },
+    {
+      "index": 218,
+      "language": "put the bowl on the plate"
+    },
+    {
+      "index": 219,
+      "language": "put the wine bottle on top of the cabinet"
+    },
+    {
+      "index": 220,
+      "language": "put the bowl on the plate"
+    },
+    {
+      "index": 221,
+      "language": "put the cream cheese in the bowl"
+    },
+    {
+      "index": 222,
+      "language": "turn on the stove"
+    },
+    {
+      "index": 223,
+      "language": "put the wine bottle on top of the cabinet"
+    },
+    {
+      "index": 224,
+      "language": "open the middle drawer of the cabinet"
+    },
+    {
+      "index": 225,
+      "language": "put the bowl on top of the cabinet"
+    },
+    {
+      "index": 226,
+      "language": "put the cream cheese in the bowl"
+    },
+    {
+      "index": 227,
+      "language": "turn on the stove"
+    },
+    {
+      "index": 228,
+      "language": "turn on the stove"
+    },
+    {
+      "index": 229,
+      "language": "push the plate to the front of the stove"
+    },
+    {
+      "index": 230,
+      "language": "put the wine bottle on the rack"
+    },
+    {
+      "index": 231,
+      "language": "put the wine bottle on top of the cabinet"
+    },
+    {
+      "index": 232,
+      "language": "put the bowl on top of the cabinet"
+    },
+    {
+      "index": 233,
+      "language": "put the bowl on the plate"
+    },
+    {
+      "index": 234,
+      "language": "put the wine bottle on the rack"
+    },
+    {
+      "index": 235,
+      "language": "open the middle drawer of the cabinet"
+    },
+    {
+      "index": 236,
+      "language": "put the bowl on the stove"
+    },
+    {
+      "index": 237,
+      "language": "put the bowl on top of the cabinet"
+    },
+    {
+      "index": 238,
+      "language": "put the wine bottle on the rack"
+    },
+    {
+      "index": 239,
+      "language": "put the bowl on the stove"
+    },
+    {
+      "index": 240,
+      "language": "put the cream cheese in the bowl"
+    },
+    {
+      "index": 241,
+      "language": "put the wine bottle on the rack"
+    },
+    {
+      "index": 242,
+      "language": "turn on the stove"
+    },
+    {
+      "index": 243,
+      "language": "put the bowl on top of the cabinet"
+    },
+    {
+      "index": 244,
+      "language": "put the wine bottle on top of the cabinet"
+    },
+    {
+      "index": 245,
+      "language": "turn on the stove"
+    },
+    {
+      "index": 246,
+      "language": "open the top drawer and put the bowl inside"
+    },
+    {
+      "index": 247,
+      "language": "open the middle drawer of the cabinet"
+    },
+    {
+      "index": 248,
+      "language": "turn on the stove"
+    },
+    {
+      "index": 249,
+      "language": "put the wine bottle on the rack"
+    },
+    {
+      "index": 250,
+      "language": "put the bowl on the stove"
+    },
+    {
+      "index": 251,
+      "language": "put the cream cheese in the bowl"
+    },
+    {
+      "index": 252,
+      "language": "put the bowl on the plate"
+    },
+    {
+      "index": 253,
+      "language": "put the wine bottle on the rack"
+    },
+    {
+      "index": 254,
+      "language": "push the plate to the front of the stove"
+    },
+    {
+      "index": 255,
+      "language": "open the middle drawer of the cabinet"
+    },
+    {
+      "index": 256,
+      "language": "put the wine bottle on the rack"
+    },
+    {
+      "index": 257,
+      "language": "put the bowl on the stove"
+    },
+    {
+      "index": 258,
+      "language": "open the middle drawer of the cabinet"
+    },
+    {
+      "index": 259,
+      "language": "put the wine bottle on top of the cabinet"
+    },
+    {
+      "index": 260,
+      "language": "put the bowl on top of the cabinet"
+    },
+    {
+      "index": 261,
+      "language": "put the bowl on the plate"
+    },
+    {
+      "index": 262,
+      "language": "push the plate to the front of the stove"
+    },
+    {
+      "index": 263,
+      "language": "put the bowl on the plate"
+    },
+    {
+      "index": 264,
+      "language": "put the cream cheese in the bowl"
+    },
+    {
+      "index": 265,
+      "language": "open the middle drawer of the cabinet"
+    },
+    {
+      "index": 266,
+      "language": "put the wine bottle on the rack"
+    },
+    {
+      "index": 267,
+      "language": "turn on the stove"
+    },
+    {
+      "index": 268,
+      "language": "put the wine bottle on top of the cabinet"
+    },
+    {
+      "index": 269,
+      "language": "put the wine bottle on top of the cabinet"
+    },
+    {
+      "index": 270,
+      "language": "put the bowl on the stove"
+    },
+    {
+      "index": 271,
+      "language": "put the bowl on the stove"
+    },
+    {
+      "index": 272,
+      "language": "open the top drawer and put the bowl inside"
+    },
+    {
+      "index": 273,
+      "language": "open the top drawer and put the bowl inside"
+    },
+    {
+      "index": 274,
+      "language": "open the middle drawer of the cabinet"
+    },
+    {
+      "index": 275,
+      "language": "put the cream cheese in the bowl"
+    },
+    {
+      "index": 276,
+      "language": "put the bowl on the plate"
+    },
+    {
+      "index": 277,
+      "language": "put the cream cheese in the bowl"
+    },
+    {
+      "index": 278,
+      "language": "put the bowl on the stove"
+    },
+    {
+      "index": 279,
+      "language": "open the middle drawer of the cabinet"
+    },
+    {
+      "index": 280,
+      "language": "turn on the stove"
+    },
+    {
+      "index": 281,
+      "language": "put the bowl on the plate"
+    },
+    {
+      "index": 282,
+      "language": "turn on the stove"
+    },
+    {
+      "index": 283,
+      "language": "put the bowl on top of the cabinet"
+    },
+    {
+      "index": 284,
+      "language": "turn on the stove"
+    },
+    {
+      "index": 285,
+      "language": "open the middle drawer of the cabinet"
+    },
+    {
+      "index": 286,
+      "language": "push the plate to the front of the stove"
+    },
+    {
+      "index": 287,
+      "language": "put the cream cheese in the bowl"
+    },
+    {
+      "index": 288,
+      "language": "put the wine bottle on the rack"
+    },
+    {
+      "index": 289,
+      "language": "open the top drawer and put the bowl inside"
+    },
+    {
+      "index": 290,
+      "language": "turn on the stove"
+    },
+    {
+      "index": 291,
+      "language": "put the cream cheese in the bowl"
+    },
+    {
+      "index": 292,
+      "language": "push the plate to the front of the stove"
+    },
+    {
+      "index": 293,
+      "language": "open the top drawer and put the bowl inside"
+    },
+    {
+      "index": 294,
+      "language": "put the bowl on the stove"
+    },
+    {
+      "index": 295,
+      "language": "put the cream cheese in the bowl"
+    },
+    {
+      "index": 296,
+      "language": "put the wine bottle on top of the cabinet"
+    },
+    {
+      "index": 297,
+      "language": "push the plate to the front of the stove"
+    },
+    {
+      "index": 298,
+      "language": "put the bowl on top of the cabinet"
+    },
+    {
+      "index": 299,
+      "language": "put the wine bottle on top of the cabinet"
+    },
+    {
+      "index": 300,
+      "language": "put the wine bottle on top of the cabinet"
+    },
+    {
+      "index": 301,
+      "language": "push the plate to the front of the stove"
+    },
+    {
+      "index": 302,
+      "language": "open the top drawer and put the bowl inside"
+    },
+    {
+      "index": 303,
+      "language": "put the wine bottle on the rack"
+    },
+    {
+      "index": 304,
+      "language": "put the wine bottle on top of the cabinet"
+    },
+    {
+      "index": 305,
+      "language": "put the bowl on top of the cabinet"
+    },
+    {
+      "index": 306,
+      "language": "put the bowl on the stove"
+    },
+    {
+      "index": 307,
+      "language": "open the middle drawer of the cabinet"
+    },
+    {
+      "index": 308,
+      "language": "put the cream cheese in the bowl"
+    },
+    {
+      "index": 309,
+      "language": "put the bowl on top of the cabinet"
+    },
+    {
+      "index": 310,
+      "language": "turn on the stove"
+    },
+    {
+      "index": 311,
+      "language": "put the bowl on top of the cabinet"
+    },
+    {
+      "index": 312,
+      "language": "put the cream cheese in the bowl"
+    },
+    {
+      "index": 313,
+      "language": "put the cream cheese in the bowl"
+    },
+    {
+      "index": 314,
+      "language": "push the plate to the front of the stove"
+    },
+    {
+      "index": 315,
+      "language": "open the middle drawer of the cabinet"
+    },
+    {
+      "index": 316,
+      "language": "open the middle drawer of the cabinet"
+    },
+    {
+      "index": 317,
+      "language": "push the plate to the front of the stove"
+    },
+    {
+      "index": 318,
+      "language": "open the top drawer and put the bowl inside"
+    },
+    {
+      "index": 319,
+      "language": "turn on the stove"
+    },
+    {
+      "index": 320,
+      "language": "open the top drawer and put the bowl inside"
+    },
+    {
+      "index": 321,
+      "language": "put the cream cheese in the bowl"
+    },
+    {
+      "index": 322,
+      "language": "put the cream cheese in the bowl"
+    },
+    {
+      "index": 323,
+      "language": "put the bowl on top of the cabinet"
+    },
+    {
+      "index": 324,
+      "language": "open the top drawer and put the bowl inside"
+    },
+    {
+      "index": 325,
+      "language": "put the bowl on the stove"
+    },
+    {
+      "index": 326,
+      "language": "open the middle drawer of the cabinet"
+    },
+    {
+      "index": 327,
+      "language": "open the middle drawer of the cabinet"
+    },
+    {
+      "index": 328,
+      "language": "open the top drawer and put the bowl inside"
+    },
+    {
+      "index": 329,
+      "language": "turn on the stove"
+    },
+    {
+      "index": 330,
+      "language": "put the bowl on the stove"
+    },
+    {
+      "index": 331,
+      "language": "put the bowl on top of the cabinet"
+    },
+    {
+      "index": 332,
+      "language": "put the wine bottle on the rack"
+    },
+    {
+      "index": 333,
+      "language": "put the wine bottle on the rack"
+    },
+    {
+      "index": 334,
+      "language": "turn on the stove"
+    },
+    {
+      "index": 335,
+      "language": "put the bowl on top of the cabinet"
+    },
+    {
+      "index": 336,
+      "language": "push the plate to the front of the stove"
+    },
+    {
+      "index": 337,
+      "language": "push the plate to the front of the stove"
+    },
+    {
+      "index": 338,
+      "language": "open the top drawer and put the bowl inside"
+    },
+    {
+      "index": 339,
+      "language": "put the bowl on top of the cabinet"
+    },
+    {
+      "index": 340,
+      "language": "push the plate to the front of the stove"
+    },
+    {
+      "index": 341,
+      "language": "put the cream cheese in the bowl"
+    },
+    {
+      "index": 342,
+      "language": "push the plate to the front of the stove"
+    },
+    {
+      "index": 343,
+      "language": "put the bowl on the plate"
+    },
+    {
+      "index": 344,
+      "language": "turn on the stove"
+    },
+    {
+      "index": 345,
+      "language": "put the bowl on the plate"
+    },
+    {
+      "index": 346,
+      "language": "put the wine bottle on the rack"
+    },
+    {
+      "index": 347,
+      "language": "put the cream cheese in the bowl"
+    },
+    {
+      "index": 348,
+      "language": "put the bowl on the plate"
+    },
+    {
+      "index": 349,
+      "language": "turn on the stove"
+    },
+    {
+      "index": 350,
+      "language": "push the plate to the front of the stove"
+    },
+    {
+      "index": 351,
+      "language": "open the top drawer and put the bowl inside"
+    },
+    {
+      "index": 352,
+      "language": "open the middle drawer of the cabinet"
+    },
+    {
+      "index": 353,
+      "language": "put the cream cheese in the bowl"
+    },
+    {
+      "index": 354,
+      "language": "open the top drawer and put the bowl inside"
+    },
+    {
+      "index": 355,
+      "language": "put the bowl on the plate"
+    },
+    {
+      "index": 356,
+      "language": "put the wine bottle on the rack"
+    },
+    {
+      "index": 357,
+      "language": "put the wine bottle on top of the cabinet"
+    },
+    {
+      "index": 358,
+      "language": "open the middle drawer of the cabinet"
+    },
+    {
+      "index": 359,
+      "language": "put the wine bottle on top of the cabinet"
+    },
+    {
+      "index": 360,
+      "language": "push the plate to the front of the stove"
+    },
+    {
+      "index": 361,
+      "language": "push the plate to the front of the stove"
+    },
+    {
+      "index": 362,
+      "language": "open the middle drawer of the cabinet"
+    },
+    {
+      "index": 363,
+      "language": "put the bowl on top of the cabinet"
+    },
+    {
+      "index": 364,
+      "language": "put the bowl on top of the cabinet"
+    },
+    {
+      "index": 365,
+      "language": "turn on the stove"
+    },
+    {
+      "index": 366,
+      "language": "put the bowl on the stove"
+    },
+    {
+      "index": 367,
+      "language": "put the bowl on the stove"
+    },
+    {
+      "index": 368,
+      "language": "open the middle drawer of the cabinet"
+    },
+    {
+      "index": 369,
+      "language": "open the top drawer and put the bowl inside"
+    },
+    {
+      "index": 370,
+      "language": "put the wine bottle on the rack"
+    },
+    {
+      "index": 371,
+      "language": "put the bowl on top of the cabinet"
+    },
+    {
+      "index": 372,
+      "language": "put the wine bottle on top of the cabinet"
+    },
+    {
+      "index": 373,
+      "language": "put the cream cheese in the bowl"
+    },
+    {
+      "index": 374,
+      "language": "put the wine bottle on top of the cabinet"
+    },
+    {
+      "index": 375,
+      "language": "put the bowl on the plate"
+    },
+    {
+      "index": 376,
+      "language": "put the bowl on the plate"
+    },
+    {
+      "index": 377,
+      "language": "turn on the stove"
+    },
+    {
+      "index": 378,
+      "language": "put the wine bottle on the rack"
+    },
+    {
+      "index": 379,
+      "language": "open the top drawer and put the bowl inside"
+    },
+    {
+      "index": 380,
+      "language": "put the wine bottle on the rack"
+    },
+    {
+      "index": 381,
+      "language": "put the bowl on the plate"
+    },
+    {
+      "index": 382,
+      "language": "open the top drawer and put the bowl inside"
+    },
+    {
+      "index": 383,
+      "language": "turn on the stove"
+    },
+    {
+      "index": 384,
+      "language": "put the bowl on the stove"
+    },
+    {
+      "index": 385,
+      "language": "put the bowl on top of the cabinet"
+    },
+    {
+      "index": 386,
+      "language": "open the middle drawer of the cabinet"
+    },
+    {
+      "index": 387,
+      "language": "put the cream cheese in the bowl"
+    },
+    {
+      "index": 388,
+      "language": "open the middle drawer of the cabinet"
+    },
+    {
+      "index": 389,
+      "language": "put the bowl on the plate"
+    },
+    {
+      "index": 390,
+      "language": "put the bowl on the stove"
+    },
+    {
+      "index": 391,
+      "language": "put the cream cheese in the bowl"
+    },
+    {
+      "index": 392,
+      "language": "put the wine bottle on the rack"
+    },
+    {
+      "index": 393,
+      "language": "turn on the stove"
+    },
+    {
+      "index": 394,
+      "language": "turn on the stove"
+    },
+    {
+      "index": 395,
+      "language": "put the bowl on the plate"
+    },
+    {
+      "index": 396,
+      "language": "open the middle drawer of the cabinet"
+    },
+    {
+      "index": 397,
+      "language": "put the bowl on the plate"
+    },
+    {
+      "index": 398,
+      "language": "put the bowl on the stove"
+    },
+    {
+      "index": 399,
+      "language": "put the bowl on the stove"
+    },
+    {
+      "index": 400,
+      "language": "put the bowl on the plate"
+    },
+    {
+      "index": 401,
+      "language": "put the bowl on the stove"
+    },
+    {
+      "index": 402,
+      "language": "put the wine bottle on top of the cabinet"
+    },
+    {
+      "index": 403,
+      "language": "put the wine bottle on top of the cabinet"
+    },
+    {
+      "index": 404,
+      "language": "put the bowl on top of the cabinet"
+    },
+    {
+      "index": 405,
+      "language": "open the middle drawer of the cabinet"
+    },
+    {
+      "index": 406,
+      "language": "push the plate to the front of the stove"
+    },
+    {
+      "index": 407,
+      "language": "put the bowl on the stove"
+    },
+    {
+      "index": 408,
+      "language": "put the bowl on top of the cabinet"
+    },
+    {
+      "index": 409,
+      "language": "put the wine bottle on the rack"
+    },
+    {
+      "index": 410,
+      "language": "put the wine bottle on top of the cabinet"
+    },
+    {
+      "index": 411,
+      "language": "open the middle drawer of the cabinet"
+    },
+    {
+      "index": 412,
+      "language": "turn on the stove"
+    },
+    {
+      "index": 413,
+      "language": "put the wine bottle on the rack"
+    },
+    {
+      "index": 414,
+      "language": "put the wine bottle on the rack"
+    },
+    {
+      "index": 415,
+      "language": "open the top drawer and put the bowl inside"
+    },
+    {
+      "index": 416,
+      "language": "open the middle drawer of the cabinet"
+    },
+    {
+      "index": 417,
+      "language": "put the bowl on the plate"
+    },
+    {
+      "index": 418,
+      "language": "push the plate to the front of the stove"
+    },
+    {
+      "index": 419,
+      "language": "put the wine bottle on top of the cabinet"
+    },
+    {
+      "index": 420,
+      "language": "put the bowl on the stove"
+    },
+    {
+      "index": 421,
+      "language": "put the cream cheese in the bowl"
+    },
+    {
+      "index": 422,
+      "language": "put the wine bottle on the rack"
+    },
+    {
+      "index": 423,
+      "language": "put the wine bottle on the rack"
+    },
+    {
+      "index": 424,
+      "language": "put the bowl on the plate"
+    },
+    {
+      "index": 425,
+      "language": "turn on the stove"
+    },
+    {
+      "index": 426,
+      "language": "put the bowl on the plate"
+    },
+    {
+      "index": 427,
+      "language": "put the wine bottle on top of the cabinet"
+    }
+  ]
+}
