@@ -408,6 +408,14 @@ try:
     if CALIBRATE_TRANSLATION:
         calib_P = calibrate_translation_mapping(env, delta=CALIB_DELTA, steps=CALIB_STEPS)
 
+    # Rewind to the chosen initial state after probe / calibration
+    try:
+        env.reset()
+        env.set_init_state(init_states[chosen_init_idx])
+        obs, _, _, _ = env.step(np.zeros(get_target_dim(), dtype=np.float32))
+    except Exception:
+        pass
+
     def extract_proprio(obs_dict):
         proprio = obs_dict.get("robot0_joint_pos", np.zeros(7))
         return proprio[:7] if len(proprio) >= 7 else np.zeros(7)
@@ -546,7 +554,15 @@ try:
         except Exception:
             pass
 
-        obs, reward, done, info = env.step(action_to_execute)
+        # Step env, guard against terminated episodes
+        try:
+            obs, reward, done, info = env.step(action_to_execute)
+        except ValueError as e:
+            if "terminated episode" in str(e).lower():
+                print("[INFO] Episode terminated by env; stopping.")
+                break
+            else:
+                raise
         
         # Use separate orientation settings for video
         video_frame = apply_video_orientation(raw_image, current_image)
