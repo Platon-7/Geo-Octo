@@ -82,6 +82,12 @@ TRANS_GAIN_XY = 5.0
 TRANS_GAIN_Z = 10.0
 Z_DESCENT_BIAS = -0.02  # applied after 60% of steps
 
+# Rotation gating and constraints
+ROT_ENABLE_AFTER_FRAC = 0.9  # enable rotation only in last 10% of steps
+ROT_DEADZONE = 0.02          # ignore tiny rotation signals
+ROT_STEP_MAX = 0.03          # max per-step rotation magnitude per axis (rad)
+ROT_SMOOTH = 0.5             # simple smoothing for rotation
+
 # Gripper gating / debounce
 GRIPPER_HOLD_ENABLED = True
 GRIPPER_HOLD_PROPORTION = 0.6    # hold for first 60% of steps
@@ -431,6 +437,7 @@ try:
     prev_action_exec = None
     grip_last_value = 0.0
     grip_stable_count = 0
+    prev_rot_exec = np.zeros(3, dtype=np.float32)
 
     print(f"[INFO] Starting evaluation loop with {WINDOW_SIZE}-frame window...")
 
@@ -477,9 +484,18 @@ try:
         a = np.array(action_to_execute, dtype=np.float32)
         if a.shape[0] < 7:
             a = np.pad(a, (0, 7 - a.shape[0]))
-        # Allow rotation after mid-trajectory
-        if step < int(NUM_TIMESTEPS * 0.5):
+        # Allow rotation only near the end with constraints
+        if step < int(NUM_TIMESTEPS * ROT_ENABLE_AFTER_FRAC):
             a[3:6] = 0.0
+        else:
+            # Apply gain then deadzone and per-step cap
+            r = a[3:6] * ROT_GAIN
+            r = np.where(np.abs(r) < ROT_DEADZONE, 0.0, r)
+            r = np.clip(r, -ROT_STEP_MAX, ROT_STEP_MAX)
+            # Smooth with previous rotation command
+            r = ROT_SMOOTH * r + (1.0 - ROT_SMOOTH) * prev_rot_exec
+            prev_rot_exec = r.astype(np.float32)
+            a[3:6] = prev_rot_exec
         # Axis flips
         if FLIP_X:
             a[0] = -a[0]
@@ -496,14 +512,13 @@ try:
         # Apply gains (stronger on Z)
         a[0:2] *= TRANS_GAIN_XY
         a[2] *= TRANS_GAIN_Z
-        a[3:6] *= ROT_GAIN
         a[6] *= GRIP_GAIN
         # Descent bias after approach
         if step > int(NUM_TIMESTEPS * 0.6):
             a[2] += Z_DESCENT_BIAS
         if (step % 25) == 0:
             try:
-                print(f"[STEP {step}] z_cmd={a[2]:.3f}")
+                print(f"[STEP {step}] z_cmd={a[2]:.3f} rot_cmd={a[3]:.3f},{a[4]:.3f},{a[5]:.3f}")
             except Exception:
                 pass
         # Gripper mapping
