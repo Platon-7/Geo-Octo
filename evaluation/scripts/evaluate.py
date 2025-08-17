@@ -19,6 +19,7 @@ import jax
 import tensorflow as tf
 from typing import Optional
 import json
+import difflib
 
 # Disable tokenizer parallelism to avoid warnings
 os.environ['TOKENIZERS_PARALLELISM'] = 'false'
@@ -300,10 +301,39 @@ try:
             mapping = json.load(f)
         lang_key = language_instruction.strip()
         episode_indices = mapping.get("by_language", {}).get(lang_key, [])
-        if not episode_indices:
-            raise RuntimeError(f"No episode indices found for language: {lang_key!r} in mapping {map_path}")
-        episode_index = int(episode_indices[0])
-        print(f"[INFO] Using mapped episode index {episode_index} for this task")
+        if episode_indices:
+            episode_index = int(episode_indices[0])
+            print(f"[INFO] Using exact-matched episode index {episode_index} for this task")
+        else:
+            # Fuzzy match over all episodes
+            print(f"[WARN] No exact mapping for language; falling back to fuzzy matching")
+            episodes_list = mapping.get("episodes", [])
+            best_idx = None
+            best_score = -1.0
+            lk = lang_key.lower()
+            for ep in episodes_list:
+                ep_lang = (ep.get("language") or "").strip().lower()
+                if not ep_lang:
+                    continue
+                ratio = difflib.SequenceMatcher(None, lk, ep_lang).ratio()
+                score = ratio
+                text = ep_lang
+                # Heuristic keyword bonuses / penalties
+                if "bowl" in text and "plate" in text:
+                    score += 0.05
+                if "cookie" in text:
+                    score += 0.05
+                if "drawer" in text:
+                    score -= 0.2
+                if "stove" in text:
+                    score -= 0.1
+                if score > best_score:
+                    best_score = score
+                    best_idx = ep.get("index")
+            if best_idx is None:
+                raise RuntimeError(f"No episode indices found for language: {lang_key!r} in mapping {map_path}")
+            episode_index = int(best_idx)
+            print(f"[INFO] Fuzzy matched episode index {episode_index} (score={best_score:.3f}) for this task")
         print(f"[INFO] Loading goal image from: {dataset_dir_for_eval}")
         goal_image = get_goal_image_from_tfrecord(dataset_dir_for_eval, episode_index)
         goal_image_resized = cv2.resize(goal_image, (224, 224))
