@@ -77,6 +77,11 @@ TRANS_GAIN = 5.0
 ROT_GAIN = 1.0
 GRIP_GAIN = 1.0
 
+# Refined gains and descent bias
+TRANS_GAIN_XY = 5.0
+TRANS_GAIN_Z = 10.0
+Z_DESCENT_BIAS = -0.02  # applied after 60% of steps
+
 # Gripper gating / debounce
 GRIPPER_HOLD_ENABLED = True
 GRIPPER_HOLD_PROPORTION = 0.6    # hold for first 60% of steps
@@ -472,7 +477,8 @@ try:
         a = np.array(action_to_execute, dtype=np.float32)
         if a.shape[0] < 7:
             a = np.pad(a, (0, 7 - a.shape[0]))
-        if ZERO_ROTATION:
+        # Allow rotation after mid-trajectory
+        if step < int(NUM_TIMESTEPS * 0.5):
             a[3:6] = 0.0
         # Axis flips
         if FLIP_X:
@@ -487,10 +493,19 @@ try:
                 a[:3] = (calib_P @ a[:3]).astype(np.float32)
             except Exception:
                 pass
-        # Apply gains
-        a[:3] *= TRANS_GAIN
+        # Apply gains (stronger on Z)
+        a[0:2] *= TRANS_GAIN_XY
+        a[2] *= TRANS_GAIN_Z
         a[3:6] *= ROT_GAIN
         a[6] *= GRIP_GAIN
+        # Descent bias after approach
+        if step > int(NUM_TIMESTEPS * 0.6):
+            a[2] += Z_DESCENT_BIAS
+        if (step % 25) == 0:
+            try:
+                print(f"[STEP {step}] z_cmd={a[2]:.3f}")
+            except Exception:
+                pass
         # Gripper mapping
         if GRIPPER_MODE == 'rel':
             # Ensure in [-1,1] and apply sign
