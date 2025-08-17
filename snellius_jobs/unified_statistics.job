@@ -1,13 +1,13 @@
 #!/bin/bash
 
 #SBATCH --partition=gpu_h100
-#SBATCH --gres=gpu:1              # Request 4 GPUs instead of 1
-#SBATCH --cpus-per-task=1        # Scale CPUs (4 GPUs × 7 CPUs)
-#SBATCH --gpus=1                 # Request 4 GPUs
+#SBATCH --gres=gpu:1
+#SBATCH --cpus-per-task=2
+#SBATCH --gpus=1
 #SBATCH --job-name=Create_Stats
 #SBATCH --ntasks=1
 #SBATCH --time=05:30:00
-#SBATCH --mem=48000M             # Double the memory (or adjust as needed)
+#SBATCH --mem=48000M
 #SBATCH --output=outfiles/unified_stats_%A.out
 
 module purge
@@ -17,4 +17,55 @@ module load Anaconda3/2024.06-1
 source activate octo
 cd octo
 
-srun python scripts/create_unified_statistics.py
+BASE_DATA_DIR=/scratch-shared/tmp.cwkV8vOvfY/libero_datasets
+OUT_DIR=/home/pkarageorgis/geo_octo/libero_datasets/unified_stats
+
+# No-VGGT variants
+srun -u python scripts/create_unified_statistics.py \
+  --base-data-dir $BASE_DATA_DIR \
+  --dataset-names libero_spatial_no_noops \
+  --output-dir $OUT_DIR \
+  --output-name unified_dataset_statistics_libero_spatial_no_vggt.json
+
+srun -u python scripts/create_unified_statistics.py \
+  --base-data-dir $BASE_DATA_DIR \
+  --dataset-names libero_object_no_noops \
+  --output-dir $OUT_DIR \
+  --output-name unified_dataset_statistics_libero_object_no_vggt.json
+
+srun -u python scripts/create_unified_statistics.py \
+  --base-data-dir $BASE_DATA_DIR \
+  --dataset-names libero_goal_no_noops \
+  --output-dir $OUT_DIR \
+  --output-name unified_dataset_statistics_libero_goal_no_vggt.json
+
+srun -u python scripts/create_unified_statistics.py \
+  --base-data-dir $BASE_DATA_DIR \
+  --dataset-names libero_10_no_noops \
+  --output-dir $OUT_DIR \
+  --output-name unified_dataset_statistics_libero_10_no_vggt.json
+
+# VGGT variants (adjust names if your on-disk dirs differ)
+srun -u python scripts/create_unified_statistics.py \
+  --base-data-dir $BASE_DATA_DIR \
+  --dataset-names libero_spatial_vggt \
+  --output-dir $OUT_DIR \
+  --output-name unified_dataset_statistics_libero_spatial_vggt.json
+
+srun -u python scripts/create_unified_statistics.py \
+  --base-data-dir $BASE_DATA_DIR \
+  --dataset-names libero_object_vggt \
+  --output-dir $OUT_DIR \
+  --output-name unified_dataset_statistics_libero_object_vggt.json
+
+srun -u python scripts/create_unified_statistics.py \
+  --base-data-dir $BASE_DATA_DIR \
+  --dataset-names libero_goal_vggt \
+  --output-dir $OUT_DIR \
+  --output-name unified_dataset_statistics_libero_goal_vggt.json
+
+srun -u python scripts/create_unified_statistics.py \
+  --base-data-dir $BASE_DATA_DIR \
+  --dataset-names libero_10_vggt \
+  --output-dir $OUT_DIR \
+  --output-name unified_dataset_statistics_libero_10_vggt.json
