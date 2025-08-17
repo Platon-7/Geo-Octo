@@ -300,45 +300,82 @@ try:
         with open(map_path, "r") as f:
             mapping = json.load(f)
         lang_key = language_instruction.strip()
-        episode_indices = mapping.get("by_language", {}).get(lang_key, [])
-        if episode_indices:
-            episode_index = int(episode_indices[0])
-            print(f"[INFO] Using exact-matched episode index {episode_index} for this task")
-        else:
-            # Fuzzy match over all episodes
-            print(f"[WARN] No exact mapping for language; falling back to fuzzy matching")
+        # Build candidate episodes for this language
+        by_lang = mapping.get("by_language", {})
+        candidates = list(by_lang.get(lang_key, []))
+        # Soft filter: prefer non-drawer/non-stove variants
+        if mapping.get("episodes"):
+            ep_lang_map = {int(ep["index"]): (ep.get("language") or "") for ep in mapping["episodes"]}
+            filtered = [idx for idx in candidates if not any(k in ep_lang_map.get(int(idx), "").lower() for k in ["drawer", "stove"])]
+            if filtered:
+                candidates = filtered
+        if not candidates:
+            # fallback: take all with fuzzy contain
+            print(f"[WARN] No exact candidates for language; using all episodes containing keywords")
             episodes_list = mapping.get("episodes", [])
-            best_idx = None
-            best_score = -1.0
-            lk = lang_key.lower()
             for ep in episodes_list:
-                ep_lang = (ep.get("language") or "").strip().lower()
-                if not ep_lang:
-                    continue
-                ratio = difflib.SequenceMatcher(None, lk, ep_lang).ratio()
-                score = ratio
-                text = ep_lang
-                # Heuristic keyword bonuses / penalties
-                if "bowl" in text and "plate" in text:
-                    score += 0.05
-                if "cookie" in text:
-                    score += 0.05
-                if "drawer" in text:
-                    score -= 0.2
-                if "stove" in text:
-                    score -= 0.1
-                if score > best_score:
-                    best_score = score
-                    best_idx = ep.get("index")
-            if best_idx is None:
-                raise RuntimeError(f"No episode indices found for language: {lang_key!r} in mapping {map_path}")
-            episode_index = int(best_idx)
-            print(f"[INFO] Fuzzy matched episode index {episode_index} (score={best_score:.3f}) for this task")
-        print(f"[INFO] Loading goal image from: {dataset_dir_for_eval}")
+                text = (ep.get("language") or "").lower()
+                if "bowl" in text and "plate" in text and ("drawer" not in text and "stove" not in text):
+                    candidates.append(int(ep["index"]))
+        if not candidates:
+            raise RuntimeError(f"No episode indices found for language: {lang_key!r} in mapping {map_path}")
+        print(f"[INFO] Candidate episodes: {len(candidates)} (showing first 10): {candidates[:10]}")
+        # Precompute init images
+        env.seed(0)
+        env.reset()
+        init_states = task_suite.get_task_init_states(EVAL_TASK_ID)
+        init_images = []
+        for i, st in enumerate(init_states):
+            try:
+                env.set_init_state(st)
+                tmp_obs, _, _, _ = env.step(np.zeros(get_target_dim(), dtype=np.float32))
+                tmp_img = apply_image_orientation(tmp_obs.get("agentview_image", np.zeros((224, 224, 3), dtype=np.uint8)))
+                if tmp_img.shape[:2] != (224, 224):
+                    tmp_img = cv2.resize(tmp_img, (224, 224))
+                init_images.append((i, tmp_img))
+            except Exception:
+                continue
+        if not init_images:
+            raise RuntimeError("Could not capture any init_state images")
+        # Search for best (episode, init_state) by MSE
+        best_pair = (None, None)
+        best_mse = float("inf")
+        search_cap = min(len(candidates), 50)
+        for idx in candidates[:search_cap]:
+            try:
+                gimg = get_goal_image_from_tfrecord(dataset_dir_for_eval, int(idx))
+                gimg = cv2.resize(gimg, (224, 224))
+                gimg = apply_image_orientation(gimg)
+                gimg_f = gimg.astype(np.float32)
+                for init_idx, im in init_images:
+                    mse = float(np.mean((im.astype(np.float32) - gimg_f) ** 2))
+                    if mse < best_mse:
+                        best_mse = mse
+                        best_pair = (int(idx), int(init_idx))
+            except Exception:
+                continue
+        if best_pair[0] is None:
+            raise RuntimeError("Failed to find a best (episode, init_state) pair")
+        episode_index, chosen_init_idx = best_pair
+        print(f"[INFO] Chosen episode {episode_index} and init_state {chosen_init_idx} with MSE={best_mse:.2f}")
+        # Load the chosen goal image
         goal_image = get_goal_image_from_tfrecord(dataset_dir_for_eval, episode_index)
         goal_image_resized = cv2.resize(goal_image, (224, 224))
         goal_image_resized = apply_image_orientation(goal_image_resized)
-        print("[SUCCESS] Correct goal image loaded from demonstration (via mapping).")
+        # Set the chosen init state
+        env.set_init_state(init_states[chosen_init_idx])
+        # Save for confirmation
+        try:
+            os.makedirs(OUTPUT_DIR, exist_ok=True)
+            cv2.imwrite(os.path.join(OUTPUT_DIR, f"chosen_goal_ep{episode_index}.png"), cv2.cvtColor(goal_image_resized, cv2.COLOR_RGB2BGR))
+            # Capture the oriented init image
+            tmp_obs, _, _, _ = env.step(np.zeros(get_target_dim(), dtype=np.float32))
+            init_img = apply_image_orientation(tmp_obs.get("agentview_image", np.zeros((224, 224, 3), dtype=np.uint8)))
+            init_img = cv2.resize(init_img, (224, 224))
+            cv2.imwrite(os.path.join(OUTPUT_DIR, f"chosen_init_{chosen_init_idx}.png"), cv2.cvtColor(init_img, cv2.COLOR_RGB2BGR))
+        except Exception:
+            pass
+        print("[SUCCESS] Correct goal image loaded from demonstration (via mapping+MSE search).")
     except Exception as e:
         print(f"[FATAL] Could not load goal image: {e}")
         import traceback
@@ -361,27 +398,7 @@ try:
 
     # 4. Setup for Inference Loop
     print("\n[INFO] Setting up inference...")
-    env.seed(0)
-    env.reset()
-    init_states = task_suite.get_task_init_states(EVAL_TASK_ID)
-    # Choose best init_state by image similarity to goal
-    best_idx = 0
-    best_mse = float("inf")
-    for i, st in enumerate(init_states):
-        try:
-            env.set_init_state(st)
-            tmp_obs, _, _, _ = env.step(np.zeros(get_target_dim(), dtype=np.float32))
-            tmp_img = apply_image_orientation(tmp_obs.get("agentview_image", np.zeros((224, 224, 3), dtype=np.uint8)))
-            if tmp_img.shape != goal_image_resized.shape:
-                tmp_img = cv2.resize(tmp_img, (goal_image_resized.shape[1], goal_image_resized.shape[0]))
-            mse = float(np.mean((tmp_img.astype(np.float32) - goal_image_resized.astype(np.float32)) ** 2))
-            if mse < best_mse:
-                best_mse = mse
-                best_idx = i
-        except Exception:
-            continue
-    env.set_init_state(init_states[best_idx])
-    print(f"[INFO] Chosen init_state index {best_idx} with MSE={best_mse:.2f}")
+    # After setting chosen init above, take a fresh obs
     obs, _, _, _ = env.step(np.zeros(get_target_dim(), dtype=np.float32))
 
     # Probe once before the loop
