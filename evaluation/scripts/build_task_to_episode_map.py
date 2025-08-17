@@ -2,6 +2,7 @@ import os
 import json
 import argparse
 import tensorflow as tf
+from typing import Optional
 
 
 def extract_language(parsed):
@@ -42,7 +43,7 @@ def extract_language(parsed):
 	return ""
 
 
-def build_mapping(dataset_dir: str, max_episodes: int | None = None):
+def build_mapping(dataset_dir: str, max_episodes: Optional[int] = None):
 	# Collect all TFRecord files
 	tfrecord_files = [os.path.join(dataset_dir, f) for f in os.listdir(dataset_dir) if f.endswith('.tfrecord')]
 	if not tfrecord_files:
