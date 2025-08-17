@@ -45,7 +45,7 @@ def extract_language(parsed):
 
 def build_mapping(dataset_dir: str, max_episodes: Optional[int] = None):
 	# Collect all TFRecord files
-	tfrecord_files = [os.path.join(dataset_dir, f) for f in os.listdir(dataset_dir) if f.endswith('.tfrecord')]
+	tfrecord_files = tf.io.gfile.glob(os.path.join(dataset_dir, "*tfrecord*"))
 	if not tfrecord_files:
 		raise FileNotFoundError(f"No .tfrecord files found in '{dataset_dir}'.")
 	# Dataset over all files
