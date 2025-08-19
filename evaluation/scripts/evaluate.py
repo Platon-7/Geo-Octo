@@ -102,9 +102,10 @@ GRIPPER_HOLD_PROPORTION = 0.6    # hold for first 60% of steps
 GRIPPER_HOLD_VALUE = +1.0        # relative: +1 open, -1 close (depending on controller)
 GRIPPER_DEBOUNCE_STEPS = 8
 
-# Image orientation correction (apply to both goal and observation)
-IMG_VFLIP = True    # vertical flip for model inputs
-IMG_HFLIP = False   # horizontal flip off to preserve left-right
+# Image orientation correction for MODEL INPUTS ONLY (observation)
+# Rotate by 180° to align env camera to dataset orientation
+IMG_VFLIP = True
+IMG_HFLIP = True
 
 def apply_image_orientation(img: np.ndarray) -> np.ndarray:
     out = img
@@ -364,7 +365,6 @@ try:
             try:
                 gimg = get_goal_image_from_tfrecord(dataset_dir_for_eval, int(idx))
                 gimg = cv2.resize(gimg, (224, 224))
-                gimg = apply_image_orientation(gimg)
                 gimg_f = gimg.astype(np.float32)
                 for init_idx, im in init_images:
                     mse = float(np.mean((im.astype(np.float32) - gimg_f) ** 2))
@@ -377,10 +377,9 @@ try:
             raise RuntimeError("Failed to find a best (episode, init_state) pair")
         episode_index, chosen_init_idx = best_pair
         print(f"[INFO] Chosen episode {episode_index} and init_state {chosen_init_idx} with MSE={best_mse:.2f}")
-        # Load the chosen goal image
+        # Load the chosen goal image (do NOT re-orient; keep dataset orientation)
         goal_image = get_goal_image_from_tfrecord(dataset_dir_for_eval, episode_index)
         goal_image_resized = cv2.resize(goal_image, (224, 224))
-        goal_image_resized = apply_image_orientation(goal_image_resized)
         # Set the chosen init state
         env.set_init_state(init_states[chosen_init_idx])
         # Save for confirmation
@@ -558,28 +557,29 @@ try:
                 print(f"[STEP {step}] z_cmd={a[2]:.3f} rot_cmd={a[3]:.3f},{a[4]:.3f},{a[5]:.3f} eef_z={eef_z:.3f} approach_cnt={approach_counter} z_target={z_target:.3f} push={dynamic_descent_push:.3f}")
             except Exception:
                 pass
-        # Gripper mapping
+        # Gripper mapping: compute policy-space intent first, then apply gating, finally apply sign
         if GRIPPER_MODE == 'rel':
-            # Ensure in [-1,1] and apply sign
-            a[6] = np.clip(a[6], -1.0, 1.0) * GRIPPER_SIGN
+            g_intent = np.clip(a[6], -1.0, 1.0)
         else:
-            # Treat as absolute [0,1], with possible inversion
-            g = np.clip(a[6], 0.0, 1.0)
-            a[6] = (GRIPPER_SIGN * (g * 2.0 - 1.0))  # convert to rel for controller
+            g_abs = np.clip(a[6], 0.0, 1.0)
+            g_intent = (g_abs * 2.0 - 1.0)  # convert abs->[ -1, 1 ]
         # Gripper gating
         if GRIPPER_HOLD_ENABLED:
             if step < int(NUM_TIMESTEPS * GRIPPER_HOLD_PROPORTION):
-                a[6] = GRIPPER_HOLD_VALUE
+                # +1.0 means OPEN in policy space; final sign applied below
+                g_intent = GRIPPER_HOLD_VALUE
             else:
                 # debounce small toggles
-                if np.sign(a[6]) == np.sign(grip_last_value) or abs(a[6]) < 0.3:
+                if np.sign(g_intent) == np.sign(grip_last_value) or abs(g_intent) < 0.3:
                     grip_stable_count += 1
                 else:
                     grip_stable_count = 0
                 if grip_stable_count < GRIPPER_DEBOUNCE_STEPS:
-                    a[6] = grip_last_value
+                    g_intent = grip_last_value
                 else:
-                    grip_last_value = float(np.clip(a[6], -1.0, 1.0))
+                    grip_last_value = float(np.clip(g_intent, -1.0, 1.0))
+        # Apply sign last
+        a[6] = float(np.clip(g_intent * GRIPPER_SIGN, -1.0, 1.0))
         action_to_execute = a
 
         # Map to env action dimension and sanitize
