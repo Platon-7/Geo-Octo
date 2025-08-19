@@ -3,7 +3,7 @@ import warnings
 # Minimal JAX compatibility shim
 try:
 	import jax.numpy as jnp  # noqa: F401
-	except ImportError:
+except ImportError:
 	pass
 
 warnings.filterwarnings("ignore", category=DeprecationWarning, module="transformers")
@@ -86,7 +86,7 @@ def get_goal_image_from_tfrecord(dataset_dir: str, episode_index: int) -> np.nda
 	episode_feature_description = {
 		'steps/observation/image': tf.io.VarLenFeature(tf.string),
 	}
-	parsed_episode = tf.io.parse_single_example(echoice := episode_proto, episode_feature_description)
+	parsed_episode = tf.io.parse_single_example(episode_proto, episode_feature_description)
 	image_tensors = parsed_episode['steps/observation/image'].values
 	goal_image = tf.io.decode_jpeg(image_tensors[-1]).numpy()
 	return goal_image
@@ -188,6 +188,7 @@ for step in range(NUM_TIMESTEPS):
 			'proprio': np.stack(proprios)[None],
 			'timestep_pad_mask': np.full((1, WINDOW_SIZE), True, dtype=bool),
 			'timestep': np.array([[step-(WINDOW_SIZE-1), step]], dtype=np.int32),
+			'task_completed': np.zeros((1, WINDOW_SIZE, 4), dtype=bool),
 			'pad_mask_dict': {
 				'image_primary': np.full((1, WINDOW_SIZE), True, dtype=bool),
 				'proprio': np.full((1, WINDOW_SIZE), True, dtype=bool),
@@ -205,8 +206,8 @@ for step in range(NUM_TIMESTEPS):
 	else:
 		a = np.zeros(7, dtype=np.float32)
 
-	# Minimal post-process
-	a = np.asarray(a, dtype=np.float32)
+	# Minimal post-process; make writable copy
+	a = np.array(a, dtype=np.float32, copy=True)
 	if a.shape[0] < 7:
 		a = np.pad(a, (0, 7 - a.shape[0]))
 	if ZERO_ROTATION:
