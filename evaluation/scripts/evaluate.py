@@ -102,6 +102,11 @@ GRIPPER_HOLD_PROPORTION = 0.6    # hold for first 60% of steps
 GRIPPER_HOLD_VALUE = +1.0        # relative: +1 open, -1 close (depending on controller)
 GRIPPER_DEBOUNCE_STEPS = 8
 
+# State-based gripper overrides
+GRIPPER_FORCE_OPEN_UNTIL_APPROACH = True
+GRIPPER_CLOSE_ON_DESCENT = True
+GRIPPER_CLOSE_HOLD_STEPS = 40
+
 # Image orientation correction for MODEL INPUTS ONLY (observation)
 # Rotate by 180° to align env camera to dataset orientation
 IMG_VFLIP = True
@@ -455,6 +460,7 @@ try:
     grip_last_value = 0.0
     grip_stable_count = 0
     prev_rot_exec = np.zeros(3, dtype=np.float32)
+    grip_close_hold_counter = 0
 
     print(f"[INFO] Starting evaluation loop with {WINDOW_SIZE}-frame window...")
 
@@ -557,19 +563,27 @@ try:
                 print(f"[STEP {step}] z_cmd={a[2]:.3f} rot_cmd={a[3]:.3f},{a[4]:.3f},{a[5]:.3f} eef_z={eef_z:.3f} approach_cnt={approach_counter} z_target={z_target:.3f} push={dynamic_descent_push:.3f}")
             except Exception:
                 pass
-        # Gripper mapping: compute policy-space intent first, then apply gating, finally apply sign
+        # Gripper mapping: compute policy-space intent first
         if GRIPPER_MODE == 'rel':
             g_intent = np.clip(a[6], -1.0, 1.0)
         else:
             g_abs = np.clip(a[6], 0.0, 1.0)
             g_intent = (g_abs * 2.0 - 1.0)  # convert abs->[ -1, 1 ]
-        # Gripper gating
-        if GRIPPER_HOLD_ENABLED:
+        # State-based overrides (skip debounce when applied)
+        state_override = False
+        if GRIPPER_FORCE_OPEN_UNTIL_APPROACH and (approach_counter < APPROACH_WINDOW_STEPS):
+            g_intent = +1.0
+            state_override = True
+        elif GRIPPER_CLOSE_ON_DESCENT and descending:
+            if grip_close_hold_counter < GRIPPER_CLOSE_HOLD_STEPS:
+                g_intent = -1.0
+                grip_close_hold_counter += 1
+                state_override = True
+        # Otherwise optional gating / debounce
+        if GRIPPER_HOLD_ENABLED and not state_override:
             if step < int(NUM_TIMESTEPS * GRIPPER_HOLD_PROPORTION):
-                # +1.0 means OPEN in policy space; final sign applied below
                 g_intent = GRIPPER_HOLD_VALUE
             else:
-                # debounce small toggles
                 if np.sign(g_intent) == np.sign(grip_last_value) or abs(g_intent) < 0.3:
                     grip_stable_count += 1
                 else:
@@ -580,6 +594,11 @@ try:
                     grip_last_value = float(np.clip(g_intent, -1.0, 1.0))
         # Apply sign last
         a[6] = float(np.clip(g_intent * GRIPPER_SIGN, -1.0, 1.0))
+        if (step % 25) == 0:
+            try:
+                print(f"[STEP {step}] g_intent={g_intent:.2f} g_cmd={a[6]:.2f} state_override={state_override} hold_cnt={grip_close_hold_counter}")
+            except Exception:
+                pass
         action_to_execute = a
 
         # Map to env action dimension and sanitize
