@@ -35,8 +35,8 @@ from libero.libero.envs import OffScreenRenderEnv
 # ==============================================================================
 MODEL_PATH = "/home/pkarageorgis/geo_octo/octo/my_octo_vggt_model_offline/octo_vggt_finetune_staged/experiment_20250808_130401_BASELINE_RUN"
 TASK_SUITE_NAME = "libero_spatial"
-EVAL_TASK_ID = 9
-NUM_TIMESTEPS = 1000
+EVAL_TASK_ID = 6
+NUM_TIMESTEPS = 800
 WINDOW_SIZE = 2
 OUTPUT_DIR = "evaluation/test_outputs"
 os.makedirs(OUTPUT_DIR, exist_ok=True)
@@ -53,7 +53,7 @@ ZERO_ROTATION = True         # Zero out orientation deltas to test position-only
 MAP_GRIPPER_ABS_TO_REL = True  # Map gripper from [0,1] -> [-1,1]
 LPF_ALPHA = 0.0             # Exponential moving average; set 0.0 to disable smoothing for snappier motion
 MANUAL_CLAMP_IF_NO_SPACE = True
-TRANS_MAX = 0.4            # meters per step cap if no env.action_space (raise for faster motion)
+TRANS_MAX = 0.03            # meters per step cap if no env.action_space (raise for faster motion)
 ROT_MAX = 0.15              # rad per step cap if no env.action_space
 GRIP_MAX = 1.0
 
@@ -102,9 +102,15 @@ GRIPPER_HOLD_PROPORTION = 0.6    # hold for first 60% of steps
 GRIPPER_HOLD_VALUE = +1.0        # relative: +1 open, -1 close (depending on controller)
 GRIPPER_DEBOUNCE_STEPS = 8
 
-# Image orientation correction (apply to both goal and observation)
-IMG_VFLIP = True    # vertical flip for model inputs
-IMG_HFLIP = False   # horizontal flip off to preserve left-right
+# State-based gripper overrides
+GRIPPER_FORCE_OPEN_UNTIL_APPROACH = True
+GRIPPER_CLOSE_ON_DESCENT = True
+GRIPPER_CLOSE_HOLD_STEPS = 40
+
+# Image orientation correction for MODEL INPUTS ONLY (observation)
+# Rotate by 180° to align env camera to dataset orientation
+IMG_VFLIP = True
+IMG_HFLIP = True
 
 def apply_image_orientation(img: np.ndarray) -> np.ndarray:
     out = img
@@ -364,7 +370,6 @@ try:
             try:
                 gimg = get_goal_image_from_tfrecord(dataset_dir_for_eval, int(idx))
                 gimg = cv2.resize(gimg, (224, 224))
-                gimg = apply_image_orientation(gimg)
                 gimg_f = gimg.astype(np.float32)
                 for init_idx, im in init_images:
                     mse = float(np.mean((im.astype(np.float32) - gimg_f) ** 2))
@@ -377,10 +382,9 @@ try:
             raise RuntimeError("Failed to find a best (episode, init_state) pair")
         episode_index, chosen_init_idx = best_pair
         print(f"[INFO] Chosen episode {episode_index} and init_state {chosen_init_idx} with MSE={best_mse:.2f}")
-        # Load the chosen goal image
+        # Load the chosen goal image (do NOT re-orient; keep dataset orientation)
         goal_image = get_goal_image_from_tfrecord(dataset_dir_for_eval, episode_index)
         goal_image_resized = cv2.resize(goal_image, (224, 224))
-        goal_image_resized = apply_image_orientation(goal_image_resized)
         # Set the chosen init state
         env.set_init_state(init_states[chosen_init_idx])
         # Save for confirmation
@@ -456,6 +460,7 @@ try:
     grip_last_value = 0.0
     grip_stable_count = 0
     prev_rot_exec = np.zeros(3, dtype=np.float32)
+    grip_close_hold_counter = 0
 
     print(f"[INFO] Starting evaluation loop with {WINDOW_SIZE}-frame window...")
 
@@ -558,28 +563,42 @@ try:
                 print(f"[STEP {step}] z_cmd={a[2]:.3f} rot_cmd={a[3]:.3f},{a[4]:.3f},{a[5]:.3f} eef_z={eef_z:.3f} approach_cnt={approach_counter} z_target={z_target:.3f} push={dynamic_descent_push:.3f}")
             except Exception:
                 pass
-        # Gripper mapping
+        # Gripper mapping: compute policy-space intent first
         if GRIPPER_MODE == 'rel':
-            # Ensure in [-1,1] and apply sign
-            a[6] = np.clip(a[6], -1.0, 1.0) * GRIPPER_SIGN
+            g_intent = np.clip(a[6], -1.0, 1.0)
         else:
-            # Treat as absolute [0,1], with possible inversion
-            g = np.clip(a[6], 0.0, 1.0)
-            a[6] = (GRIPPER_SIGN * (g * 2.0 - 1.0))  # convert to rel for controller
-        # Gripper gating
-        if GRIPPER_HOLD_ENABLED:
+            g_abs = np.clip(a[6], 0.0, 1.0)
+            g_intent = (g_abs * 2.0 - 1.0)  # convert abs->[ -1, 1 ]
+        # State-based overrides (skip debounce when applied)
+        state_override = False
+        if GRIPPER_FORCE_OPEN_UNTIL_APPROACH and (approach_counter < APPROACH_WINDOW_STEPS):
+            g_intent = +1.0
+            state_override = True
+        elif GRIPPER_CLOSE_ON_DESCENT and descending:
+            if grip_close_hold_counter < GRIPPER_CLOSE_HOLD_STEPS:
+                g_intent = -1.0
+                grip_close_hold_counter += 1
+                state_override = True
+        # Otherwise optional gating / debounce
+        if GRIPPER_HOLD_ENABLED and not state_override:
             if step < int(NUM_TIMESTEPS * GRIPPER_HOLD_PROPORTION):
-                a[6] = GRIPPER_HOLD_VALUE
+                g_intent = GRIPPER_HOLD_VALUE
             else:
-                # debounce small toggles
-                if np.sign(a[6]) == np.sign(grip_last_value) or abs(a[6]) < 0.3:
+                if np.sign(g_intent) == np.sign(grip_last_value) or abs(g_intent) < 0.3:
                     grip_stable_count += 1
                 else:
                     grip_stable_count = 0
                 if grip_stable_count < GRIPPER_DEBOUNCE_STEPS:
-                    a[6] = grip_last_value
+                    g_intent = grip_last_value
                 else:
-                    grip_last_value = float(np.clip(a[6], -1.0, 1.0))
+                    grip_last_value = float(np.clip(g_intent, -1.0, 1.0))
+        # Apply sign last
+        a[6] = float(np.clip(g_intent * GRIPPER_SIGN, -1.0, 1.0))
+        if (step % 25) == 0:
+            try:
+                print(f"[STEP {step}] g_intent={g_intent:.2f} g_cmd={a[6]:.2f} state_override={state_override} hold_cnt={grip_close_hold_counter}")
+            except Exception:
+                pass
         action_to_execute = a
 
         # Map to env action dimension and sanitize

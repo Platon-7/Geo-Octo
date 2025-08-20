@@ -4,6 +4,7 @@ import json
 from tqdm import tqdm
 import os
 import glob
+import argparse
 
 # --- Configuration ---
 # BASE_DATA_DIR = "/scratch-shared/tmp.cwkV8vOvfY/libero_vggt_compressed"
@@ -11,27 +12,12 @@ import glob
 #     "libero_object_vggt_compressed",
 #     "libero_spatial_vggt_compressed",
 #     "libero_goal_vggt_compressed",
-#     "liber_o10_vggt_compressed",
+#     "libero_10_vggt_compressed",
 # ]
 
-BASE_DATA_DIR = "/scratch-shared/tmp.cwkV8vOvfY/libero_datasets"
-DATASET_NAMES = [
-    "libero_object_no_noops",
-    "libero_spatial_no_noops",
-    "libero_goal_no_noops",
-    "libero_10_no_noops",
-]
+# --- CLI-configured; see argparse in main() ---
 
-TFRECORD_FILES = []
-for name in DATASET_NAMES:
-    path_pattern = os.path.join(BASE_DATA_DIR, name, '*', '*.tfrecord*')
-    TFRECORD_FILES.extend(glob.glob(path_pattern))
-
-if not TFRECORD_FILES:
-    raise RuntimeError(f"No TFRecord files found! Path tried: {os.path.join(BASE_DATA_DIR, DATASET_NAMES[0], '*', '*.tfrecord*')}")
-
-print(f"Found {len(TFRECORD_FILES)} TFRecord files to process.")
-
+# TFRecord file discovery happens in main() based on CLI args
 
 # Keys for parsing the TFRecord files - FIXED to use 'state' instead of 'joint_state'
 ACTION_KEY = 'steps/action'
@@ -43,13 +29,37 @@ FEATURE_DESCRIPTION = {
 }
 
 # Define the output directory and filename
-OUTPUT_DIR = "/home/pkarageorgis/geo_octo/libero_datasets/unified_stats"
-OUTPUT_STATS_FILE = os.path.join(OUTPUT_DIR, "unified_dataset_statistics_no_vggt.json")
-os.makedirs(OUTPUT_DIR, exist_ok=True)
+# Output path configured via CLI
 
 
 def main():
-    raw_dataset = tf.data.TFRecordDataset(TFRECORD_FILES)
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--base-data-dir', required=True, type=str)
+    parser.add_argument('--dataset-names', required=True, nargs='+', type=str, help='One or more dataset directory names under base-dir')
+    parser.add_argument('--output-dir', required=True, type=str)
+    group = parser.add_mutually_exclusive_group(required=True)
+    group.add_argument('--output-name', type=str, help='Output filename (e.g., stats.json)')
+    group.add_argument('--output-file', type=str, help='Full output file path')
+    args = parser.parse_args()
+
+    base_data_dir = args.base_data_dir
+    dataset_names = args.dataset_names
+    output_dir = args.output_dir
+    output_stats_file = args.output_file if args.output_file else os.path.join(output_dir, args.output_name)
+    os.makedirs(output_dir, exist_ok=True)
+
+    tfrecord_files = []
+    for name in dataset_names:
+        path_pattern = os.path.join(base_data_dir, name, '*', '*.tfrecord*')
+        tfrecord_files.extend(glob.glob(path_pattern))
+
+    if not tfrecord_files:
+        raise RuntimeError(f"No TFRecord files found! Path tried: {os.path.join(base_data_dir, dataset_names[0], '*', '*.tfrecord*')}")
+
+    print(f"Found {len(tfrecord_files)} TFRecord files to process.")
+    print(f"Datasets: {dataset_names} base: {base_data_dir}")
+
+    raw_dataset = tf.data.TFRecordDataset(tfrecord_files)
 
     action_dim = 7
     raw_proprio_dim = 8  # Raw state is 8D
@@ -104,7 +114,7 @@ def main():
     all_actions = []
     all_proprios = []
     
-    raw_dataset = tf.data.TFRecordDataset(TFRECORD_FILES)
+    raw_dataset = tf.data.TFRecordDataset(tfrecord_files)
     for raw_record in tqdm(raw_dataset):
         example = tf.io.parse_single_example(raw_record, FEATURE_DESCRIPTION)
         
@@ -148,10 +158,10 @@ def main():
         'num_trajectories': num_trajectories,
     }
 
-    with open(OUTPUT_STATS_FILE, 'w') as f:
+    with open(output_stats_file, 'w') as f:
         json.dump(final_statistics, f, indent=4)
         
-    print(f"\nDone! Unified statistics saved to:\n{OUTPUT_STATS_FILE}")
+    print(f"\nDone! Unified statistics saved to:\n{output_stats_file}")
 
 if __name__ == "__main__":
     main()

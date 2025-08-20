@@ -11,7 +11,7 @@ def get_config(config_string="full,multimodal"):
 
     # Define the path to your single, unified statistics file.
     #UNIFIED_STATS_PATH = "/home/pkarageorgis/geo_octo/libero_datasets/unified_stats/unified_dataset_statistics.json"
-    UNIFIED_STATS_PATH = "/home/pkarageorgis/geo_octo/libero_datasets/unified_stats/unified_dataset_statistics_no_vggt.json"
+    UNIFIED_STATS_PATH = "/home/pkarageorgis/geo_octo/libero_datasets/unified_stats/unified_dataset_statistics_libero_spatial_no_vggt.json"
     
     
     # Use ALL your VGGT datasets for training
@@ -72,46 +72,7 @@ def get_config(config_string="full,multimodal"):
     
     DATASET_KWARGS_LIST = [
         {
-            "name": "libero_object_no_noops",
-            "data_dir": "/scratch-shared/tmp.cwkV8vOvfY/libero_datasets",
-            "dataset_statistics": UNIFIED_STATS_PATH,  # Use the unified file
-            "standardize_fn": ModuleSpec.create(
-                "octo.data.utils.data_utils:standardize_libero_vggt"
-            ),
-            "image_obs_keys": {"primary": "image_primary"},
-            "proprio_obs_key": "proprio",
-            "language_key": "language_instruction",
-            "action_proprio_normalization_type": "normal",
-            "filter_functions": [],
-        },
-        {
             "name": "libero_spatial_no_noops",
-            "data_dir": "/scratch-shared/tmp.cwkV8vOvfY/libero_datasets",
-            "dataset_statistics": UNIFIED_STATS_PATH,  # Use the unified file
-            "standardize_fn": ModuleSpec.create(
-                "octo.data.utils.data_utils:standardize_libero_vggt"
-            ),
-            "image_obs_keys": {"primary": "image_primary"},
-            "proprio_obs_key": "proprio",
-            "language_key": "language_instruction",
-            "action_proprio_normalization_type": "normal",
-            "filter_functions": [],
-        },
-        {
-            "name": "libero_goal_no_noops",
-            "data_dir": "/scratch-shared/tmp.cwkV8vOvfY/libero_datasets",
-            "dataset_statistics": UNIFIED_STATS_PATH,  # Use the unified file
-            "standardize_fn": ModuleSpec.create(
-                "octo.data.utils.data_utils:standardize_libero_vggt"
-            ),
-            "image_obs_keys": {"primary": "image_primary"},
-            "proprio_obs_key": "proprio",
-            "language_key": "language_instruction",
-            "action_proprio_normalization_type": "normal",
-            "filter_functions": [],
-        },
-        {
-            "name": "libero_10_no_noops",
             "data_dir": "/scratch-shared/tmp.cwkV8vOvfY/libero_datasets",
             "dataset_statistics": UNIFIED_STATS_PATH,  # Use the unified file
             "standardize_fn": ModuleSpec.create(
@@ -145,7 +106,7 @@ def get_config(config_string="full,multimodal"):
     config = dict(
         pretrained_path=placeholder(str),
         pretrained_step=placeholder(int),
-        batch_size=4,
+        batch_size=16,
         shuffle_buffer_size=100,
         num_steps=total_steps,
         log_interval=100, # was 100
@@ -196,7 +157,7 @@ def get_config(config_string="full,multimodal"):
             num_val_batches=10,
         ),
         viz_kwargs=dict(
-            eval_batch_size=4,
+            eval_batch_size=16,
             trajs_for_metrics=20,
             trajs_for_viz=2,
             samples_per_state=2,
