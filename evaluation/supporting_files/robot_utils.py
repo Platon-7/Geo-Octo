@@ -28,7 +28,7 @@ OPENVLA_V01_SYSTEM_PROMPT = (
 # Model image size configuration
 MODEL_IMAGE_SIZES = {
     "openvla": 224,
-    "octo": 256,
+    "octo": 224,
 }
 
 
@@ -178,13 +178,37 @@ def get_action(
 
         # Prepare observation dict
         image = obs["full_image"]
-        resize_size = MODEL_IMAGE_SIZES.get("octo", 256)
+        resize_size = MODEL_IMAGE_SIZES.get("octo", 224)
         if image.shape[0] != resize_size or image.shape[1] != resize_size:
             image = resize_image_for_policy(image, resize_size)
 
+        # Stack to expected history length (2)
+        image_stack = np.stack([image, image], axis=0)  # (2, H, W, 3)
+
+        # Optional proprioception (pad to 8-dim if shorter)
+        proprio_dim = 8
+        if "state" in obs and obs["state"] is not None:
+            state_vec = np.asarray(obs["state"], dtype=np.float32)
+            if state_vec.shape[-1] < proprio_dim:
+                pad = np.zeros((proprio_dim - state_vec.shape[-1],), dtype=np.float32)
+                state_vec = np.concatenate([state_vec, pad], axis=-1)
+            elif state_vec.shape[-1] > proprio_dim:
+                state_vec = state_vec[:proprio_dim]
+            proprio_stack = np.stack([state_vec, state_vec], axis=0)  # (2, D)
+        else:
+            proprio_stack = np.zeros((2, proprio_dim), dtype=np.float32)
+
         observation = {
-            "image_primary": image[np.newaxis, np.newaxis, ...],
-            "timestep_pad_mask": np.array([[True]], dtype=bool),
+            "image_primary": image_stack[np.newaxis, ...],  # (1, 2, H, W, 3)
+            "timestep": np.array([[0, 1]], dtype=np.int32),
+            "task_completed": np.array([[False, False]], dtype=bool),
+            "timestep_pad_mask": np.array([[True, True]], dtype=bool),
+            "pad_mask_dict": {
+                "image_primary": np.array([[True, True]], dtype=bool),
+                "timestep": np.array([[True, True]], dtype=bool),
+                "proprio": np.array([[True, True]], dtype=bool),
+            },
+            "proprio": proprio_stack[np.newaxis, ...],  # (1, 2, D)
         }
 
         # Task construction
