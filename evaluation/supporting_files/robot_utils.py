@@ -4,6 +4,7 @@ import os
 import random
 import time
 from typing import Any, Dict, List, Optional, Union
+from collections import deque
 
 import numpy as np
 import torch
@@ -30,6 +31,10 @@ MODEL_IMAGE_SIZES = {
     "openvla": 224,
     "octo": 224,
 }
+
+# Maintain short histories to provide a true 2-frame window without changing callers
+IMAGE_HISTORY: deque = deque(maxlen=2)
+PROPRIO_HISTORY: deque = deque(maxlen=2)
 
 
 def set_seed_everywhere(seed: int) -> None:
@@ -182,8 +187,12 @@ def get_action(
         if image.shape[0] != resize_size or image.shape[1] != resize_size:
             image = resize_image_for_policy(image, resize_size)
 
-        # Stack to expected history length (2)
-        image_stack = np.stack([image, image], axis=0)  # (2, H, W, 3)
+        # Update image history and build a true 2-frame stack
+        IMAGE_HISTORY.append(image)
+        if len(IMAGE_HISTORY) == 1:
+            # duplicate first frame to fill window
+            IMAGE_HISTORY.append(image)
+        image_stack = np.stack(list(IMAGE_HISTORY), axis=0)  # (2, H, W, 3)
 
         # Optional proprioception (7-dim expected by this checkpoint)
         proprio_dim = 7
@@ -194,9 +203,12 @@ def get_action(
                 state_vec = np.concatenate([state_vec, pad], axis=-1)
             elif state_vec.shape[-1] > proprio_dim:
                 state_vec = state_vec[:proprio_dim]
-            proprio_stack = np.stack([state_vec, state_vec], axis=0)  # (2, D)
+            PROPRIO_HISTORY.append(state_vec)
         else:
-            proprio_stack = np.zeros((2, proprio_dim), dtype=np.float32)
+            PROPRIO_HISTORY.append(np.zeros((proprio_dim,), dtype=np.float32))
+        if len(PROPRIO_HISTORY) == 1:
+            PROPRIO_HISTORY.append(PROPRIO_HISTORY[0])
+        proprio_stack = np.stack(list(PROPRIO_HISTORY), axis=0)  # (2, D)
 
         observation = {
             "image_primary": image_stack[np.newaxis, ...],  # (1, 2, H, W, 3)
