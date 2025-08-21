@@ -212,23 +212,14 @@ def get_action(
             "proprio": proprio_stack[np.newaxis, ...],  # (1, 2, D)
         }
 
-        # Task construction (language-conditioned). Build a minimal clean dict with only language ids
-        _raw_task = model.create_tasks(texts=[task_label])
-        minimal_task = {}
-        # Nested case
-        lang = _raw_task.get("language_instruction")
-        if isinstance(lang, dict) and "input_ids" in lang:
-            minimal_task["language_instruction"] = np.asarray(lang["input_ids"], dtype=np.int32)
-        # Flattened keys case
-        elif "language_instruction/input_ids" in _raw_task:
-            minimal_task["language_instruction"] = np.asarray(_raw_task["language_instruction/input_ids"], dtype=np.int32)
-        # Already token ids
-        elif isinstance(lang, (np.ndarray, list)):
-            minimal_task["language_instruction"] = np.asarray(lang, dtype=np.int32)
-        else:
-            # Fallback: let model tokenize internally
-            minimal_task = _raw_task
-        task = minimal_task
+        # Task construction (language-conditioned). Preserve full structure from Octo
+        task = dict(model.create_tasks(texts=[task_label]))
+        # If the model expects a task image, supply the current first frame to avoid zero padding
+        if "image_primary" not in task:
+            try:
+                task["image_primary"] = observation["image_primary"][:, 0]
+            except Exception:
+                pass
 
         # Sample action
         action = model.sample_actions(observation, task, rng=jax.random.PRNGKey(0))
