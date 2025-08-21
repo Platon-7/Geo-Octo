@@ -185,8 +185,8 @@ def get_action(
         # Stack to expected history length (2)
         image_stack = np.stack([image, image], axis=0)  # (2, H, W, 3)
 
-        # Optional proprioception (pad to 8-dim if shorter)
-        proprio_dim = 8
+        # Optional proprioception (7-dim expected by this checkpoint)
+        proprio_dim = 7
         if "state" in obs and obs["state"] is not None:
             state_vec = np.asarray(obs["state"], dtype=np.float32)
             if state_vec.shape[-1] < proprio_dim:
@@ -201,7 +201,8 @@ def get_action(
         observation = {
             "image_primary": image_stack[np.newaxis, ...],  # (1, 2, H, W, 3)
             "timestep": np.array([[0, 1]], dtype=np.int32),
-            "task_completed": np.array([[False, False]], dtype=bool),
+            # Shape (1, 2, 4): binary flags for per-step done signals; we set all False
+            "task_completed": np.zeros((1, 2, 4), dtype=bool),
             "timestep_pad_mask": np.array([[True, True]], dtype=bool),
             "pad_mask_dict": {
                 "image_primary": np.array([[True, True]], dtype=bool),
