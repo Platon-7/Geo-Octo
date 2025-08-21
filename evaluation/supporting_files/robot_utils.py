@@ -214,9 +214,32 @@ def get_action(
 
         # Task construction (language-conditioned). Convert to plain token ids if needed.
         task = model.create_tasks(texts=[task_label])
+
+        # Handle both nested and flattened representations from create_tasks
+        # 1) Nested dict case: { 'language_instruction': {'input_ids': ..., 'attention_mask': ...}, ... }
         lang = task.get("language_instruction")
         if isinstance(lang, dict) and "input_ids" in lang:
             task["language_instruction"] = np.asarray(lang["input_ids"], dtype=np.int32)
+        # 2) Flattened keys case: { 'language_instruction/input_ids': ..., 'language_instruction/attention_mask': ... }
+        if "language_instruction" not in task and "language_instruction/input_ids" in task:
+            task["language_instruction"] = np.asarray(task["language_instruction/input_ids"], dtype=np.int32)
+        # Remove auxiliary fields not needed by sample_actions
+        if "language_instruction/attention_mask" in task:
+            try:
+                del task["language_instruction/attention_mask"]
+            except Exception:
+                pass
+        if "language_instruction/input_ids" in task:
+            try:
+                del task["language_instruction/input_ids"]
+            except Exception:
+                pass
+        # Some create_tasks variants add image pad mask to tasks; drop to match example batch
+        if "pad_mask_dict/image_primary" in task:
+            try:
+                del task["pad_mask_dict/image_primary"]
+            except Exception:
+                pass
 
         # Sample action
         action = model.sample_actions(observation, task, rng=jax.random.PRNGKey(0))
