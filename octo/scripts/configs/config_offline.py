@@ -106,7 +106,7 @@ def get_config(config_string="full,multimodal"):
     config = dict(
         pretrained_path=placeholder(str),
         pretrained_step=placeholder(int),
-        batch_size=16,
+        batch_size=4,
         shuffle_buffer_size=100,
         num_steps=total_steps,
         log_interval=100, # was 100
@@ -157,7 +157,7 @@ def get_config(config_string="full,multimodal"):
             num_val_batches=10,
         ),
         viz_kwargs=dict(
-            eval_batch_size=16,
+            eval_batch_size=4,
             trajs_for_metrics=20,
             trajs_for_viz=2,
             samples_per_state=2,
