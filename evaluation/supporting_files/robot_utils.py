@@ -233,13 +233,27 @@ def get_action(
         # Sample action
         action = model.sample_actions(observation, task, rng=jax.random.PRNGKey(0))
 
-        # Convert to numpy and squeeze batch
-        action = np.array(action)[0]
-
-        # Ensure 7-dim action for LIBERO env: [dx,dy,dz, rx,ry,rz, grip]
-        if action.shape[-1] == 4:
-            dx, dy, dz, grip = action.tolist()
-            action = np.array([dx, dy, dz, 0.0, 0.0, 0.0, grip], dtype=np.float32)
+        # Convert to numpy and squeeze leading singleton dims
+        arr = np.array(action)
+        while arr.ndim > 1 and arr.shape[0] == 1:
+            arr = arr[0]
+        # If we still have a time dimension, take the first step
+        if arr.ndim == 2 and arr.shape[1] in (4, 7):
+            arr = arr[0]
+        # Now arr should be (4,) or (7,)
+        if arr.shape[-1] == 4:
+            dx, dy, dz, grip = float(arr[0]), float(arr[1]), float(arr[2]), float(arr[3])
+            arr = np.array([dx, dy, dz, 0.0, 0.0, 0.0, grip], dtype=np.float32)
+        elif arr.shape[-1] == 7:
+            arr = arr.astype(np.float32)
+        else:
+            # Fallback: try to take last 7 or first 7
+            if arr.size >= 7:
+                arr = np.asarray(arr).ravel()[:7].astype(np.float32)
+            else:
+                pad = np.zeros((7 - arr.size,), dtype=np.float32)
+                arr = np.concatenate([np.asarray(arr).ravel().astype(np.float32), pad], axis=0)
+        action = arr
 
         # Return as a list to match action chunk interface
         return [action]
