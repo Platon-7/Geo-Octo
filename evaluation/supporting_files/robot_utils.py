@@ -8,10 +8,7 @@ from typing import Any, Dict, List, Optional, Union
 import numpy as np
 import torch
 
-from evaluation.scripts.openvla_utils import (
-    get_vla,
-    get_vla_action,
-)
+# Avoid importing OpenVLA utilities at module import time to keep Octo-only usage light.
 
 # Initialize important constants
 ACTION_DIM = 7
@@ -31,7 +28,7 @@ OPENVLA_V01_SYSTEM_PROMPT = (
 # Model image size configuration
 MODEL_IMAGE_SIZES = {
     "openvla": 224,
-    # Add other models as needed
+    "octo": 256,
 }
 
 
@@ -51,7 +48,7 @@ def set_seed_everywhere(seed: int) -> None:
     os.environ["PYTHONHASHSEED"] = str(seed)
 
 
-def get_model(cfg: Any, wrap_diffusion_policy_for_droid: bool = False) -> torch.nn.Module:
+def get_model(cfg: Any, wrap_diffusion_policy_for_droid: bool = False) -> Any:
     """
     Load and initialize model for evaluation based on configuration.
 
@@ -66,7 +63,14 @@ def get_model(cfg: Any, wrap_diffusion_policy_for_droid: bool = False) -> torch.
         ValueError: If model family is not supported
     """
     if cfg.model_family == "openvla":
+        from evaluation.supporting_files.openvla_utils import get_vla
+
         model = get_vla(cfg)
+    elif cfg.model_family == "octo":
+        # Lazy import to avoid hard dependency if unused
+        from octo.model.octo_model import OctoModel
+
+        model = OctoModel.load_pretrained(str(cfg.pretrained_checkpoint))
     else:
         raise ValueError(f"Unsupported model family: {cfg.model_family}")
 
@@ -94,6 +98,31 @@ def get_image_resize_size(cfg: Any) -> Union[int, tuple]:
         raise ValueError(f"Unsupported model family: {cfg.model_family}")
 
     return MODEL_IMAGE_SIZES[cfg.model_family]
+
+
+def resize_image_for_policy(image: np.ndarray, resize_size: Union[int, tuple]) -> np.ndarray:
+    """
+    Resize an HxWxC image to the expected policy input resolution.
+
+    Uses OpenCV if available; falls back to NumPy/PIL-style nearest if not.
+    """
+    try:
+        import cv2  # type: ignore
+
+        if isinstance(resize_size, int):
+            target = (resize_size, resize_size)
+        else:
+            target = (int(resize_size[1]), int(resize_size[0])) if len(resize_size) == 2 else tuple(resize_size)
+        return cv2.resize(image, target, interpolation=cv2.INTER_LINEAR)
+    except Exception:
+        # Fallback: simple PIL resize
+        from PIL import Image
+
+        if isinstance(resize_size, int):
+            target = (resize_size, resize_size)
+        else:
+            target = (int(resize_size[1]), int(resize_size[0])) if len(resize_size) == 2 else tuple(resize_size)
+        return np.array(Image.fromarray(image).resize(target, Image.BILINEAR))
 
 
 def get_action(
@@ -127,8 +156,10 @@ def get_action(
     Raises:
         ValueError: If model family is not supported
     """
-    with torch.no_grad():
-        if cfg.model_family == "openvla":
+    if cfg.model_family == "openvla":
+        from evaluation.supporting_files.openvla_utils import get_vla_action
+
+        with torch.no_grad():
             action = get_vla_action(
                 cfg=cfg,
                 vla=model,
@@ -140,10 +171,35 @@ def get_action(
                 noisy_action_projector=noisy_action_projector,
                 use_film=use_film,
             )
-        else:
-            raise ValueError(f"Unsupported model family: {cfg.model_family}")
+        return action
+    elif cfg.model_family == "octo":
+        # Build Octo observation and sample a single-step action
+        import jax
 
-    return action
+        # Prepare observation dict
+        image = obs["full_image"]
+        resize_size = MODEL_IMAGE_SIZES.get("octo", 256)
+        if image.shape[0] != resize_size or image.shape[1] != resize_size:
+            image = resize_image_for_policy(image, resize_size)
+
+        observation = {
+            "image_primary": image[np.newaxis, np.newaxis, ...],
+            "timestep_pad_mask": np.array([[True]], dtype=bool),
+        }
+
+        # Task construction
+        task = model.create_tasks(texts=[task_label])
+
+        # Sample action
+        action = model.sample_actions(observation, task, rng=jax.random.PRNGKey(0))
+
+        # Convert to numpy and squeeze batch
+        action = np.array(action)[0]
+
+        # Return as a list to match action chunk interface
+        return [action]
+    else:
+        raise ValueError(f"Unsupported model family: {cfg.model_family}")
 
 
 def normalize_gripper_action(action: np.ndarray, binarize: bool = True) -> np.ndarray:
