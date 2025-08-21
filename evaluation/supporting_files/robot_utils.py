@@ -212,40 +212,34 @@ def get_action(
             "proprio": proprio_stack[np.newaxis, ...],  # (1, 2, D)
         }
 
-        # Task construction (language-conditioned). Convert to plain token ids if needed.
-        task = model.create_tasks(texts=[task_label])
-
-        # Handle both nested and flattened representations from create_tasks
-        # 1) Nested dict case: { 'language_instruction': {'input_ids': ..., 'attention_mask': ...}, ... }
-        lang = task.get("language_instruction")
+        # Task construction (language-conditioned). Build a minimal clean dict with only language ids
+        _raw_task = model.create_tasks(texts=[task_label])
+        minimal_task = {}
+        # Nested case
+        lang = _raw_task.get("language_instruction")
         if isinstance(lang, dict) and "input_ids" in lang:
-            task["language_instruction"] = np.asarray(lang["input_ids"], dtype=np.int32)
-        # 2) Flattened keys case: { 'language_instruction/input_ids': ..., 'language_instruction/attention_mask': ... }
-        if "language_instruction" not in task and "language_instruction/input_ids" in task:
-            task["language_instruction"] = np.asarray(task["language_instruction/input_ids"], dtype=np.int32)
-        # Remove auxiliary fields not needed by sample_actions
-        if "language_instruction/attention_mask" in task:
-            try:
-                del task["language_instruction/attention_mask"]
-            except Exception:
-                pass
-        if "language_instruction/input_ids" in task:
-            try:
-                del task["language_instruction/input_ids"]
-            except Exception:
-                pass
-        # Some create_tasks variants add image pad mask to tasks; drop to match example batch
-        if "pad_mask_dict/image_primary" in task:
-            try:
-                del task["pad_mask_dict/image_primary"]
-            except Exception:
-                pass
+            minimal_task["language_instruction"] = np.asarray(lang["input_ids"], dtype=np.int32)
+        # Flattened keys case
+        elif "language_instruction/input_ids" in _raw_task:
+            minimal_task["language_instruction"] = np.asarray(_raw_task["language_instruction/input_ids"], dtype=np.int32)
+        # Already token ids
+        elif isinstance(lang, (np.ndarray, list)):
+            minimal_task["language_instruction"] = np.asarray(lang, dtype=np.int32)
+        else:
+            # Fallback: let model tokenize internally
+            minimal_task = _raw_task
+        task = minimal_task
 
         # Sample action
         action = model.sample_actions(observation, task, rng=jax.random.PRNGKey(0))
 
         # Convert to numpy and squeeze batch
         action = np.array(action)[0]
+
+        # Ensure 7-dim action for LIBERO env: [dx,dy,dz, rx,ry,rz, grip]
+        if action.shape[-1] == 4:
+            dx, dy, dz, grip = action.tolist()
+            action = np.array([dx, dy, dz, 0.0, 0.0, 0.0, grip], dtype=np.float32)
 
         # Return as a list to match action chunk interface
         return [action]
