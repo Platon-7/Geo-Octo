@@ -55,4 +55,4 @@ PY
 #   --base hf://rail-berkeley/octo-small-1.5 \
 #   --topk 30
 
-srun python -u /gpfs/home4/pkarageorgis/geo_octo/evaluation/scripts/evaluate.py \
+srun python -u /gpfs/home4/pkarageorgis/geo_octo/evaluation/scripts/run_libero_eval.py \
