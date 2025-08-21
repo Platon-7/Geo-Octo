@@ -212,8 +212,11 @@ def get_action(
             "proprio": proprio_stack[np.newaxis, ...],  # (1, 2, D)
         }
 
-        # Task construction
+        # Task construction (language-conditioned). Convert to plain token ids if needed.
         task = model.create_tasks(texts=[task_label])
+        lang = task.get("language_instruction")
+        if isinstance(lang, dict) and "input_ids" in lang:
+            task["language_instruction"] = np.asarray(lang["input_ids"], dtype=np.int32)
 
         # Sample action
         action = model.sample_actions(observation, task, rng=jax.random.PRNGKey(0))
