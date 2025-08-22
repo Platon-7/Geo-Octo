@@ -259,26 +259,46 @@ def get_action(
         arr = np.array(action)
         while arr.ndim > 1 and arr.shape[0] == 1:
             arr = arr[0]
-        # If we still have a time dimension, take the first step
-        if arr.ndim == 2 and arr.shape[1] in (4, 7):
-            arr = arr[0]
-        # Now arr should be (4,) or (7,)
-        if arr.shape[-1] == 4:
-            dx, dy, dz, grip = float(arr[0]), float(arr[1]), float(arr[2]), float(arr[3])
-            arr = np.array([dx, dy, dz, 0.0, 0.0, 0.0, grip], dtype=np.float32)
-        elif arr.shape[-1] == 7:
-            arr = arr.astype(np.float32)
-        else:
-            # Fallback: try to take last 7 or first 7
-            if arr.size >= 7:
-                arr = np.asarray(arr).ravel()[:7].astype(np.float32)
-            else:
-                pad = np.zeros((7 - arr.size,), dtype=np.float32)
-                arr = np.concatenate([np.asarray(arr).ravel().astype(np.float32), pad], axis=0)
-        action = arr
 
-        # Return as a list to match action chunk interface
-        return [action]
+        steps: List[np.ndarray] = []
+        # Case: 2D array (horizon, dim)
+        if arr.ndim == 2:
+            horizon, dim = arr.shape
+            if dim == 7:
+                # Already 7D per step
+                for i in range(horizon):
+                    steps.append(arr[i].astype(np.float32))
+            elif dim == 4:
+                # Map each 4D step -> 7D by zero-filling rotations
+                for i in range(horizon):
+                    dx, dy, dz, grip = float(arr[i, 0]), float(arr[i, 1]), float(arr[i, 2]), float(arr[i, 3])
+                    steps.append(np.array([dx, dy, dz, 0.0, 0.0, 0.0, grip], dtype=np.float32))
+            else:
+                # Fallback: try to slice/pad to 7 per step
+                for i in range(horizon):
+                    vec = np.asarray(arr[i]).ravel()
+                    if vec.size >= 7:
+                        steps.append(vec[:7].astype(np.float32))
+                    else:
+                        pad = np.zeros((7 - vec.size,), dtype=np.float32)
+                        steps.append(np.concatenate([vec.astype(np.float32), pad], axis=0))
+        else:
+            # Case: 1D vector
+            vec = arr.ravel()
+            if vec.size == 7:
+                steps.append(vec.astype(np.float32))
+            elif vec.size == 4:
+                dx, dy, dz, grip = float(vec[0]), float(vec[1]), float(vec[2]), float(vec[3])
+                steps.append(np.array([dx, dy, dz, 0.0, 0.0, 0.0, grip], dtype=np.float32))
+            else:
+                if vec.size >= 7:
+                    steps.append(vec[:7].astype(np.float32))
+                else:
+                    pad = np.zeros((7 - vec.size,), dtype=np.float32)
+                    steps.append(np.concatenate([vec.astype(np.float32), pad], axis=0))
+
+        # Return the full action chunk to be consumed open-loop
+        return steps
     else:
         raise ValueError(f"Unsupported model family: {cfg.model_family}")
 
