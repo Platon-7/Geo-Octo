@@ -72,13 +72,13 @@ def get_config(config_string="full,language_conditioned"):
             learning_rate=dict(
                 name="cosine",
                 init_value=0.0,
-                peak_value=2e-6,
-                warmup_steps=5000,
+                peak_value=3e-4,
+                warmup_steps=2000,
                 decay_steps=max_steps,
                 end_value=0.0,
             ),
             weight_decay=0.01,
-            clip_gradient=0.1,
+            clip_gradient=1.0,
             frozen_keys=frozen_keys,
             grad_accumulation_steps=2,  # if you are using grad accumulation, you need to adjust max_steps accordingly
         ),
