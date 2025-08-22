@@ -67,17 +67,20 @@ def get_model(cfg: Any, wrap_diffusion_policy_for_droid: bool = False) -> Any:
     Raises:
         ValueError: If model family is not supported
     """
-    if cfg.model_family == "openvla":
+    # Support both dataclass-like and dict cfg
+    model_family = cfg.get("model_family") if isinstance(cfg, dict) else getattr(cfg, "model_family", None)
+    if model_family == "openvla":
         from evaluation.supporting_files.openvla_utils import get_vla
 
         model = get_vla(cfg)
-    elif cfg.model_family == "octo":
+    elif model_family == "octo":
         # Lazy import to avoid hard dependency if unused
         from octo.model.octo_model import OctoModel
 
-        model = OctoModel.load_pretrained(str(cfg.pretrained_checkpoint))
+        pretrained_checkpoint = cfg.get("pretrained_checkpoint") if isinstance(cfg, dict) else getattr(cfg, "pretrained_checkpoint", None)
+        model = OctoModel.load_pretrained(str(pretrained_checkpoint))
     else:
-        raise ValueError(f"Unsupported model family: {cfg.model_family}")
+        raise ValueError(f"Unsupported model family: {model_family}")
 
     print(f"Loaded model: {type(model)}")
     return model
@@ -99,10 +102,12 @@ def get_image_resize_size(cfg: Any) -> Union[int, tuple]:
     Raises:
         ValueError: If model family is not supported
     """
-    if cfg.model_family not in MODEL_IMAGE_SIZES:
-        raise ValueError(f"Unsupported model family: {cfg.model_family}")
+    # Support both dataclass-like and dict cfg
+    model_family = cfg.get("model_family") if isinstance(cfg, dict) else getattr(cfg, "model_family", None)
+    if model_family not in MODEL_IMAGE_SIZES:
+        raise ValueError(f"Unsupported model family: {model_family}")
 
-    return MODEL_IMAGE_SIZES[cfg.model_family]
+    return MODEL_IMAGE_SIZES[model_family]
 
 
 def resize_image_for_policy(image: np.ndarray, resize_size: Union[int, tuple]) -> np.ndarray:
