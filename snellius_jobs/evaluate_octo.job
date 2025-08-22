@@ -27,7 +27,9 @@ export NVRTC_LIB_DIR=$(python -c "import os,inspect,nvidia.cuda_nvrtc as nvrtc; 
 export PATH="$CUDA_NVCC_BIN:$PATH"
 export LD_LIBRARY_PATH="$NVRTC_LIB_DIR:$CONDA_PREFIX/lib:$LD_LIBRARY_PATH"
 export PYTHONPATH="/gpfs/home4/pkarageorgis/geo_octo:/gpfs/home4/pkarageorgis/geo_octo/LIBERO:/gpfs/home4/pkarageorgis/geo_octo/octo:$PYTHONPATH"
-
+export MUJOCO_GL=egl
+export TOKENIZERS_PARALLELISM=false
+export TF_CPP_MIN_LOG_LEVEL=3
 
 # GPU diagnostics (runs on the allocated GPU node)
 srun -n 1 python - <<'PY'
@@ -55,4 +57,9 @@ PY
 #   --base hf://rail-berkeley/octo-small-1.5 \
 #   --topk 30
 
-srun python -u /gpfs/home4/pkarageorgis/geo_octo/evaluation/scripts/run_libero_eval.py \
+srun python -m evaluation.scripts.run_libero_eval \
+  --model_family octo \
+  --pretrained_checkpoint "/gpfs/home4/pkarageorgis/geo_octo/octo/my_octo_vggt_model_offline/octo_vggt_finetune_staged/experiment_20250817_162546_SPATIAL_NO_VGGT" \
+  --task_suite_name libero_spatial \
+  --num_trials_per_task 1 \
+  --num_open_loop_steps 4

@@ -383,7 +383,7 @@ def main(_):
                     # Access the keys from the optimizer sub-config
                     frozen_keys_for_logging = config.optimizer.frozen_keys
 
-                analyze_gradients(grads, i, current_stage, frozen_keys_for_logging)
+                #analyze_gradients(grads, i, current_stage, frozen_keys_for_logging)
                 
             timer.tock("total")
 
@@ -406,12 +406,6 @@ def main(_):
             dataset_percent = (dataset_time / total_time) * 100
             train_percent = (train_time / total_time) * 100
 
-            # logging.info(
-            #     f"\n| Step {i+1} | "
-            #     f"Avg Step Time: {total_time:.4f}s | "
-            #     f"Data Loading: {dataset_time:.4f}s ({dataset_percent:.1f}%) | "
-            #     f"Model Training: {train_time:.4f}s ({train_percent:.1f}%) |\n"
-            # )
 
         if i % 50 == 0:  # Every 1000 steps
             
@@ -422,22 +416,12 @@ def main(_):
             # CPU/RAM usage
             cpu_percent = psutil.cpu_percent()
             memory = psutil.virtual_memory()
-            #print(f"Step {i}: CPU {cpu_percent}%, RAM {memory.percent}% ({memory.available/1024**3:.1f}GB free)")
-            
-            # # GPU usage
-            # try:
-            #     gpus = GPUtil.getGPUs()
-            #     for gpu in gpus:
-            #         print(f"  GPU {gpu.id}: {gpu.memoryUtil*100:.1f}% memory, {gpu.load*100:.1f}% util")
-            # except:
-            #     pass
     
         if i % 50 == 0:
             force_cleanup()
             
         if (i + 1) % config["eval_interval"] == 0:
             logging.info("Evaluating...")
-            # log_memory_usage(i, "BEFORE validation: ")
             
             # Lazily initialize the validation data iterator to save memory at startup
             if val_data_iter is None:

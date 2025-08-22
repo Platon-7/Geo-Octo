@@ -1,13 +1,21 @@
-"""
-run_libero_eval.py
+import sys
+import warnings
 
-Evaluates a trained policy in a LIBERO simulation benchmark task suite.
-"""
+# Add compatibility shim before importing anything else
+try:
+    import jax.numpy as jnp
+    if not hasattr(jnp, 'DeviceArray'):
+        jnp.DeviceArray = jnp.ndarray
+        print("[FIX] Added DeviceArray compatibility shim")
+except ImportError:
+    print("[WARNING] Could not import JAX")
+
+warnings.filterwarnings("ignore", category=DeprecationWarning, module="transformers")
+
+import logging
 
 import json
-import logging
 import os
-import sys
 from collections import deque
 from dataclasses import dataclass
 from enum import Enum
@@ -21,9 +29,12 @@ from libero.libero import benchmark
 
 import wandb
 
+
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
+
 # Append current directory so that interpreter can find experiments.robot
 sys.path.append("../..")
-from evaluation.scripts.libero_utils import (
+from evaluation.supporting_files.libero_utils import (
     get_libero_dummy_action,
     get_libero_env,
     get_libero_image,
@@ -31,23 +42,17 @@ from evaluation.scripts.libero_utils import (
     quat2axisangle,
     save_rollout_video,
 )
-from evaluation.scripts.openvla_utils import (
-    get_action_head,
-    get_noisy_action_projector,
-    get_processor,
-    get_proprio_projector,
-    resize_image_for_policy,
-)
-from evaluation.scripts.robot_utils import (
+from evaluation.supporting_files.robot_utils import (
     DATE_TIME,
     get_action,
     get_image_resize_size,
     get_model,
     invert_gripper_action,
     normalize_gripper_action,
+    resize_image_for_policy,
     set_seed_everywhere,
 )
-from evaluation.scripts.constants import NUM_ACTIONS_CHUNK
+from evaluation.supporting_files.constants import NUM_ACTIONS_CHUNK
 
 
 # Define task suite constants
@@ -76,6 +81,44 @@ logging.basicConfig(
     handlers=[logging.StreamHandler()],
 )
 logger = logging.getLogger(__name__)
+
+# After logging.basicConfig(...)
+
+# 1) Silence noisy libraries
+for name in ("octo", "octo.octo", "octo.utils", "octo.model", "flax", "transformers"):
+    lg = logging.getLogger(name)
+    lg.setLevel(logging.ERROR)
+    lg.propagate = False  # prevent bubbling to root
+
+# 2) Drop specific spam lines at root
+class DropNoisyOcto(logging.Filter):
+    DROP = (
+        "contains extra items compared to example_batch",
+        "is missing items compared to example_batch",
+        "No pad_mask_dict found",
+        "No task inputs matching image_primary were found",
+        "Skipping observation tokenizer: obs_wrist",
+        "repeating task tokens at each timestep",
+        "embodiment_action_dim is highly recommended",
+    )
+    def filter(self, record: logging.LogRecord) -> bool:
+        return not any(s in record.getMessage() for s in self.DROP)
+
+dropper = DropNoisyOcto()
+root = logging.getLogger()
+root.addFilter(dropper)
+for h in root.handlers:
+    h.addFilter(dropper)
+
+# 3) Reduce absl (used by JAX/Flax) verbosity
+try:
+    import absl.logging as absl_logging
+    absl_logging.set_verbosity(absl_logging.ERROR)
+except Exception:
+    pass
+
+# 4) Route warnings -> logging so they can be filtered
+logging.captureWarnings(True)
 
 
 @dataclass
@@ -150,26 +193,37 @@ def initialize_model(cfg: GenerateConfig):
 
     # Load proprio projector if needed
     proprio_projector = None
-    if cfg.use_proprio:
+    # Only applicable for OpenVLA
+    if cfg.model_family == "openvla" and cfg.use_proprio:
+        from evaluation.supporting_files.openvla_utils import get_proprio_projector
+
         proprio_projector = get_proprio_projector(
             cfg,
-            model.llm_dim,
+            getattr(model, "llm_dim", None),
             proprio_dim=8,  # 8-dimensional proprio for LIBERO
         )
 
     # Load action head if needed
     action_head = None
-    if cfg.use_l1_regression or cfg.use_diffusion:
-        action_head = get_action_head(cfg, model.llm_dim)
+    # Only applicable for OpenVLA
+    if cfg.model_family == "openvla" and (cfg.use_l1_regression or cfg.use_diffusion):
+        from evaluation.supporting_files.openvla_utils import get_action_head
+
+        action_head = get_action_head(cfg, getattr(model, "llm_dim", None))
 
     # Load noisy action projector if using diffusion
     noisy_action_projector = None
-    if cfg.use_diffusion:
-        noisy_action_projector = get_noisy_action_projector(cfg, model.llm_dim)
+    # Only applicable for OpenVLA
+    if cfg.model_family == "openvla" and cfg.use_diffusion:
+        from evaluation.supporting_files.openvla_utils import get_noisy_action_projector
+
+        noisy_action_projector = get_noisy_action_projector(cfg, getattr(model, "llm_dim", None))
 
     # Get OpenVLA processor if needed
     processor = None
     if cfg.model_family == "openvla":
+        from evaluation.supporting_files.openvla_utils import get_processor
+
         processor = get_processor(cfg)
         check_unnorm_key(cfg, model)
 
@@ -264,13 +318,15 @@ def prepare_observation(obs, resize_size):
 
 def process_action(action, model_family):
     """Process action before sending to environment."""
-    # Normalize gripper action [0,1] -> [-1,+1] because the environment expects the latter
-    action = normalize_gripper_action(action, binarize=True)
-
-    # [OpenVLA] The dataloader flips the sign of the gripper action to align with other datasets
-    # (0 = close, 1 = open), so flip it back (-1 = open, +1 = close) before executing the action
+    # For OpenVLA, the dataset gripper is [0,1] so normalize and invert
     if model_family == "openvla":
+        action = normalize_gripper_action(action, binarize=True)
         action = invert_gripper_action(action)
+    else:
+        # For other models (e.g., Octo), assume actions are already in [-1, 1]
+        # and simply clip to safety bounds.
+        action = np.asarray(action, dtype=np.float32)
+        action = np.clip(action, -1.0, 1.0)
 
     return action
 
@@ -469,6 +525,21 @@ def eval_libero(cfg: GenerateConfig) -> float:
 
     # Initialize model and components
     model, action_head, proprio_projector, noisy_action_projector, processor = initialize_model(cfg)
+    
+    try:
+        mcfg = model.config  # <- don't overwrite cfg
+        print("[DEBUG] top keys:", list(mcfg.keys()))
+        obs_tok = mcfg.get("model", {}).get("observation_tokenizers") or mcfg.get("observation_tokenizers")
+        print("[DEBUG] obs tokenizers:", list((obs_tok or {}).keys()))
+        heads = mcfg.get("heads") or mcfg.get("model", {}).get("heads")
+        act_dim = None
+        if isinstance(heads, dict):
+            act = heads.get("action", {})
+            if isinstance(act, dict):
+                act_dim = act.get("dim") or act.get("readout_dim")
+        print("[DEBUG] action head dim (from config):", act_dim)
+    except Exception as e:
+        print("[DEBUG] config introspection error:", e)
 
     # Get expected image dimensions
     resize_size = get_image_resize_size(cfg)

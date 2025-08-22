@@ -1,17 +1,13 @@
-"""Utils for evaluating robot policies in various environments."""
-
 import os
 import random
 import time
 from typing import Any, Dict, List, Optional, Union
+from collections import deque
 
 import numpy as np
 import torch
 
-from evaluation.scripts.openvla_utils import (
-    get_vla,
-    get_vla_action,
-)
+# Avoid importing OpenVLA utilities at module import time to keep Octo-only usage light.
 
 # Initialize important constants
 ACTION_DIM = 7
@@ -31,8 +27,12 @@ OPENVLA_V01_SYSTEM_PROMPT = (
 # Model image size configuration
 MODEL_IMAGE_SIZES = {
     "openvla": 224,
-    # Add other models as needed
+    "octo": 224,
 }
+
+# Maintain short histories to provide a true 2-frame window without changing callers
+IMAGE_HISTORY: deque = deque(maxlen=2)
+PROPRIO_HISTORY: deque = deque(maxlen=2)
 
 
 def set_seed_everywhere(seed: int) -> None:
@@ -51,7 +51,7 @@ def set_seed_everywhere(seed: int) -> None:
     os.environ["PYTHONHASHSEED"] = str(seed)
 
 
-def get_model(cfg: Any, wrap_diffusion_policy_for_droid: bool = False) -> torch.nn.Module:
+def get_model(cfg: Any, wrap_diffusion_policy_for_droid: bool = False) -> Any:
     """
     Load and initialize model for evaluation based on configuration.
 
@@ -65,10 +65,20 @@ def get_model(cfg: Any, wrap_diffusion_policy_for_droid: bool = False) -> torch.
     Raises:
         ValueError: If model family is not supported
     """
-    if cfg.model_family == "openvla":
+    # Support both dataclass-like and dict cfg
+    model_family = cfg.get("model_family") if isinstance(cfg, dict) else getattr(cfg, "model_family", None)
+    if model_family == "openvla":
+        from evaluation.supporting_files.openvla_utils import get_vla
+
         model = get_vla(cfg)
+    elif model_family == "octo":
+        # Lazy import to avoid hard dependency if unused
+        from octo.model.octo_model import OctoModel
+
+        pretrained_checkpoint = cfg.get("pretrained_checkpoint") if isinstance(cfg, dict) else getattr(cfg, "pretrained_checkpoint", None)
+        model = OctoModel.load_pretrained(str(pretrained_checkpoint))
     else:
-        raise ValueError(f"Unsupported model family: {cfg.model_family}")
+        raise ValueError(f"Unsupported model family: {model_family}")
 
     print(f"Loaded model: {type(model)}")
     return model
@@ -90,10 +100,37 @@ def get_image_resize_size(cfg: Any) -> Union[int, tuple]:
     Raises:
         ValueError: If model family is not supported
     """
-    if cfg.model_family not in MODEL_IMAGE_SIZES:
-        raise ValueError(f"Unsupported model family: {cfg.model_family}")
+    # Support both dataclass-like and dict cfg
+    model_family = cfg.get("model_family") if isinstance(cfg, dict) else getattr(cfg, "model_family", None)
+    if model_family not in MODEL_IMAGE_SIZES:
+        raise ValueError(f"Unsupported model family: {model_family}")
 
-    return MODEL_IMAGE_SIZES[cfg.model_family]
+    return MODEL_IMAGE_SIZES[model_family]
+
+
+def resize_image_for_policy(image: np.ndarray, resize_size: Union[int, tuple]) -> np.ndarray:
+    """
+    Resize an HxWxC image to the expected policy input resolution.
+
+    Uses OpenCV if available; falls back to NumPy/PIL-style nearest if not.
+    """
+    try:
+        import cv2  # type: ignore
+
+        if isinstance(resize_size, int):
+            target = (resize_size, resize_size)
+        else:
+            target = (int(resize_size[1]), int(resize_size[0])) if len(resize_size) == 2 else tuple(resize_size)
+        return cv2.resize(image, target, interpolation=cv2.INTER_LINEAR)
+    except Exception:
+        # Fallback: simple PIL resize
+        from PIL import Image
+
+        if isinstance(resize_size, int):
+            target = (resize_size, resize_size)
+        else:
+            target = (int(resize_size[1]), int(resize_size[0])) if len(resize_size) == 2 else tuple(resize_size)
+        return np.array(Image.fromarray(image).resize(target, Image.BILINEAR))
 
 
 def get_action(
@@ -127,8 +164,10 @@ def get_action(
     Raises:
         ValueError: If model family is not supported
     """
-    with torch.no_grad():
-        if cfg.model_family == "openvla":
+    if cfg.model_family == "openvla":
+        from evaluation.supporting_files.openvla_utils import get_vla_action
+
+        with torch.no_grad():
             action = get_vla_action(
                 cfg=cfg,
                 vla=model,
@@ -140,10 +179,126 @@ def get_action(
                 noisy_action_projector=noisy_action_projector,
                 use_film=use_film,
             )
-        else:
-            raise ValueError(f"Unsupported model family: {cfg.model_family}")
+        return action
+    elif cfg.model_family == "octo":
+        # Build Octo observation and sample a single-step action
+        import jax
 
-    return action
+        # Prepare observation dict
+        image = obs["full_image"]
+        resize_size = MODEL_IMAGE_SIZES.get("octo", 224)
+        if image.shape[0] != resize_size or image.shape[1] != resize_size:
+            image = resize_image_for_policy(image, resize_size)
+
+        # Update image history and build a true 2-frame stack
+        IMAGE_HISTORY.append(image)
+        if len(IMAGE_HISTORY) == 1:
+            # duplicate first frame to fill window
+            IMAGE_HISTORY.append(image)
+        image_stack = np.stack(list(IMAGE_HISTORY), axis=0)  # (2, H, W, 3)
+
+        # Optional proprioception (7-dim expected by this checkpoint)
+        proprio_dim = 7
+        if "state" in obs and obs["state"] is not None:
+            state_vec = np.asarray(obs["state"], dtype=np.float32)
+            if state_vec.shape[-1] < proprio_dim:
+                pad = np.zeros((proprio_dim - state_vec.shape[-1],), dtype=np.float32)
+                state_vec = np.concatenate([state_vec, pad], axis=-1)
+            elif state_vec.shape[-1] > proprio_dim:
+                state_vec = state_vec[:proprio_dim]
+            PROPRIO_HISTORY.append(state_vec)
+        else:
+            PROPRIO_HISTORY.append(np.zeros((proprio_dim,), dtype=np.float32))
+        if len(PROPRIO_HISTORY) == 1:
+            PROPRIO_HISTORY.append(PROPRIO_HISTORY[0])
+        proprio_stack = np.stack(list(PROPRIO_HISTORY), axis=0)  # (2, D)
+
+        observation = {
+            "image_primary": image_stack[np.newaxis, ...],  # (1, 2, H, W, 3)
+            "timestep": np.array([[0, 1]], dtype=np.int32),
+            # Shape (1, 2, 4): binary flags for per-step done signals; we set all False
+            "task_completed": np.zeros((1, 2, 4), dtype=bool),
+            "timestep_pad_mask": np.array([[True, True]], dtype=bool),
+            "pad_mask_dict": {
+                "image_primary": np.array([[True, True]], dtype=bool),
+                "timestep": np.array([[True, True]], dtype=bool),
+                "proprio": np.array([[True, True]], dtype=bool),
+            },
+            "proprio": proprio_stack[np.newaxis, ...],  # (1, 2, D)
+        }
+
+        # Task construction (language-conditioned). Use input_ids directly and add pad mask
+        _raw_task = model.create_tasks(texts=[task_label])
+        task = dict(_raw_task)
+        ids = None
+        lang = task.get("language_instruction")
+        if isinstance(lang, dict) and "input_ids" in lang:
+            ids = lang["input_ids"]
+        elif "language_instruction/input_ids" in task:
+            ids = task["language_instruction/input_ids"]
+        elif isinstance(lang, (np.ndarray, list)):
+            ids = lang
+        if ids is not None:
+            ids = np.asarray(ids, dtype=np.int32)
+            task["language_instruction"] = ids
+            # Build a pad mask for language if not present
+            pad_mask = np.ones(ids.shape[:-1] if ids.ndim > 1 else (1,), dtype=bool)
+            pad_dict = task.get("pad_mask_dict", {})
+            pad_dict["language_instruction"] = pad_mask
+            task["pad_mask_dict"] = pad_dict
+            # Drop flattened extras to avoid conflicting paths
+            task.pop("language_instruction/input_ids", None)
+            task.pop("language_instruction/attention_mask", None)
+
+        # Sample action
+        action = model.sample_actions(observation, task, rng=jax.random.PRNGKey(0))
+
+        # Convert to numpy and squeeze leading singleton dims
+        arr = np.array(action)
+        while arr.ndim > 1 and arr.shape[0] == 1:
+            arr = arr[0]
+
+        steps: List[np.ndarray] = []
+        # Case: 2D array (horizon, dim)
+        if arr.ndim == 2:
+            horizon, dim = arr.shape
+            if dim == 7:
+                # Already 7D per step
+                for i in range(horizon):
+                    steps.append(arr[i].astype(np.float32))
+            elif dim == 4:
+                # Map each 4D step -> 7D by zero-filling rotations
+                for i in range(horizon):
+                    dx, dy, dz, grip = float(arr[i, 0]), float(arr[i, 1]), float(arr[i, 2]), float(arr[i, 3])
+                    steps.append(np.array([dx, dy, dz, 0.0, 0.0, 0.0, grip], dtype=np.float32))
+            else:
+                # Fallback: try to slice/pad to 7 per step
+                for i in range(horizon):
+                    vec = np.asarray(arr[i]).ravel()
+                    if vec.size >= 7:
+                        steps.append(vec[:7].astype(np.float32))
+                    else:
+                        pad = np.zeros((7 - vec.size,), dtype=np.float32)
+                        steps.append(np.concatenate([vec.astype(np.float32), pad], axis=0))
+        else:
+            # Case: 1D vector
+            vec = arr.ravel()
+            if vec.size == 7:
+                steps.append(vec.astype(np.float32))
+            elif vec.size == 4:
+                dx, dy, dz, grip = float(vec[0]), float(vec[1]), float(vec[2]), float(vec[3])
+                steps.append(np.array([dx, dy, dz, 0.0, 0.0, 0.0, grip], dtype=np.float32))
+            else:
+                if vec.size >= 7:
+                    steps.append(vec[:7].astype(np.float32))
+                else:
+                    pad = np.zeros((7 - vec.size,), dtype=np.float32)
+                    steps.append(np.concatenate([vec.astype(np.float32), pad], axis=0))
+
+        # Return the full action chunk to be consumed open-loop
+        return steps
+    else:
+        raise ValueError(f"Unsupported model family: {cfg.model_family}")
 
 
 def normalize_gripper_action(action: np.ndarray, binarize: bool = True) -> np.ndarray:
