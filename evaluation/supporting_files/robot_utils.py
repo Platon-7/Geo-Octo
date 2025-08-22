@@ -32,6 +32,14 @@ MODEL_IMAGE_SIZES = {
     "octo": 224,
 }
 
+# Simple control shaping defaults
+TRANS_GAIN_XY = 2.0
+TRANS_GAIN_Z = 3.0
+ROT_GAIN = 1.0
+TRANS_CLAMP = 0.03   # meters per step cap
+ROT_CLAMP = 0.10     # radians per step cap
+SMOOTH_ALPHA = 0.5   # within-chunk smoothing
+
 # Maintain short histories to provide a true 2-frame window without changing callers
 IMAGE_HISTORY: deque = deque(maxlen=2)
 PROPRIO_HISTORY: deque = deque(maxlen=2)
@@ -297,8 +305,28 @@ def get_action(
                     pad = np.zeros((7 - vec.size,), dtype=np.float32)
                     steps.append(np.concatenate([vec.astype(np.float32), pad], axis=0))
 
-        # Return the full action chunk to be consumed open-loop
-        return steps
+        # Apply simple shaping: gains, clamps, and within-chunk smoothing
+        shaped: List[np.ndarray] = []
+        prev = None
+        for s in steps:
+            dx, dy, dz, rx, ry, rz, gr = [float(x) for x in s]
+            # Gains
+            dx *= TRANS_GAIN_XY; dy *= TRANS_GAIN_XY; dz *= TRANS_GAIN_Z
+            rx *= ROT_GAIN; ry *= ROT_GAIN; rz *= ROT_GAIN
+            # Clamp
+            dx = float(np.clip(dx, -TRANS_CLAMP, TRANS_CLAMP))
+            dy = float(np.clip(dy, -TRANS_CLAMP, TRANS_CLAMP))
+            dz = float(np.clip(dz, -TRANS_CLAMP, TRANS_CLAMP))
+            rx = float(np.clip(rx, -ROT_CLAMP, ROT_CLAMP))
+            ry = float(np.clip(ry, -ROT_CLAMP, ROT_CLAMP))
+            rz = float(np.clip(rz, -ROT_CLAMP, ROT_CLAMP))
+            cur = np.array([dx, dy, dz, rx, ry, rz, gr], dtype=np.float32)
+            if prev is not None and 0.0 < SMOOTH_ALPHA < 1.0:
+                cur = (SMOOTH_ALPHA * prev + (1.0 - SMOOTH_ALPHA) * cur).astype(np.float32)
+            shaped.append(cur)
+            prev = cur
+
+        return shaped
     else:
         raise ValueError(f"Unsupported model family: {cfg.model_family}")
 
