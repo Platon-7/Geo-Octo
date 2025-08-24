@@ -27,7 +27,7 @@ OPENVLA_V01_SYSTEM_PROMPT = (
 # Model image size configuration
 MODEL_IMAGE_SIZES = {
     "openvla": 224,
-    "octo": 224,
+    "octo": 256,  # fallback only; actual size inferred from model.example_batch when available
 }
 
 # Maintain short histories to provide a true 2-frame window without changing callers
