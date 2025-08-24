@@ -1,5 +1,7 @@
 import sys
 import warnings
+import json
+import numpy as np
 
 # Add compatibility shim before importing anything else
 try:
@@ -12,9 +14,16 @@ except ImportError:
 
 warnings.filterwarnings("ignore", category=DeprecationWarning, module="transformers")
 
+# 1. Load the statistics
+stats_path = "/home/pkarageorgis/geo_octo/libero_datasets/unified_stats/unified_dataset_statistics_libero_spatial_no_vggt.json"
+with open(stats_path, 'r') as f:
+    dataset_statistics = json.load(f)
+
+action_mean = np.array(dataset_statistics['action']['mean'])
+action_std = np.array(dataset_statistics['action']['std'])
+
 import logging
 
-import json
 import os
 from collections import deque
 from dataclasses import dataclass
@@ -23,7 +32,6 @@ from pathlib import Path
 from typing import Optional, Union
 
 import draccus
-import numpy as np
 import tqdm
 from libero.libero import benchmark
 
@@ -45,11 +53,9 @@ from evaluation.supporting_files.libero_utils import (
 from evaluation.supporting_files.robot_utils import (
     DATE_TIME,
     get_action,
-    get_image_resize_size,
     get_model,
     invert_gripper_action,
     normalize_gripper_action,
-    resize_image_for_policy,
     set_seed_everywhere,
 )
 from evaluation.supporting_files.constants import NUM_ACTIONS_CHUNK
@@ -130,6 +136,7 @@ class GenerateConfig:
     #################################################################################################################
     model_family: str = "openvla"                    # Model family
     pretrained_checkpoint: Union[str, Path] = ""     # Pretrained checkpoint path
+    checkpoint_step: Optional[int] = None            # Optional checkpoint step to load (latest if None)
 
     use_l1_regression: bool = True                   # If True, uses continuous action head with L1 regression objective
     use_diffusion: bool = False                      # If True, uses continuous action head with diffusion modeling objective (DDIM)
@@ -294,20 +301,16 @@ def load_initial_states(cfg: GenerateConfig, task_suite, task_id: int, log_file=
         return initial_states, None
 
 
-def prepare_observation(obs, resize_size):
+def prepare_observation(obs):
     """Prepare observation for policy input."""
     # Get preprocessed images
     img = get_libero_image(obs)
     wrist_img = get_libero_wrist_image(obs)
 
-    # Resize images to size expected by model
-    img_resized = resize_image_for_policy(img, resize_size)
-    wrist_img_resized = resize_image_for_policy(wrist_img, resize_size)
-
     # Prepare observations dict
     observation = {
-        "full_image": img_resized,
-        "wrist_image": wrist_img_resized,
+        "full_image": img,
+        "wrist_image": wrist_img,
         "state": np.concatenate(
             (obs["robot0_eef_pos"], quat2axisangle(obs["robot0_eef_quat"]), obs["robot0_gripper_qpos"])
         ),
@@ -316,19 +319,27 @@ def prepare_observation(obs, resize_size):
     return observation, img  # Return both processed observation and original image for replay
 
 
-def process_action(action, model_family):
+def process_action(action, model_family, action_mean=None, action_std=None):
     """Process action before sending to environment."""
     # For OpenVLA, the dataset gripper is [0,1] so normalize and invert
     if model_family == "openvla":
         action = normalize_gripper_action(action, binarize=True)
         action = invert_gripper_action(action)
+    elif model_family == "octo":
+        if action_mean is None or action_std is None:
+            raise ValueError("Action statistics (mean, std) must be provided for Octo model evaluation!")
+            
+        # The model outputs a normalized action. Let's un-normalize it.
+        # Make sure the shapes match. The stats are for 7-dim actions.
+        action_mean = action_mean[:action.shape[-1]]
+        action_std = action_std[:action.shape[-1]]
+        
+        unnormalized_action = (action * action_std) + action_mean
+        return unnormalized_action
+    
     else:
-        # For other models (e.g., Octo), assume actions are already in [-1, 1]
-        # and simply clip to safety bounds.
-        action = np.asarray(action, dtype=np.float32)
-        action = np.clip(action, -1.0, 1.0)
-
-    return action
+        # Fallback for other models if needed
+        return np.clip(np.asarray(action, dtype=np.float32), -1.0, 1.0)
 
 
 def run_episode(
@@ -336,7 +347,6 @@ def run_episode(
     env,
     task_description: str,
     model,
-    resize_size,
     processor=None,
     action_head=None,
     proprio_projector=None,
@@ -377,7 +387,7 @@ def run_episode(
                 continue
 
             # Prepare observation
-            observation, img = prepare_observation(obs, resize_size)
+            observation, img = prepare_observation(obs)
             replay_images.append(img)
 
             # If action queue is empty, requery model
@@ -400,7 +410,7 @@ def run_episode(
             action = action_queue.popleft()
 
             # Process action
-            action = process_action(action, cfg.model_family)
+            action = process_action(action, cfg.model_family, action_mean, action_std)
 
             # Execute action in environment
             obs, reward, done, info = env.step(action.tolist())
@@ -420,7 +430,6 @@ def run_task(
     task_suite,
     task_id: int,
     model,
-    resize_size,
     processor=None,
     action_head=None,
     proprio_projector=None,
@@ -437,7 +446,7 @@ def run_task(
     initial_states, all_initial_states = load_initial_states(cfg, task_suite, task_id, log_file)
 
     # Initialize environment and get task description
-    env, task_description = get_libero_env(task, cfg.model_family, resolution=cfg.env_img_res)
+    env, task_description = get_libero_env(task, cfg.model_family, cfg.env_img_res)
 
     # Start episodes
     task_episodes, task_successes = 0, 0
@@ -469,7 +478,6 @@ def run_task(
             env,
             task_description,
             model,
-            resize_size,
             processor,
             action_head,
             proprio_projector,
@@ -541,9 +549,6 @@ def eval_libero(cfg: GenerateConfig) -> float:
     except Exception as e:
         print("[DEBUG] config introspection error:", e)
 
-    # Get expected image dimensions
-    resize_size = get_image_resize_size(cfg)
-
     # Setup logging
     log_file, local_log_filepath, run_id = setup_logging(cfg)
 
@@ -562,7 +567,6 @@ def eval_libero(cfg: GenerateConfig) -> float:
             task_suite,
             task_id,
             model,
-            resize_size,
             processor,
             action_head,
             proprio_projector,

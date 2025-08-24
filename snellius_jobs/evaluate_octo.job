@@ -61,5 +61,6 @@ srun python -m evaluation.scripts.run_libero_eval \
   --model_family octo \
   --pretrained_checkpoint "/gpfs/home4/pkarageorgis/geo_octo/octo/my_octo_vggt_model_offline/octo_finetune_baseline/experiment_20250823_115519" \
   --task_suite_name libero_spatial \
+  --checkpoint_step 50000 \
   --num_trials_per_task 1 \
   --num_open_loop_steps 4

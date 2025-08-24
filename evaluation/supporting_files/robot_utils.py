@@ -27,7 +27,7 @@ OPENVLA_V01_SYSTEM_PROMPT = (
 # Model image size configuration
 MODEL_IMAGE_SIZES = {
     "openvla": 224,
-    "octo": 224,
+    "octo": 256,  # fallback only; actual size inferred from model.example_batch when available
 }
 
 # Maintain short histories to provide a true 2-frame window without changing callers
@@ -76,7 +76,11 @@ def get_model(cfg: Any, wrap_diffusion_policy_for_droid: bool = False) -> Any:
         from octo.model.octo_model import OctoModel
 
         pretrained_checkpoint = cfg.get("pretrained_checkpoint") if isinstance(cfg, dict) else getattr(cfg, "pretrained_checkpoint", None)
-        model = OctoModel.load_pretrained(str(pretrained_checkpoint))
+        checkpoint_step = cfg.get("checkpoint_step") if isinstance(cfg, dict) else getattr(cfg, "checkpoint_step", None)
+        if checkpoint_step is not None:
+            model = OctoModel.load_pretrained(str(pretrained_checkpoint), step=int(checkpoint_step))
+        else:
+            model = OctoModel.load_pretrained(str(pretrained_checkpoint))
     else:
         raise ValueError(f"Unsupported model family: {model_family}")
 
@@ -84,7 +88,7 @@ def get_model(cfg: Any, wrap_diffusion_policy_for_droid: bool = False) -> Any:
     return model
 
 
-def get_image_resize_size(cfg: Any) -> Union[int, tuple]:
+def get_image_resize_size(cfg: Any, model: Optional[Any] = None) -> Union[int, tuple]:
     """
     Get image resize dimensions for a specific model.
 
@@ -93,6 +97,7 @@ def get_image_resize_size(cfg: Any) -> Union[int, tuple]:
 
     Args:
         cfg: Configuration object with model parameters
+        model: Optional loaded model to introspect exact expected HxW
 
     Returns:
         Union[int, tuple]: Image resize dimensions
@@ -104,6 +109,23 @@ def get_image_resize_size(cfg: Any) -> Union[int, tuple]:
     model_family = cfg.get("model_family") if isinstance(cfg, dict) else getattr(cfg, "model_family", None)
     if model_family not in MODEL_IMAGE_SIZES:
         raise ValueError(f"Unsupported model family: {model_family}")
+
+    # If we have a loaded Octo model, infer exact expected size from example_batch
+    if model_family == "octo" and model is not None:
+        try:
+            ex = model.example_batch["observation"].get("image_primary")
+            if ex is not None and ex.ndim >= 5:
+                # (B, T, H, W, C)
+                return int(ex.shape[2]), int(ex.shape[3])
+        except Exception:
+            pass
+        # fallback to 256 if present in config, else default mapping
+        try:
+            # Some finetune scripts add top-level window_size; image size lives in tokenizer but not always present
+            size = int(MODEL_IMAGE_SIZES.get("octo", 224))
+            return size
+        except Exception:
+            return MODEL_IMAGE_SIZES[model_family]
 
     return MODEL_IMAGE_SIZES[model_family]
 
@@ -184,118 +206,87 @@ def get_action(
         # Build Octo observation and sample a single-step action
         import jax
 
-        # Prepare observation dict
+        # Read expected window and image size from the model's example batch
+        expected_window = 1
+        target_h, target_w = None, None
+        try:
+            ex = model.example_batch["observation"]["image_primary"]
+            if ex.ndim >= 5:
+                expected_window = int(ex.shape[1])
+                target_h, target_w = int(ex.shape[2]), int(ex.shape[3])
+        except Exception:
+            pass
+
+        # Maintain minimal histories only to satisfy window requirements
+        global IMAGE_HISTORY, PROPRIO_HISTORY
+        if getattr(IMAGE_HISTORY, "maxlen", None) != expected_window:
+            IMAGE_HISTORY = deque(list(IMAGE_HISTORY), maxlen=expected_window)
+        if getattr(PROPRIO_HISTORY, "maxlen", None) != expected_window:
+            PROPRIO_HISTORY = deque(list(PROPRIO_HISTORY), maxlen=expected_window)
+
+        # Use env images directly (assumed already correct resolution from env setup)
         image = obs["full_image"]
-        resize_size = MODEL_IMAGE_SIZES.get("octo", 224)
-        if image.shape[0] != resize_size or image.shape[1] != resize_size:
-            image = resize_image_for_policy(image, resize_size)
-
-        # Update image history and build a true 2-frame stack
         IMAGE_HISTORY.append(image)
-        if len(IMAGE_HISTORY) == 1:
-            # duplicate first frame to fill window
+        while len(IMAGE_HISTORY) < expected_window:
             IMAGE_HISTORY.append(image)
-        image_stack = np.stack(list(IMAGE_HISTORY), axis=0)  # (2, H, W, 3)
+        image_stack = np.stack(list(IMAGE_HISTORY), axis=0)  # (T, H, W, 3)
 
-        # Optional proprioception (7-dim expected by this checkpoint)
+        # Minimal proprio handling: accept provided state, clip/pad to 7 dims expected by checkpoint
         proprio_dim = 7
         if "state" in obs and obs["state"] is not None:
-            state_vec = np.asarray(obs["state"], dtype=np.float32)
-            if state_vec.shape[-1] < proprio_dim:
-                pad = np.zeros((proprio_dim - state_vec.shape[-1],), dtype=np.float32)
-                state_vec = np.concatenate([state_vec, pad], axis=-1)
-            elif state_vec.shape[-1] > proprio_dim:
+            state_vec = np.asarray(obs["state"], dtype=np.float32).reshape(-1)
+            if state_vec.shape[-1] >= proprio_dim:
                 state_vec = state_vec[:proprio_dim]
+            else:
+                state_vec = np.pad(state_vec, (0, proprio_dim - state_vec.shape[-1]))
             PROPRIO_HISTORY.append(state_vec)
         else:
             PROPRIO_HISTORY.append(np.zeros((proprio_dim,), dtype=np.float32))
-        if len(PROPRIO_HISTORY) == 1:
-            PROPRIO_HISTORY.append(PROPRIO_HISTORY[0])
-        proprio_stack = np.stack(list(PROPRIO_HISTORY), axis=0)  # (2, D)
+        while len(PROPRIO_HISTORY) < expected_window:
+            PROPRIO_HISTORY.append(PROPRIO_HISTORY[-1])
+        proprio_stack = np.stack(list(PROPRIO_HISTORY), axis=0)  # (T, D)
 
+        # Build observation dict matching model.example_batch keys and shapes
+        T = expected_window
         observation = {
-            "image_primary": image_stack[np.newaxis, ...],  # (1, 2, H, W, 3)
-            "timestep": np.array([[0, 1]], dtype=np.int32),
-            # Shape (1, 2, 4): binary flags for per-step done signals; we set all False
-            "task_completed": np.zeros((1, 2, 4), dtype=bool),
-            "timestep_pad_mask": np.array([[True, True]], dtype=bool),
+            "image_primary": image_stack[np.newaxis, ...],  # (1, T, H, W, 3)
+            "timestep": np.arange(T, dtype=np.int32)[np.newaxis, ...],
+            "task_completed": np.zeros((1, T, 4), dtype=bool),
+            "timestep_pad_mask": np.ones((1, T), dtype=bool),
             "pad_mask_dict": {
-                "image_primary": np.array([[True, True]], dtype=bool),
-                "timestep": np.array([[True, True]], dtype=bool),
-                "proprio": np.array([[True, True]], dtype=bool),
+                "image_primary": np.ones((1, T), dtype=bool),
+                "timestep": np.ones((1, T), dtype=bool),
+                "proprio": np.ones((1, T), dtype=bool),
             },
-            "proprio": proprio_stack[np.newaxis, ...],  # (1, 2, D)
+            "proprio": proprio_stack[np.newaxis, ...],  # (1, T, D)
         }
 
-        # Task construction (language-conditioned). Use input_ids directly and add pad mask
-        _raw_task = model.create_tasks(texts=[task_label])
-        task = dict(_raw_task)
-        ids = None
-        lang = task.get("language_instruction")
-        if isinstance(lang, dict) and "input_ids" in lang:
-            ids = lang["input_ids"]
-        elif "language_instruction/input_ids" in task:
-            ids = task["language_instruction/input_ids"]
-        elif isinstance(lang, (np.ndarray, list)):
-            ids = lang
-        if ids is not None:
-            ids = np.asarray(ids, dtype=np.int32)
-            task["language_instruction"] = ids
-            # Build a pad mask for language if not present
-            pad_mask = np.ones(ids.shape[:-1] if ids.ndim > 1 else (1,), dtype=bool)
-            pad_dict = task.get("pad_mask_dict", {})
-            pad_dict["language_instruction"] = pad_mask
-            task["pad_mask_dict"] = pad_dict
-            # Drop flattened extras to avoid conflicting paths
-            task.pop("language_instruction/input_ids", None)
-            task.pop("language_instruction/attention_mask", None)
+        # Construct task using model's text processor; do not override representation
+        task = model.create_tasks(texts=[task_label])
 
         # Sample action
         action = model.sample_actions(observation, task, rng=jax.random.PRNGKey(0))
 
-        # Convert to numpy and squeeze leading singleton dims
+        # Convert to numpy and normalize output to a list of 7D steps
         arr = np.array(action)
         while arr.ndim > 1 and arr.shape[0] == 1:
             arr = arr[0]
 
         steps: List[np.ndarray] = []
-        # Case: 2D array (horizon, dim)
         if arr.ndim == 2:
-            horizon, dim = arr.shape
-            if dim == 7:
-                # Already 7D per step
-                for i in range(horizon):
-                    steps.append(arr[i].astype(np.float32))
-            elif dim == 4:
-                # Map each 4D step -> 7D by zero-filling rotations
-                for i in range(horizon):
-                    dx, dy, dz, grip = float(arr[i, 0]), float(arr[i, 1]), float(arr[i, 2]), float(arr[i, 3])
-                    steps.append(np.array([dx, dy, dz, 0.0, 0.0, 0.0, grip], dtype=np.float32))
-            else:
-                # Fallback: try to slice/pad to 7 per step
-                for i in range(horizon):
-                    vec = np.asarray(arr[i]).ravel()
-                    if vec.size >= 7:
-                        steps.append(vec[:7].astype(np.float32))
-                    else:
-                        pad = np.zeros((7 - vec.size,), dtype=np.float32)
-                        steps.append(np.concatenate([vec.astype(np.float32), pad], axis=0))
-        else:
-            # Case: 1D vector
-            vec = arr.ravel()
-            if vec.size == 7:
-                steps.append(vec.astype(np.float32))
-            elif vec.size == 4:
-                dx, dy, dz, grip = float(vec[0]), float(vec[1]), float(vec[2]), float(vec[3])
-                steps.append(np.array([dx, dy, dz, 0.0, 0.0, 0.0, grip], dtype=np.float32))
-            else:
+            for i in range(arr.shape[0]):
+                vec = np.asarray(arr[i]).ravel()
                 if vec.size >= 7:
                     steps.append(vec[:7].astype(np.float32))
                 else:
-                    pad = np.zeros((7 - vec.size,), dtype=np.float32)
-                    steps.append(np.concatenate([vec.astype(np.float32), pad], axis=0))
+                    steps.append(np.pad(vec.astype(np.float32), (0, 7 - vec.size)))
+        else:
+            vec = np.asarray(arr).ravel()
+            if vec.size >= 7:
+                steps.append(vec[:7].astype(np.float32))
+            else:
+                steps.append(np.pad(vec.astype(np.float32), (0, 7 - vec.size)))
 
-        # Return the full action chunk to be consumed open-loop
         return steps
     else:
         raise ValueError(f"Unsupported model family: {cfg.model_family}")
