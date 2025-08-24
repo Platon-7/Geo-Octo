@@ -84,7 +84,7 @@ def get_model(cfg: Any, wrap_diffusion_policy_for_droid: bool = False) -> Any:
     return model
 
 
-def get_image_resize_size(cfg: Any) -> Union[int, tuple]:
+def get_image_resize_size(cfg: Any, model: Optional[Any] = None) -> Union[int, tuple]:
     """
     Get image resize dimensions for a specific model.
 
@@ -93,6 +93,7 @@ def get_image_resize_size(cfg: Any) -> Union[int, tuple]:
 
     Args:
         cfg: Configuration object with model parameters
+        model: Optional loaded model to introspect exact expected HxW
 
     Returns:
         Union[int, tuple]: Image resize dimensions
@@ -104,6 +105,23 @@ def get_image_resize_size(cfg: Any) -> Union[int, tuple]:
     model_family = cfg.get("model_family") if isinstance(cfg, dict) else getattr(cfg, "model_family", None)
     if model_family not in MODEL_IMAGE_SIZES:
         raise ValueError(f"Unsupported model family: {model_family}")
+
+    # If we have a loaded Octo model, infer exact expected size from example_batch
+    if model_family == "octo" and model is not None:
+        try:
+            ex = model.example_batch["observation"].get("image_primary")
+            if ex is not None and ex.ndim >= 5:
+                # (B, T, H, W, C)
+                return int(ex.shape[2]), int(ex.shape[3])
+        except Exception:
+            pass
+        # fallback to 256 if present in config, else default mapping
+        try:
+            # Some finetune scripts add top-level window_size; image size lives in tokenizer but not always present
+            size = int(MODEL_IMAGE_SIZES.get("octo", 224))
+            return size
+        except Exception:
+            return MODEL_IMAGE_SIZES[model_family]
 
     return MODEL_IMAGE_SIZES[model_family]
 
@@ -184,20 +202,44 @@ def get_action(
         # Build Octo observation and sample a single-step action
         import jax
 
-        # Prepare observation dict
+        # Infer expected window size and image resolution from the model's example batch
+        expected_window = 1
+        target_h, target_w = None, None
+        try:
+            ex = model.example_batch["observation"]["image_primary"]
+            if ex.ndim >= 5:
+                expected_window = int(ex.shape[1])
+                target_h, target_w = int(ex.shape[2]), int(ex.shape[3])
+        except Exception:
+            pass
+        if target_h is None or target_w is None:
+            # Fallback to helper (may use default mapping)
+            rs = get_image_resize_size(cfg, model)
+            if isinstance(rs, int):
+                target_h = target_w = int(rs)
+            else:
+                target_h, target_w = int(rs[0]), int(rs[1])
+
+        # Ensure global histories match expected window size
+        global IMAGE_HISTORY, PROPRIO_HISTORY
+        if getattr(IMAGE_HISTORY, "maxlen", None) != expected_window:
+            IMAGE_HISTORY = deque(list(IMAGE_HISTORY), maxlen=expected_window)
+        if getattr(PROPRIO_HISTORY, "maxlen", None) != expected_window:
+            PROPRIO_HISTORY = deque(list(PROPRIO_HISTORY), maxlen=expected_window)
+
+        # Prepare image and resize to target
         image = obs["full_image"]
-        resize_size = MODEL_IMAGE_SIZES.get("octo", 224)
-        if image.shape[0] != resize_size or image.shape[1] != resize_size:
-            image = resize_image_for_policy(image, resize_size)
+        if image.shape[0] != target_h or image.shape[1] != target_w:
+            image = resize_image_for_policy(image, (target_h, target_w))
 
-        # Update image history and build a true 2-frame stack
+        # Update image history and build stack of length expected_window
         IMAGE_HISTORY.append(image)
-        if len(IMAGE_HISTORY) == 1:
-            # duplicate first frame to fill window
+        while len(IMAGE_HISTORY) < expected_window:
+            # duplicate last frame until filled
             IMAGE_HISTORY.append(image)
-        image_stack = np.stack(list(IMAGE_HISTORY), axis=0)  # (2, H, W, 3)
+        image_stack = np.stack(list(IMAGE_HISTORY), axis=0)  # (T, H, W, 3)
 
-        # Optional proprioception (7-dim expected by this checkpoint)
+        # Optional proprioception (7-dim expected by this checkpoint unless otherwise specified)
         proprio_dim = 7
         if "state" in obs and obs["state"] is not None:
             state_vec = np.asarray(obs["state"], dtype=np.float32)
@@ -209,22 +251,23 @@ def get_action(
             PROPRIO_HISTORY.append(state_vec)
         else:
             PROPRIO_HISTORY.append(np.zeros((proprio_dim,), dtype=np.float32))
-        if len(PROPRIO_HISTORY) == 1:
-            PROPRIO_HISTORY.append(PROPRIO_HISTORY[0])
-        proprio_stack = np.stack(list(PROPRIO_HISTORY), axis=0)  # (2, D)
+        while len(PROPRIO_HISTORY) < expected_window:
+            PROPRIO_HISTORY.append(PROPRIO_HISTORY[-1])
+        proprio_stack = np.stack(list(PROPRIO_HISTORY), axis=0)  # (T, D)
 
+        # Build observation dict matching model.example_batch shapes
         observation = {
-            "image_primary": image_stack[np.newaxis, ...],  # (1, 2, H, W, 3)
-            "timestep": np.array([[0, 1]], dtype=np.int32),
-            # Shape (1, 2, 4): binary flags for per-step done signals; we set all False
-            "task_completed": np.zeros((1, 2, 4), dtype=bool),
-            "timestep_pad_mask": np.array([[True, True]], dtype=bool),
+            "image_primary": image_stack[np.newaxis, ...],  # (1, T, H, W, 3)
+            "timestep": np.arange(expected_window, dtype=np.int32)[np.newaxis, ...],
+            # Shape (1, T, 4): binary flags for per-step done signals; we set all False
+            "task_completed": np.zeros((1, expected_window, 4), dtype=bool),
+            "timestep_pad_mask": np.ones((1, expected_window), dtype=bool),
             "pad_mask_dict": {
-                "image_primary": np.array([[True, True]], dtype=bool),
-                "timestep": np.array([[True, True]], dtype=bool),
-                "proprio": np.array([[True, True]], dtype=bool),
+                "image_primary": np.ones((1, expected_window), dtype=bool),
+                "timestep": np.ones((1, expected_window), dtype=bool),
+                "proprio": np.ones((1, expected_window), dtype=bool),
             },
-            "proprio": proprio_stack[np.newaxis, ...],  # (1, 2, D)
+            "proprio": proprio_stack[np.newaxis, ...],  # (1, T, D)
         }
 
         # Task construction (language-conditioned). Use input_ids directly and add pad mask

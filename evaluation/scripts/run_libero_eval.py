@@ -542,7 +542,7 @@ def eval_libero(cfg: GenerateConfig) -> float:
         print("[DEBUG] config introspection error:", e)
 
     # Get expected image dimensions
-    resize_size = get_image_resize_size(cfg)
+    resize_size = get_image_resize_size(cfg, model)
 
     # Setup logging
     log_file, local_log_filepath, run_id = setup_logging(cfg)
