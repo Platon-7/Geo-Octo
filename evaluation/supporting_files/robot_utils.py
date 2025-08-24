@@ -270,28 +270,8 @@ def get_action(
             "proprio": proprio_stack[np.newaxis, ...],  # (1, T, D)
         }
 
-        # Task construction (language-conditioned). Use input_ids directly and add pad mask
-        _raw_task = model.create_tasks(texts=[task_label])
-        task = dict(_raw_task)
-        ids = None
-        lang = task.get("language_instruction")
-        if isinstance(lang, dict) and "input_ids" in lang:
-            ids = lang["input_ids"]
-        elif "language_instruction/input_ids" in task:
-            ids = task["language_instruction/input_ids"]
-        elif isinstance(lang, (np.ndarray, list)):
-            ids = lang
-        if ids is not None:
-            ids = np.asarray(ids, dtype=np.int32)
-            task["language_instruction"] = ids
-            # Build a pad mask for language if not present
-            pad_mask = np.ones(ids.shape[:-1] if ids.ndim > 1 else (1,), dtype=bool)
-            pad_dict = task.get("pad_mask_dict", {})
-            pad_dict["language_instruction"] = pad_mask
-            task["pad_mask_dict"] = pad_dict
-            # Drop flattened extras to avoid conflicting paths
-            task.pop("language_instruction/input_ids", None)
-            task.pop("language_instruction/attention_mask", None)
+        # Construct task using model's text processor; do not override representation
+        task = model.create_tasks(texts=[task_label])
 
         # Sample action
         action = model.sample_actions(observation, task, rng=jax.random.PRNGKey(0))
