@@ -45,11 +45,9 @@ from evaluation.supporting_files.libero_utils import (
 from evaluation.supporting_files.robot_utils import (
     DATE_TIME,
     get_action,
-    get_image_resize_size,
     get_model,
     invert_gripper_action,
     normalize_gripper_action,
-    resize_image_for_policy,
     set_seed_everywhere,
 )
 from evaluation.supporting_files.constants import NUM_ACTIONS_CHUNK
@@ -295,20 +293,16 @@ def load_initial_states(cfg: GenerateConfig, task_suite, task_id: int, log_file=
         return initial_states, None
 
 
-def prepare_observation(obs, resize_size):
+def prepare_observation(obs):
     """Prepare observation for policy input."""
     # Get preprocessed images
     img = get_libero_image(obs)
     wrist_img = get_libero_wrist_image(obs)
 
-    # Resize images to size expected by model
-    img_resized = resize_image_for_policy(img, resize_size)
-    wrist_img_resized = resize_image_for_policy(wrist_img, resize_size)
-
     # Prepare observations dict
     observation = {
-        "full_image": img_resized,
-        "wrist_image": wrist_img_resized,
+        "full_image": img,
+        "wrist_image": wrist_img,
         "state": np.concatenate(
             (obs["robot0_eef_pos"], quat2axisangle(obs["robot0_eef_quat"]), obs["robot0_gripper_qpos"])
         ),
@@ -337,7 +331,6 @@ def run_episode(
     env,
     task_description: str,
     model,
-    resize_size,
     processor=None,
     action_head=None,
     proprio_projector=None,
@@ -378,7 +371,7 @@ def run_episode(
                 continue
 
             # Prepare observation
-            observation, img = prepare_observation(obs, resize_size)
+            observation, img = prepare_observation(obs)
             replay_images.append(img)
 
             # If action queue is empty, requery model
@@ -421,7 +414,6 @@ def run_task(
     task_suite,
     task_id: int,
     model,
-    resize_size,
     processor=None,
     action_head=None,
     proprio_projector=None,
@@ -438,7 +430,7 @@ def run_task(
     initial_states, all_initial_states = load_initial_states(cfg, task_suite, task_id, log_file)
 
     # Initialize environment and get task description
-    env, task_description = get_libero_env(task, cfg.model_family, resolution=cfg.env_img_res)
+    env, task_description = get_libero_env(task, cfg.model_family, cfg.env_img_res)
 
     # Start episodes
     task_episodes, task_successes = 0, 0
@@ -470,7 +462,6 @@ def run_task(
             env,
             task_description,
             model,
-            resize_size,
             processor,
             action_head,
             proprio_projector,
@@ -542,9 +533,6 @@ def eval_libero(cfg: GenerateConfig) -> float:
     except Exception as e:
         print("[DEBUG] config introspection error:", e)
 
-    # Get expected image dimensions
-    resize_size = get_image_resize_size(cfg, model)
-
     # Setup logging
     log_file, local_log_filepath, run_id = setup_logging(cfg)
 
@@ -563,7 +551,6 @@ def eval_libero(cfg: GenerateConfig) -> float:
             task_suite,
             task_id,
             model,
-            resize_size,
             processor,
             action_head,
             proprio_projector,

@@ -206,7 +206,7 @@ def get_action(
         # Build Octo observation and sample a single-step action
         import jax
 
-        # Infer expected window size and image resolution from the model's example batch
+        # Read expected window and image size from the model's example batch
         expected_window = 1
         target_h, target_w = None, None
         try:
@@ -216,42 +216,29 @@ def get_action(
                 target_h, target_w = int(ex.shape[2]), int(ex.shape[3])
         except Exception:
             pass
-        if target_h is None or target_w is None:
-            # Fallback to helper (may use default mapping)
-            rs = get_image_resize_size(cfg, model)
-            if isinstance(rs, int):
-                target_h = target_w = int(rs)
-            else:
-                target_h, target_w = int(rs[0]), int(rs[1])
 
-        # Ensure global histories match expected window size
+        # Maintain minimal histories only to satisfy window requirements
         global IMAGE_HISTORY, PROPRIO_HISTORY
         if getattr(IMAGE_HISTORY, "maxlen", None) != expected_window:
             IMAGE_HISTORY = deque(list(IMAGE_HISTORY), maxlen=expected_window)
         if getattr(PROPRIO_HISTORY, "maxlen", None) != expected_window:
             PROPRIO_HISTORY = deque(list(PROPRIO_HISTORY), maxlen=expected_window)
 
-        # Prepare image and resize to target
+        # Use env images directly (assumed already correct resolution from env setup)
         image = obs["full_image"]
-        if image.shape[0] != target_h or image.shape[1] != target_w:
-            image = resize_image_for_policy(image, (target_h, target_w))
-
-        # Update image history and build stack of length expected_window
         IMAGE_HISTORY.append(image)
         while len(IMAGE_HISTORY) < expected_window:
-            # duplicate last frame until filled
             IMAGE_HISTORY.append(image)
         image_stack = np.stack(list(IMAGE_HISTORY), axis=0)  # (T, H, W, 3)
 
-        # Optional proprioception (7-dim expected by this checkpoint unless otherwise specified)
+        # Minimal proprio handling: accept provided state, clip/pad to 7 dims expected by checkpoint
         proprio_dim = 7
         if "state" in obs and obs["state"] is not None:
-            state_vec = np.asarray(obs["state"], dtype=np.float32)
-            if state_vec.shape[-1] < proprio_dim:
-                pad = np.zeros((proprio_dim - state_vec.shape[-1],), dtype=np.float32)
-                state_vec = np.concatenate([state_vec, pad], axis=-1)
-            elif state_vec.shape[-1] > proprio_dim:
+            state_vec = np.asarray(obs["state"], dtype=np.float32).reshape(-1)
+            if state_vec.shape[-1] >= proprio_dim:
                 state_vec = state_vec[:proprio_dim]
+            else:
+                state_vec = np.pad(state_vec, (0, proprio_dim - state_vec.shape[-1]))
             PROPRIO_HISTORY.append(state_vec)
         else:
             PROPRIO_HISTORY.append(np.zeros((proprio_dim,), dtype=np.float32))
@@ -259,17 +246,17 @@ def get_action(
             PROPRIO_HISTORY.append(PROPRIO_HISTORY[-1])
         proprio_stack = np.stack(list(PROPRIO_HISTORY), axis=0)  # (T, D)
 
-        # Build observation dict matching model.example_batch shapes
+        # Build observation dict matching model.example_batch keys and shapes
+        T = expected_window
         observation = {
             "image_primary": image_stack[np.newaxis, ...],  # (1, T, H, W, 3)
-            "timestep": np.arange(expected_window, dtype=np.int32)[np.newaxis, ...],
-            # Shape (1, T, 4): binary flags for per-step done signals; we set all False
-            "task_completed": np.zeros((1, expected_window, 4), dtype=bool),
-            "timestep_pad_mask": np.ones((1, expected_window), dtype=bool),
+            "timestep": np.arange(T, dtype=np.int32)[np.newaxis, ...],
+            "task_completed": np.zeros((1, T, 4), dtype=bool),
+            "timestep_pad_mask": np.ones((1, T), dtype=bool),
             "pad_mask_dict": {
-                "image_primary": np.ones((1, expected_window), dtype=bool),
-                "timestep": np.ones((1, expected_window), dtype=bool),
-                "proprio": np.ones((1, expected_window), dtype=bool),
+                "image_primary": np.ones((1, T), dtype=bool),
+                "timestep": np.ones((1, T), dtype=bool),
+                "proprio": np.ones((1, T), dtype=bool),
             },
             "proprio": proprio_stack[np.newaxis, ...],  # (1, T, D)
         }
@@ -280,49 +267,26 @@ def get_action(
         # Sample action
         action = model.sample_actions(observation, task, rng=jax.random.PRNGKey(0))
 
-        # Convert to numpy and squeeze leading singleton dims
+        # Convert to numpy and normalize output to a list of 7D steps
         arr = np.array(action)
         while arr.ndim > 1 and arr.shape[0] == 1:
             arr = arr[0]
 
         steps: List[np.ndarray] = []
-        # Case: 2D array (horizon, dim)
         if arr.ndim == 2:
-            horizon, dim = arr.shape
-            if dim == 7:
-                # Already 7D per step
-                for i in range(horizon):
-                    steps.append(arr[i].astype(np.float32))
-            elif dim == 4:
-                # Map each 4D step -> 7D by zero-filling rotations
-                for i in range(horizon):
-                    dx, dy, dz, grip = float(arr[i, 0]), float(arr[i, 1]), float(arr[i, 2]), float(arr[i, 3])
-                    steps.append(np.array([dx, dy, dz, 0.0, 0.0, 0.0, grip], dtype=np.float32))
-            else:
-                # Fallback: try to slice/pad to 7 per step
-                for i in range(horizon):
-                    vec = np.asarray(arr[i]).ravel()
-                    if vec.size >= 7:
-                        steps.append(vec[:7].astype(np.float32))
-                    else:
-                        pad = np.zeros((7 - vec.size,), dtype=np.float32)
-                        steps.append(np.concatenate([vec.astype(np.float32), pad], axis=0))
-        else:
-            # Case: 1D vector
-            vec = arr.ravel()
-            if vec.size == 7:
-                steps.append(vec.astype(np.float32))
-            elif vec.size == 4:
-                dx, dy, dz, grip = float(vec[0]), float(vec[1]), float(vec[2]), float(vec[3])
-                steps.append(np.array([dx, dy, dz, 0.0, 0.0, 0.0, grip], dtype=np.float32))
-            else:
+            for i in range(arr.shape[0]):
+                vec = np.asarray(arr[i]).ravel()
                 if vec.size >= 7:
                     steps.append(vec[:7].astype(np.float32))
                 else:
-                    pad = np.zeros((7 - vec.size,), dtype=np.float32)
-                    steps.append(np.concatenate([vec.astype(np.float32), pad], axis=0))
+                    steps.append(np.pad(vec.astype(np.float32), (0, 7 - vec.size)))
+        else:
+            vec = np.asarray(arr).ravel()
+            if vec.size >= 7:
+                steps.append(vec[:7].astype(np.float32))
+            else:
+                steps.append(np.pad(vec.astype(np.float32), (0, 7 - vec.size)))
 
-        # Return the full action chunk to be consumed open-loop
         return steps
     else:
         raise ValueError(f"Unsupported model family: {cfg.model_family}")
