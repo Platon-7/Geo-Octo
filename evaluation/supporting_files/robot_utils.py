@@ -76,7 +76,11 @@ def get_model(cfg: Any, wrap_diffusion_policy_for_droid: bool = False) -> Any:
         from octo.model.octo_model import OctoModel
 
         pretrained_checkpoint = cfg.get("pretrained_checkpoint") if isinstance(cfg, dict) else getattr(cfg, "pretrained_checkpoint", None)
-        model = OctoModel.load_pretrained(str(pretrained_checkpoint))
+        checkpoint_step = cfg.get("checkpoint_step") if isinstance(cfg, dict) else getattr(cfg, "checkpoint_step", None)
+        if checkpoint_step is not None:
+            model = OctoModel.load_pretrained(str(pretrained_checkpoint), step=int(checkpoint_step))
+        else:
+            model = OctoModel.load_pretrained(str(pretrained_checkpoint))
     else:
         raise ValueError(f"Unsupported model family: {model_family}")
 

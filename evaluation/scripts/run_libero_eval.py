@@ -130,6 +130,7 @@ class GenerateConfig:
     #################################################################################################################
     model_family: str = "openvla"                    # Model family
     pretrained_checkpoint: Union[str, Path] = ""     # Pretrained checkpoint path
+    checkpoint_step: Optional[int] = None            # Optional checkpoint step to load (latest if None)
 
     use_l1_regression: bool = True                   # If True, uses continuous action head with L1 regression objective
     use_diffusion: bool = False                      # If True, uses continuous action head with diffusion modeling objective (DDIM)
