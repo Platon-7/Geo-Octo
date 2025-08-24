@@ -44,6 +44,9 @@ FLAGS = flags.FLAGS
 
 flags.DEFINE_string("name", "experiment", "Experiment name.")
 flags.DEFINE_bool("debug", False, "Debug config (no wandb logging)")
+flags.DEFINE_bool("dump_train_images", False, "If True, save a few input images for inspection.")
+flags.DEFINE_integer("dump_train_images_max", 20, "Max number of training images to dump.")
+flags.DEFINE_string("dump_train_images_dir", "./train_image_dumps", "Directory to save dumped training images.")
 
 default_config_file = os.path.join(
     os.path.dirname(__file__), "configs/finetune_config.py"
@@ -381,6 +384,15 @@ def main(_):
         wandb.log(flatten_dict(info, sep="/"), step=step)
 
     timer = Timer()
+    dumped = 0
+    dump_enabled = FLAGS.dump_train_images
+    if dump_enabled:
+        try:
+            import imageio
+            os.makedirs(FLAGS.dump_train_images_dir, exist_ok=True)
+        except Exception:
+            dump_enabled = False
+            logging.warning("Disabling dump_train_images: imageio not available or cannot create output dir.")
     for i in tqdm.tqdm(
         range(0, int(FLAGS.config.num_steps)),
         total=int(FLAGS.config.num_steps),
@@ -390,6 +402,27 @@ def main(_):
 
         with timer("dataset"):
             batch = next(train_data_iter)
+
+        # Optional: dump a few images to verify orientation
+        if dump_enabled and dumped < FLAGS.dump_train_images_max:
+            obs = batch.get("observation", {})
+            img = obs.get("image_primary")
+            if img is not None:
+                # Expect shape (B, T, H, W, C); save first sample and first timestep
+                try:
+                    import numpy as _np
+                    arr = _np.asarray(img)
+                    if arr.ndim >= 5:
+                        frame = arr[0, 0]
+                    elif arr.ndim == 4:
+                        frame = arr[0]
+                    else:
+                        frame = arr
+                    out_path = os.path.join(FLAGS.dump_train_images_dir, f"step_{i:06d}_idx_{dumped:03d}.png")
+                    imageio.imwrite(out_path, frame)
+                    dumped += 1
+                except Exception as _e:
+                    pass
 
         with timer("train"):
             train_state, update_info = train_step(train_state, batch)
