@@ -33,14 +33,18 @@ def get_libero_dummy_action(model_family: str):
 def get_libero_image(obs):
     """Extracts third-person image from observations and preprocesses it."""
     img = obs["agentview_image"]
-    img = img[::-1, ::-1]  # IMPORTANT: rotate 180 degrees to match train preprocessing
+    # Allow disabling the 180° rotation via environment variable
+    if os.environ.get("DISABLE_LIBERO_FLIPS", "0") != "1":
+        img = img[::-1, ::-1]  # rotate 180 degrees to match train preprocessing
     return img
 
 
 def get_libero_wrist_image(obs):
     """Extracts wrist camera image from observations and preprocesses it."""
     img = obs["robot0_eye_in_hand_image"]
-    img = img[::-1, ::-1]  # IMPORTANT: rotate 180 degrees to match train preprocessing
+    # Allow disabling the 180° rotation via environment variable
+    if os.environ.get("DISABLE_LIBERO_FLIPS", "0") != "1":
+        img = img[::-1, ::-1]  # rotate 180 degrees to match train preprocessing
     return img
 
 
