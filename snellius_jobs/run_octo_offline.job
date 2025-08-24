@@ -21,8 +21,11 @@ export XLA_FLAGS="--xla_gpu_force_compilation_parallelism=1"
 export TF_FORCE_GPU_ALLOW_GROWTH=true
 export JAX_TRACEBACK_FILTERING=off
 export TOKENIZERS_PARALLELISM=false
+
 #export XLA_PYTHON_CLIENT_MEM_FRACTION=.7
 #export XLA_PYTHON_CLIENT_PREALLOCATE=false
+export JAX_PERSISTENT_CACHE_DISABLE=1
+export JAX_DISABLE_PERSISTENT_CACHE=1
 
 # Multi-GPU specific settings
 # export CUDA_VISIBLE_DEVICES=0,1,2,3
@@ -30,7 +33,7 @@ export TOKENIZERS_PARALLELISM=false
 source activate octo
 cd octo
 
-srun python scripts/finetune.py \
-    --config=scripts/configs/config_mirror.py:full,language_conditioned \
-    --config.pretrained_path=hf://rail-berkeley/octo-base-1.5 \
+srun python scripts/finetune_octo.py \
+    --config=scripts/configs/config_og.py:full,language_conditioned \
+    --config.pretrained_path=hf://rail-berkeley/octo-small-1.5 \
     --config.save_dir=./my_octo_vggt_model_offline

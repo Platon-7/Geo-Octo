@@ -45,53 +45,58 @@ from optimize_memory import (
     force_cleanup
 )
 
+try:
+    from jax_smi import initialise_tracking  # type: ignore
+
+    initialise_tracking()
+except ImportError:
+    pass
+
+
 FLAGS = flags.FLAGS
 flags.DEFINE_string("name", "experiment", "Experiment name.")
 flags.DEFINE_bool("debug", False, "Debug config (no wandb logging)")
 default_config_file = os.path.join(os.path.dirname(__file__), "configs/debug_rollout_config.py")
 config_flags.DEFINE_config_file("config", default_config_file, "File path to the training hyperparameter configuration.", lock_config=False)
 
-os.environ['XLA_PYTHON_CLIENT_PREALLOCATE'] = 'false'
-os.environ['XLA_PYTHON_CLIENT_MEM_FRACTION'] = '0.8'
 
-
-def log_memory_usage(step, prefix=""):
-    # Force garbage collection
-    gc.collect()
+# def log_memory_usage(step, prefix=""):
+#     # Force garbage collection
+#     gc.collect()
     
-    # Get system memory info
-    memory = psutil.virtual_memory()
+#     # Get system memory info
+#     memory = psutil.virtual_memory()
     
-    # Try to get SLURM memory allocation
-    slurm_mem_mb = os.environ.get('SLURM_MEM_PER_NODE')
-    # if slurm_mem_mb:
-    #     try:
-    #         allocated_gb = int(slurm_mem_mb) / 1024  # Convert MB to GB
-    #         used_gb = memory.used / (1024**3)
-    #         usage_percent = (used_gb / allocated_gb) * 100
-    #         free_gb = allocated_gb - used_gb
+#     # Try to get SLURM memory allocation
+#     slurm_mem_mb = os.environ.get('SLURM_MEM_PER_NODE')
+#     # if slurm_mem_mb:
+#     #     try:
+#     #         allocated_gb = int(slurm_mem_mb) / 1024  # Convert MB to GB
+#     #         used_gb = memory.used / (1024**3)
+#     #         usage_percent = (used_gb / allocated_gb) * 100
+#     #         free_gb = allocated_gb - used_gb
             
-    #         print(f"{prefix}Step {step}:")
-    #         print(f"  Allocated RAM: {usage_percent:.1f}% ({used_gb:.1f}GB used, {free_gb:.1f}GB free of {allocated_gb:.0f}GB allocated)")
-    #     except (ValueError, TypeError):
-    #         # Fallback to system memory if SLURM parsing fails
-    #         print(f"{prefix}Step {step}:")
-    #         print(f"  System RAM: {memory.percent}% ({memory.used/1024**3:.1f}GB used, {memory.available/1024**3:.1f}GB free)")
-    # else:
-    #     # Fallback to system memory if no SLURM environment
-    #     print(f"{prefix}Step {step}:")
-    #     print(f"  System RAM: {memory.percent}% ({memory.used/1024**3:.1f}GB used, {memory.available/1024**3:.1f}GB free)")
+#     #         print(f"{prefix}Step {step}:")
+#     #         print(f"  Allocated RAM: {usage_percent:.1f}% ({used_gb:.1f}GB used, {free_gb:.1f}GB free of {allocated_gb:.0f}GB allocated)")
+#     #     except (ValueError, TypeError):
+#     #         # Fallback to system memory if SLURM parsing fails
+#     #         print(f"{prefix}Step {step}:")
+#     #         print(f"  System RAM: {memory.percent}% ({memory.used/1024**3:.1f}GB used, {memory.available/1024**3:.1f}GB free)")
+#     # else:
+#     #     # Fallback to system memory if no SLURM environment
+#     #     print(f"{prefix}Step {step}:")
+#     #     print(f"  System RAM: {memory.percent}% ({memory.used/1024**3:.1f}GB used, {memory.available/1024**3:.1f}GB free)")
     
-    # print(f"  Python objects: {len(gc.get_objects())}")
+#     # print(f"  Python objects: {len(gc.get_objects())}")
     
-    # TensorFlow GPU memory (with error handling)
-    # try:
-    #     if tf.config.list_physical_devices('GPU'):
-    #         tf_memory = tf.config.experimental.get_memory_info('GPU:0')
-    #         print(f"  TF GPU memory: {tf_memory}")
-    # except Exception as e:
-    #     # Silently skip GPU memory info if not available
-    #     pass
+#     # TensorFlow GPU memory (with error handling)
+#     # try:
+#     #     if tf.config.list_physical_devices('GPU'):
+#     #         tf_memory = tf.config.experimental.get_memory_info('GPU:0')
+#     #         print(f"  TF GPU memory: {tf_memory}")
+#     # except Exception as e:
+#     #     # Silently skip GPU memory info if not available
+#     #     pass
 
 def main(_):
     set_memory_env_variables()
@@ -102,6 +107,7 @@ def main(_):
     mesh = Mesh(jax.devices(), axis_names="batch")
     dp_sharding = NamedSharding(mesh, PartitionSpec("batch"))
     replicated_sharding = NamedSharding(mesh, PartitionSpec())
+    tf.config.set_visible_devices([], "GPU")
 
     logging.info(f"JAX devices: {jax.devices()}")
     name = format_name_with_config(FLAGS.name, FLAGS.config.to_dict())
@@ -166,7 +172,7 @@ def main(_):
         print("WARNING: High memory usage detected. Consider reducing batch_size or buffer sizes.")
     
     gc.collect()
-    log_memory_usage(0, "AFTER training dataset creation: ")
+    #log_memory_usage(0, "AFTER training dataset creation: ")
     train_dataset_processed = train_dataset_with_stats.map(process_batch_tf, num_parallel_calls=4).prefetch(2)
     train_data_iter = train_dataset_processed.iterator()
     
@@ -307,15 +313,35 @@ def main(_):
 
         return grad_stats
 
-    @partial(jax.jit, in_shardings=[replicated_sharding, dp_sharding])
+    @partial(
+        jax.jit,
+        in_shardings=[replicated_sharding, dp_sharding],
+        donate_argnums=(0,),  # donate state buffers to reduce HBM pressure
+    )
     def train_step(state: TrainState, batch):
         rng, dropout_rng = jax.random.split(state.rng)
-        (loss, info), grads = jax.value_and_grad(loss_fn, has_aux=True)(state.model.params, batch, dropout_rng, train=True)
-        grad_norm = grad_norm_callable(grads) 
-        # grad_norm = optax.global_norm(grads)
-        new_state = state.apply_gradients(grads=grads, rng=rng)
-        info.update({"grad_norm": grad_norm, "learning_rate": lr_callable(state.step)})
-        return new_state, info, grads  # Return grads for analysis
+
+        # Compute loss and grads
+        (loss, info), grads = jax.value_and_grad(loss_fn, has_aux=True)(
+            state.model.params, batch, dropout_rng, train=True
+        )
+
+        # Force optimizer.update inside the JIT (prevents the XLA duplicate-constant crash)
+        updates, new_opt_state = state.tx.update(grads, state.opt_state, state.model.params)
+        update_norm = optax.global_norm(updates)
+        grad_norm = optax.global_norm(grads)
+
+        # Apply updates manually (avoid recomputing inside apply_gradients)
+        new_params = optax.apply_updates(state.model.params, updates)
+        new_model = state.model.replace(params=new_params)
+        new_state = state.replace(model=new_model, opt_state=new_opt_state, rng=rng, step=state.step + 1)
+
+        info.update({
+            "grad_norm": grad_norm,
+            "update_norm": update_norm,
+            "learning_rate": lr_callable(state.step),
+        })
+        return new_state, info
 
     @partial(jax.jit, in_shardings=[replicated_sharding, dp_sharding, replicated_sharding])
     def eval_step(params, batch, rng):
@@ -371,7 +397,7 @@ def main(_):
         
         with timer("train"):
             model_batch = prune_batch_for_jax(batch)
-            train_state, update_info, grads = train_step(train_state, model_batch)
+            train_state, update_info = train_step(train_state, model_batch)
             
             if (i < 10 or
                 (stage1_steps > 0 and abs(i - stage1_steps) < 5) or
