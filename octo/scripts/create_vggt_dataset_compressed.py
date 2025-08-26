@@ -247,16 +247,26 @@ def main(_):
     for builder in original_builders:
         logging.info(f"###### PROCESSING DATASET: {builder.name} ######")
         try:
+            # 1. Define the name and path for the new dataset first
+            new_dataset_name = f"{builder.name}_vggt_compressed"
+            
+            # This is the directory TFDS will try to read from/write to
+            output_dataset_dir = os.path.join(output_root, new_dataset_name)
+
+            # 2. Perform the overwrite check and deletion BEFORE initializing the builder
+            if FLAGS.overwrite and tf.io.gfile.exists(output_dataset_dir):
+                logging.warning(f"Overwriting existing dataset at {output_dataset_dir}")
+                tf.io.gfile.rmtree(output_dataset_dir)
+
+            # 3. NOW it is safe to create the builder instance
             compressed_builder = CompressedVggtDataset(
                 original_builder=builder, vggt_model=vggt_model, vggt_device=vggt_device,
                 vggt_dtype=vggt_dtype, vggt_batch_size=FLAGS.vggt_batch_size,
                 compressor=compressor, data_dir=output_root
             )
             
-            if FLAGS.overwrite and tf.io.gfile.exists(compressed_builder.data_dir):
-                logging.warning(f"Overwriting existing dataset at {compressed_builder.data_dir}")
-                tf.io.gfile.rmtree(compressed_builder.data_dir)
             
+            # 4. Proceed with generating the dataset
             compressed_builder.download_and_prepare()
             logging.info(f"Successfully created compressed TFDS dataset '{compressed_builder.name}'.")
 

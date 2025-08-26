@@ -446,25 +446,49 @@ def allocate_threads(n: Optional[int], weights: np.ndarray):
         allocation[i] += 1
     return allocation
 
+_standardize_check_printed = False
+
 def standardize_libero_vggt(traj: dict) -> dict:
-    #print("DEBUG: Raw observation keys before standardization:", list(traj['observation'].keys()))
-    traj['observation']['image_primary'] = traj['observation'].pop('image')
-    traj['observation']['proprio'] = traj['observation'].pop('state')
     
-    # CRITICAL FIX: Slice proprio from 8D to 7D to match pretrained model
-    if traj['observation']['proprio'].shape[-1] == 8:
-        #print("DEBUG: Slicing proprio from 8D to 7D")
-        traj['observation']['proprio'] = traj['observation']['proprio'][..., :7]
+    global _standardize_check_printed
+    # Create a new, clean observation dictionary
+    new_observation = {}
+
+    # 1. Rename and copy the primary image
+    new_observation['image_primary'] = traj['observation']['image']
+
+    # 2. Rename, copy, and slice the proprioception
+    proprio = traj['observation']['state']
+    if proprio.shape[-1] == 8:
+        new_observation['proprio'] = proprio[..., :7]
+    else:
+        new_observation['proprio'] = proprio
+
+    # 3. Conditionally copy the VGGT tokens if they exist
+    if 'vggt_tokens' in traj['observation']:
+        new_observation['vggt_tokens'] = traj['observation']['vggt_tokens']
     
-    # REMOVE joint_state if it exists to avoid conflicts
-    if 'joint_state' in traj['observation']:
-        #print("DEBUG: Removing joint_state to avoid conflicts")
-        traj['observation'].pop('joint_state')
+    # 4. Replace the old observation dict with our new, clean one
+    traj['observation'] = new_observation
     
+    # --- THIS IS OUR NEW DEBUGGING PRINT STATEMENT ---
+    if not _standardize_check_printed:
+        print("\n" + "="*50)
+        print("DEBUG: First standardized trajectory check!")
+        print("Observation keys found:", list(traj['observation'].keys()))
+        if 'vggt_tokens' in traj['observation']:
+            vggt_shape = traj['observation']['vggt_tokens'].shape
+            print(f"  -> SUCCESS: 'vggt_tokens' are present with shape: {vggt_shape}")
+        else:
+            print("  -> WARNING: 'vggt_tokens' NOT found in the observation dict.")
+        print("="*50 + "\n")
+        _standardize_check_printed = True
+    # --- END OF DEBUGGING PRINT STATEMENT --
+
     # Add task_description if missing (fix for TFDS compatibility)
     if 'episode_metadata' not in traj:
         traj['episode_metadata'] = {}
     if 'task_description' not in traj['episode_metadata']:
         traj['episode_metadata']['task_description'] = ""  # Empty string as placeholder
-    
+
     return traj

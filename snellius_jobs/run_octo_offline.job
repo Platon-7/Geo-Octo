@@ -33,7 +33,7 @@ export JAX_DISABLE_PERSISTENT_CACHE=1
 source activate octo
 cd octo
 
-srun python scripts/finetune_octo.py \
-    --config=scripts/configs/config_og.py:full,language_conditioned \
-    --config.pretrained_path=hf://rail-berkeley/octo-small-1.5 \
+srun -u python scripts/finetune_vggt.py \
+    --config=scripts/configs/config_vggt.py:full,language_conditioned \
+    --config.pretrained_path=hf://rail-berkeley/octo-base-1.5 \
     --config.save_dir=./my_octo_vggt_model_offline
