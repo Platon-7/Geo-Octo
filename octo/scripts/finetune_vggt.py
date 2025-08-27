@@ -232,12 +232,17 @@ def main(_):
     #########
 
     if FLAGS.config.save_dir is not None:
-        save_dir = tf.io.gfile.join(
-            FLAGS.config.save_dir,
-            FLAGS.config.wandb.project,
-            FLAGS.config.wandb.group or "",
-            wandb_id,
-        )
+        # Allow full resume: if a resume_dir is provided, use it directly
+        resume_dir = FLAGS.config.get("resume_dir", None)
+        if resume_dir is not None and isinstance(resume_dir, str) and len(resume_dir) > 0:
+            save_dir = resume_dir
+        else:
+            save_dir = tf.io.gfile.join(
+                FLAGS.config.save_dir,
+                FLAGS.config.wandb.project,
+                FLAGS.config.wandb.group or "",
+                wandb_id,
+            )
         wandb.config.update(dict(save_dir=save_dir), allow_val_change=True)
         logging.info("Saving to %s", save_dir)
         save_callback = SaveCallback(save_dir)
