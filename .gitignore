@@ -7,3 +7,4 @@ my_octo_vggt_model_offline/
 # Recursively find and ignore all .tfrecord files inside libero_datasets
 libero_datasets/**/*tfrecord*
 evaluation/test_outputs/
+onnx_fp16/

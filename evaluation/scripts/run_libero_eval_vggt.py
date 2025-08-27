@@ -15,7 +15,7 @@ except ImportError:
 warnings.filterwarnings("ignore", category=DeprecationWarning, module="transformers")
 
 # 1. Load the statistics
-stats_path = "/home/pkarageorgis/geo_octo/libero_datasets/unified_stats/unified_dataset_statistics_libero_spatial_no_vggt.json"
+stats_path = "/home/pkarageorgis/geo_octo/libero_datasets/unified_stats/unified_dataset_statistics_libero_spatial_vggt.json"
 with open(stats_path, 'r') as f:
     dataset_statistics = json.load(f)
 
@@ -36,6 +36,8 @@ import tqdm
 from libero.libero import benchmark
 
 import wandb
+
+from evaluation.supporting_files.load_fn import load_and_preprocess_images
 
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
@@ -59,6 +61,22 @@ from evaluation.supporting_files.robot_utils import (
     set_seed_everywhere,
 )
 from evaluation.supporting_files.constants import NUM_ACTIONS_CHUNK
+
+# New imports for VGGT ONNX + compression
+try:
+    import onnxruntime as ort
+except Exception:
+    ort = None
+
+try:
+    import cv2
+except Exception:
+    cv2 = None
+
+from PIL import Image
+# Ensure we can import compressor saved as top-level module `vggt_compression_analysis`
+sys.path.append("/gpfs/home4/pkarageorgis/geo_octo/octo/scripts")
+from vggt_compression_analysis import VGGTCompressor
 
 
 # Define task suite constants
@@ -164,6 +182,19 @@ class GenerateConfig:
     num_trials_per_task: int = 50                    # Number of rollouts per task
     initial_states_path: str = "DEFAULT"             # "DEFAULT", or path to initial states JSON file
     env_img_res: int = 256                           # Resolution for environment images (not policy input resolution)
+
+    #################################################################################################################
+    # VGGT-specific parameters
+    #################################################################################################################
+    use_vggt_tokens: bool = True                     # Whether to compute and feed VGGT tokens online
+    vggt_onnx_path: str = "/home/pkarageorgis/vggt_onxx/vggt_fp16.onnx"  # Path to VGGT ONNX model
+    vggt_input_res: int = 224                        # Input resolution for VGGT model
+    vggt_use_cuda: bool = True                       # Whether to use CUDAExecutionProvider when available
+    vggt_compressor_path: Optional[str] = None       # Path to saved VGGTCompressor .pkl
+    vggt_output_name: Optional[str] = None           # Specific ONNX output name to use (if exported)
+    vggt_output_index: int = 0                       # Fallback output index when name not given
+    vggt_raw_tokens: int = 261                       # Expected number of VGGT tokens before compression
+    vggt_raw_dim: int = 2048                         # Expected token embedding dimension before compression
 
     #################################################################################################################
     # Utils
@@ -312,7 +343,7 @@ def prepare_observation(obs):
         "full_image": img,
         "wrist_image": wrist_img,
         "state": np.concatenate(
-            (obs["robot0_eef_pos"], quat2axisangle(obs["robot0_eef_quat"]), obs["robot0_gripper_qpos"])
+            (obs["robot0_eef_pos"], quat2axisangle(obs["robot0_eef_quat"]), obs["robot0_gripper_qpos"]) 
         ),
     }
 
@@ -342,6 +373,83 @@ def process_action(action, model_family, action_mean=None, action_std=None):
         return np.clip(np.asarray(action, dtype=np.float32), -1.0, 1.0)
 
 
+# ===== VGGT helpers =====
+
+def _extract_tokens_from_outputs(outputs: list, cfg: GenerateConfig) -> np.ndarray:
+    """
+    Extracts the primary VGGT token embeddings from the list of ONNX outputs.
+    Based on the vggt-onnx repo, the main embeddings are the first output.
+    """
+    if not isinstance(outputs, (list, tuple)) or len(outputs) == 0:
+        raise RuntimeError("ONNX session did not return any outputs.")
+
+    # --- THE FIX ---
+    # Directly select the first output, which contains the main token embeddings.
+    arr = np.asarray(outputs[0])
+    
+    # --- For Debugging: Let's see what we got ---
+    # You can uncomment this block to see the shapes of ALL outputs
+    print("\n--- DEBUG: ONNX Outputs ---")
+    for i, out in enumerate(outputs):
+        print(f"Output [{i}]: type={type(out)}, shape={np.asarray(out).shape}")
+    print("--------------------------\n")
+    
+    # Squeeze any unnecessary batch/view dimensions (e.g., shape (1, 1, 261, 2048) -> (261, 2048))
+    while arr.ndim > 2 and arr.shape[0] == 1:
+        arr = np.squeeze(arr, axis=0)
+
+    return arr
+
+
+def compute_compressed_vggt_tokens(image: np.ndarray, vggt_ctx: dict) -> Optional[np.ndarray]:
+    """
+    Takes a raw simulator image, preprocesses it using the official load_fn,
+    runs ONNX inference, and returns compressed tokens.
+    """
+    if vggt_ctx is None:
+        return None
+
+    # --- Step 1: Get necessary components from the context dictionary ---
+    session: ort.InferenceSession = vggt_ctx.get("session")
+    input_name: str = vggt_ctx.get("input_name")
+    compressor: Optional[VGGTCompressor] = vggt_ctx.get("compressor")
+    cfg: GenerateConfig = vggt_ctx.get("cfg")
+
+    if session is None or input_name is None or compressor is None:
+        raise RuntimeError("VGGT context is missing required components (session, input_name, or compressor).")
+
+    # --- Step 2: Preprocess the image using the official helper script ---
+    # The `load_and_preprocess_images` function expects a list of file paths.
+    # We can save our in-memory NumPy array to a temporary file in /tmp/ to use it.
+    # This guarantees the preprocessing is a perfect match.
+    temp_img_path = "/tmp/vggt_online_frame.png"
+    Image.fromarray(image).save(temp_img_path)
+    
+    # This function handles resizing, normalizing, and formatting the image correctly.
+    preprocessed_image_np = load_and_preprocess_images([temp_img_path])
+
+    # --- Step 3: Run ONNX inference ---
+    # The output is a list of all output nodes from the ONNX model.
+    outputs = session.run(None, {input_name: preprocessed_image_np})
+
+    # --- Step 4: Extract and reshape the raw tokens ---
+    # We reuse the logic from your previous helper to robustly find the main output.
+    raw_tokens = _extract_tokens_from_outputs(outputs, cfg) # (L, D) or similar
+
+    # Reshape to the expected (Batch, Num_Tokens, Dim) before compression
+    num_tokens = cfg.vggt_raw_tokens
+    token_dim = cfg.vggt_raw_dim
+    try:
+        tokens_for_compression = raw_tokens.reshape(1, num_tokens, token_dim)
+    except ValueError as e:
+        raise RuntimeError(f"Could not reshape raw VGGT tokens. Expected shape ({num_tokens}, {token_dim}), but got {raw_tokens.shape}. Error: {e}")
+
+    # --- Step 5: Compress the tokens ---
+    compressed_tokens = compressor.compress(tokens_for_compression)  # Shape: (1, H, W)
+    
+    # Return the final compressed tokens for a single timestep
+    return compressed_tokens[0] # Shape: (H, W)
+
 def run_episode(
     cfg: GenerateConfig,
     env,
@@ -353,6 +461,7 @@ def run_episode(
     noisy_action_projector=None,
     initial_state=None,
     log_file=None,
+    vggt_ctx: Optional[dict] = None,
 ):
     """Run a single episode in the environment."""
     # Reset environment
@@ -388,6 +497,16 @@ def run_episode(
 
             # Prepare observation
             observation, img = prepare_observation(obs)
+
+            # If enabled, compute VGGT tokens online and attach to observation
+            if cfg.model_family == "octo" and cfg.use_vggt_tokens and vggt_ctx is not None:
+                try:
+                    compressed_tokens = compute_compressed_vggt_tokens(img, vggt_ctx)
+                    observation["vggt_tokens"] = compressed_tokens  # (H, W)
+                except Exception as _e:
+                    # Log once per episode if VGGT fails, and continue without VGGT tokens
+                    log_message(f"[VGGT] Failed to compute tokens at t={t}: {_e}", log_file)
+
             replay_images.append(img)
 
             # If action queue is empty, requery model
@@ -425,6 +544,7 @@ def run_episode(
     return success, replay_images
 
 
+
 def run_task(
     cfg: GenerateConfig,
     task_suite,
@@ -437,6 +557,7 @@ def run_task(
     total_episodes=0,
     total_successes=0,
     log_file=None,
+    vggt_ctx: Optional[dict] = None,
 ):
     """Run evaluation for a single task."""
     # Get task
@@ -484,6 +605,7 @@ def run_task(
             noisy_action_projector,
             initial_state,
             log_file,
+            vggt_ctx=vggt_ctx,
         )
 
         # Update counters
@@ -533,22 +655,35 @@ def eval_libero(cfg: GenerateConfig) -> float:
     
     # =========================================================================
     # --- PART 1: SETUP ONNX RUNTIME FOR VGGT ---
-    
-    print("Loading ONNX VGGT model for fast inference...")
-    # Path to the ONNX model file you downloaded
-    onnx_model_path = "/home/pkarageorgis/vggt_onxx/vggt_fp16.onnx"
-    
-    # Create an inference session that runs on the GPU
-    vggt_session = ort.InferenceSession(onnx_model_path, providers=['CUDAExecutionProvider'])
-    
-    # Get the exact names of the model's input and output nodes
-    vggt_input_name = vggt_session.get_inputs()[0].name
-    vggt_output_names = [output.name for output in vggt_session.get_outputs()]
-    
-    print(f"ONNX VGGT model loaded. Input: '{vggt_input_name}', Outputs: {vggt_output_names}")
-    #
-    # --- END OF ONNX SETUP ---
     # =========================================================================
+    vggt_ctx: Optional[dict] = None
+    if cfg.model_family == "octo" and cfg.use_vggt_tokens:
+        if ort is None:
+            print("[VGGT] onnxruntime not available; continuing without VGGT tokens")
+        elif not os.path.exists(cfg.vggt_onnx_path):
+            print(f"[VGGT] ONNX model not found at {cfg.vggt_onnx_path}; continuing without VGGT tokens")
+        elif cfg.vggt_compressor_path is None or not os.path.exists(cfg.vggt_compressor_path):
+            print("[VGGT] Compressor path missing or not found; continuing without VGGT tokens")
+        else:
+            print("Loading ONNX VGGT model for fast inference...")
+            providers = ['CUDAExecutionProvider'] if cfg.vggt_use_cuda else ['CPUExecutionProvider']
+            try:
+                session = ort.InferenceSession(cfg.vggt_onnx_path, providers=providers)
+                input_name = session.get_inputs()[0].name
+                output_names = [output.name for output in session.get_outputs()]
+                print(f"ONNX VGGT model loaded. Input: '{input_name}', Outputs: {output_names}")
+                compressor = VGGTCompressor.load_compressor(cfg.vggt_compressor_path)
+                vggt_ctx = {
+                    "session": session,
+                    "input_name": input_name,
+                    "output_names": output_names,
+                    "input_res": cfg.vggt_input_res,
+                    "compressor": compressor,
+                    "cfg": cfg,
+                }
+            except Exception as e:
+                print(f"[VGGT] Failed to initialize ONNX session: {e}; continuing without VGGT tokens")
+                vggt_ctx = None
 
     # Initialize model and components
     model, action_head, proprio_projector, noisy_action_projector, processor = initialize_model(cfg)
@@ -593,6 +728,7 @@ def eval_libero(cfg: GenerateConfig) -> float:
             total_episodes,
             total_successes,
             log_file,
+            vggt_ctx=vggt_ctx,
         )
 
     # Calculate final success rate

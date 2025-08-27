@@ -33,6 +33,8 @@ MODEL_IMAGE_SIZES = {
 # Maintain short histories to provide a true 2-frame window without changing callers
 IMAGE_HISTORY: deque = deque(maxlen=2)
 PROPRIO_HISTORY: deque = deque(maxlen=2)
+# Add VGGT token history for windowed inputs
+VGGT_HISTORY: deque = deque(maxlen=2)
 
 
 def set_seed_everywhere(seed: int) -> None:
@@ -218,11 +220,13 @@ def get_action(
             pass
 
         # Maintain minimal histories only to satisfy window requirements
-        global IMAGE_HISTORY, PROPRIO_HISTORY
+        global IMAGE_HISTORY, PROPRIO_HISTORY, VGGT_HISTORY
         if getattr(IMAGE_HISTORY, "maxlen", None) != expected_window:
             IMAGE_HISTORY = deque(list(IMAGE_HISTORY), maxlen=expected_window)
         if getattr(PROPRIO_HISTORY, "maxlen", None) != expected_window:
             PROPRIO_HISTORY = deque(list(PROPRIO_HISTORY), maxlen=expected_window)
+        if getattr(VGGT_HISTORY, "maxlen", None) != expected_window:
+            VGGT_HISTORY = deque(list(VGGT_HISTORY), maxlen=expected_window)
 
         # Use env images directly (assumed already correct resolution from env setup)
         image = obs["full_image"]
@@ -246,6 +250,15 @@ def get_action(
             PROPRIO_HISTORY.append(PROPRIO_HISTORY[-1])
         proprio_stack = np.stack(list(PROPRIO_HISTORY), axis=0)  # (T, D)
 
+        # Optional VGGT token handling: expect per-step compressed grid (H, W)
+        vggt_stack = None
+        if "vggt_tokens" in obs and obs["vggt_tokens"] is not None:
+            current_tokens = np.asarray(obs["vggt_tokens"])  # (H, W)
+            VGGT_HISTORY.append(current_tokens)
+            while len(VGGT_HISTORY) < expected_window:
+                VGGT_HISTORY.append(VGGT_HISTORY[-1])
+            vggt_stack = np.stack(list(VGGT_HISTORY), axis=0)  # (T, H, W)
+
         # Build observation dict matching model.example_batch keys and shapes
         T = expected_window
         observation = {
@@ -260,6 +273,9 @@ def get_action(
             },
             "proprio": proprio_stack[np.newaxis, ...],  # (1, T, D)
         }
+        if vggt_stack is not None:
+            observation["vggt_tokens"] = vggt_stack[np.newaxis, ...]  # (1, T, H, W)
+            observation["pad_mask_dict"]["vggt_tokens"] = np.ones((1, T), dtype=bool)
 
         # Construct task using model's text processor; do not override representation
         task = model.create_tasks(texts=[task_label])

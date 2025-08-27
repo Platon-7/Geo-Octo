@@ -1,0 +1,6 @@
+Task suite: libero_spatial
+Using default initial states
+
+Task: pick up the black bowl between the plate and the ramekin and place it on the plate
+Starting episode 1...
+[VGGT] Failed to compute tokens at t=10: Could not reshape raw VGGT tokens. Expected shape (261, 2048), but got (1, 9). Error: cannot reshape array of size 9 into shape (1,261,2048)

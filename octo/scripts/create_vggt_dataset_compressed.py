@@ -244,40 +244,40 @@ def main(_):
         FLAGS.compression_samples, vggt_model, vggt_device, vggt_dtype, FLAGS.vggt_batch_size
     )
 
-    for builder in original_builders:
-        logging.info(f"###### PROCESSING DATASET: {builder.name} ######")
-        try:
-            # 1. Define the name and path for the new dataset first
-            new_dataset_name = f"{builder.name}_vggt_compressed"
+    # for builder in original_builders:
+    #     logging.info(f"###### PROCESSING DATASET: {builder.name} ######")
+    #     try:
+    #         # 1. Define the name and path for the new dataset first
+    #         new_dataset_name = f"{builder.name}_vggt_compressed"
             
-            # This is the directory TFDS will try to read from/write to
-            output_dataset_dir = os.path.join(output_root, new_dataset_name)
+    #         # This is the directory TFDS will try to read from/write to
+    #         output_dataset_dir = os.path.join(output_root, new_dataset_name)
 
-            # 2. Perform the overwrite check and deletion BEFORE initializing the builder
-            if FLAGS.overwrite and tf.io.gfile.exists(output_dataset_dir):
-                logging.warning(f"Overwriting existing dataset at {output_dataset_dir}")
-                tf.io.gfile.rmtree(output_dataset_dir)
+    #         # 2. Perform the overwrite check and deletion BEFORE initializing the builder
+    #         if FLAGS.overwrite and tf.io.gfile.exists(output_dataset_dir):
+    #             logging.warning(f"Overwriting existing dataset at {output_dataset_dir}")
+    #             tf.io.gfile.rmtree(output_dataset_dir)
 
-            # 3. NOW it is safe to create the builder instance
-            compressed_builder = CompressedVggtDataset(
-                original_builder=builder, vggt_model=vggt_model, vggt_device=vggt_device,
-                vggt_dtype=vggt_dtype, vggt_batch_size=FLAGS.vggt_batch_size,
-                compressor=compressor, data_dir=output_root
-            )
+    #         # 3. NOW it is safe to create the builder instance
+    #         compressed_builder = CompressedVggtDataset(
+    #             original_builder=builder, vggt_model=vggt_model, vggt_device=vggt_device,
+    #             vggt_dtype=vggt_dtype, vggt_batch_size=FLAGS.vggt_batch_size,
+    #             compressor=compressor, data_dir=output_root
+    #         )
             
             
-            # 4. Proceed with generating the dataset
-            compressed_builder.download_and_prepare()
-            logging.info(f"Successfully created compressed TFDS dataset '{compressed_builder.name}'.")
+    #         # 4. Proceed with generating the dataset
+    #         compressed_builder.download_and_prepare()
+    #         logging.info(f"Successfully created compressed TFDS dataset '{compressed_builder.name}'.")
 
-        except Exception as e:
-            logging.error(f"Failed to process dataset {builder.name}. Error: {e}", exc_info=True)
+    #     except Exception as e:
+    #         logging.error(f"Failed to process dataset {builder.name}. Error: {e}", exc_info=True)
 
-    logging.info(f"--- ALL DATASETS PROCESSED ---")
-    ratio = compressor.compression_stats.get('compression_ratio', 0)
-    logging.info(f"New compressed datasets written to: {FLAGS.output_data_dir}")
-    if ratio > 0:
-        logging.info(f"Memory reduction: ~{ratio:.1f}x smaller than original VGGT tokens")
+    # logging.info(f"--- ALL DATASETS PROCESSED ---")
+    # ratio = compressor.compression_stats.get('compression_ratio', 0)
+    # logging.info(f"New compressed datasets written to: {FLAGS.output_data_dir}")
+    # if ratio > 0:
+    #     logging.info(f"Memory reduction: ~{ratio:.1f}x smaller than original VGGT tokens")
 
 if __name__ == "__main__":
     app.run(main)
