@@ -326,6 +326,23 @@ def main(_):
 
     #########
     #
+    # Resume from checkpoint (full TrainState) if available
+    #
+    #########
+
+    start_step = 0
+    if save_dir is not None:
+        try:
+            latest_step = save_callback.state_checkpointer.latest_step()
+        except Exception:
+            latest_step = None
+        if latest_step is not None:
+            train_state = save_callback.state_checkpointer.restore(latest_step, items=train_state)
+            start_step = int(train_state.step)
+            logging.info("Restored checkpoint from %s at step %d", save_dir, start_step)
+
+    #########
+    #
     # Build validation & visualization callbacks
     #
     #########
@@ -397,8 +414,8 @@ def main(_):
     _batch_check_printed = False 
     
     for i in tqdm.tqdm(
-        range(0, int(FLAGS.config.num_steps)),
-        total=int(FLAGS.config.num_steps),
+        range(start_step, int(FLAGS.config.num_steps)),
+        total=int(FLAGS.config.num_steps) - start_step,
         dynamic_ncols=True,
     ):
         timer.tick("total")
