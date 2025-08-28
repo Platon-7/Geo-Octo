@@ -235,6 +235,12 @@ def main(_):
         raise RuntimeError("onnxruntime is not available. Please install it first.")
 
     logging.set_verbosity(logging.INFO)
+    # Ensure TensorFlow doesn't grab GPUs to avoid contention with ONNX Runtime
+    try:
+        tf.config.set_visible_devices([], "GPU")
+        logging.info("Disabled TensorFlow GPU visibility (CPU-only TFDS).")
+    except Exception as _e:
+        logging.info("TF GPU visibility change skipped: %s", _e)
     input_root = FLAGS.input_data_dir
     output_root = FLAGS.output_data_dir
     onnx_path = FLAGS.vggt_onnx_path
@@ -247,11 +253,18 @@ def main(_):
     logging.info("Loaded ONNX model %s with input '%s'", onnx_path, input_name)
 
     dataset_names = [d for d in os.listdir(input_root) if os.path.isdir(os.path.join(input_root, d))]
+    logging.info("Found dataset directories under input_data_dir: %s", dataset_names)
     if not dataset_names:
         raise ValueError("No valid datasets found under input_data_dir")
 
-    original_builders = [tfds.builder(name, data_dir=input_root) for name in dataset_names]
+    original_builders = []
+    for name in dataset_names:
+        logging.info("Initializing TFDS builder: %s", name)
+        b = tfds.builder(name, data_dir=input_root)
+        logging.info("Builder %s splits: %s", name, list(b.info.splits.keys()))
+        original_builders.append(b)
 
+    logging.info("Starting compressor load/fit stage...")
     compressor = load_or_create_compressor(
         original_builders,
         session,
@@ -261,6 +274,7 @@ def main(_):
         FLAGS.compression_samples,
         target_size,
     )
+    logging.info("Compressor ready. Target size=%s", target_size)
 
     # Iterate datasets and write compressed versions
     for builder in original_builders:
