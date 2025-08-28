@@ -441,6 +441,13 @@ def main(_):
                 print(f"     DType: {vggt_dtype}")
             else:
                 print("  -> CRITICAL WARNING: 'vggt_tokens' were dropped somewhere in the data pipeline!")
+
+            # Additional check: ensure no image observations remain
+            image_obs_keys = [k for k in batch['observation'].keys() if 'image' in k]
+            if image_obs_keys:
+                print(f"  -> WARNING: image observation keys still present: {image_obs_keys}")
+            else:
+                print("  -> SUCCESS: no image observations present; using only VGGT tokens.")
             print("="*50 + "\n")
             _batch_check_printed = True
         # --- END OF DEBUGGING PRINT STATEMENT ---
