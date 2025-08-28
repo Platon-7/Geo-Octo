@@ -20,6 +20,8 @@ except Exception as _e:  # pragma: no cover
     ort = None
 
 from vggt_compression_analysis import VGGTCompressor
+from evaluation.supporting_files.load_fn import load_and_preprocess_images
+from evaluation.scripts.run_libero_eval_vggt import _extract_tokens_from_outputs
 
 
 # -------------------------
@@ -43,45 +45,13 @@ flags.DEFINE_integer("batch_size_eval", 1, "ONNX inference batch size (images pe
 flags.DEFINE_bool("overwrite", False, "Overwrite existing datasets under output_data_dir.")
 
 
-# -------------------------
-# Preprocessing (match evaluation 224 bilinear, NCHW)
-# -------------------------
-def preprocess_image_to_nchw(img: np.ndarray, size: int) -> np.ndarray:
-    if img.dtype != np.uint8:
-        img = img.astype(np.uint8)
-    pil = Image.fromarray(img)
-    pil = pil.resize((size, size), Image.BILINEAR)
-    arr = np.asarray(pil, dtype=np.float32) / 255.0  # HWC, [0,1]
-    chw = np.transpose(arr, (2, 0, 1))               # CHW
-    return chw
-
-
-def _extract_tokens_from_outputs(outputs: List[np.ndarray]) -> np.ndarray:
-    """Select main token output and squeeze batch/view dims to 2D.
-    Mirrors evaluation/script behavior.
-    """
-    if not isinstance(outputs, (list, tuple)) or len(outputs) == 0:
-        raise RuntimeError("ONNX session did not return any outputs.")
-
-    arr = np.asarray(outputs[0])
-    # Squeeze leading singleton dims while ndim > 2
-    while arr.ndim > 2 and arr.shape[0] == 1:
-        arr = np.squeeze(arr, axis=0)
-    return arr
-
-
-def run_onnx_tokens_for_images(session: "ort.InferenceSession", input_name: str, images_nchw: np.ndarray) -> np.ndarray:
-    """Run ONNX session on a batch of images and return 2D tokens per image.
-
-    images_nchw: (N, 3, H, W)
-    Returns: tokens list, each (L, D) as a numpy array; stacked as list for simplicity.
-    """
-    outputs = session.run(None, {input_name: images_nchw})
-    tokens_any = _extract_tokens_from_outputs(outputs)
-    # tokens_any could be (N, L, D) or (L, D) depending on exporter. Normalize to (N, L, D)
-    if tokens_any.ndim == 2:
-        tokens_any = tokens_any[None, ...]
-    return tokens_any
+"""
+Note: We intentionally reuse evaluation helpers to ensure token generation is
+IDENTICAL to evaluation (preprocessing + output selection).
+We will save each frame to a temp PNG and call load_and_preprocess_images,
+then feed the resulting NCHW into the ONNX session and extract tokens via
+_extract_tokens_from_outputs.
+"""
 
 
 # -------------------------
@@ -172,9 +142,11 @@ class CompressedVggtDatasetOnnx(tfds.core.GeneratorBasedBuilder):
 
             # Process each frame
             for img in images_np:
-                chw = preprocess_image_to_nchw(img, self._input_res)  # (3, H, W)
-                batch = chw[None, ...]  # (1, 3, H, W)
-                outputs = self._session.run(None, {self._input_name: batch})
+                # Save to temp file and preprocess exactly like evaluation
+                temp_img_path = "/tmp/vggt_dataset_frame.png"
+                Image.fromarray(img).save(temp_img_path)
+                batched = load_and_preprocess_images([temp_img_path])  # (1, 3, H, W) with current eval settings
+                outputs = self._session.run(None, {self._input_name: batched})
                 tokens_2d = _extract_tokens_from_outputs(outputs)  # (L, D)
                 if tokens_2d.ndim == 3:
                     tokens_2d = tokens_2d[0]
@@ -222,9 +194,10 @@ def load_or_create_compressor(
         if 'image' not in trans['observation']:
             continue
         for img in trans['observation']['image']:
-            chw = preprocess_image_to_nchw(img, input_res)
-            batch = chw[None, ...]
-            outputs = session.run(None, {input_name: batch})
+            temp_img_path = "/tmp/vggt_dataset_frame.png"
+            Image.fromarray(img).save(temp_img_path)
+            batched = load_and_preprocess_images([temp_img_path])
+            outputs = session.run(None, {input_name: batched})
             tokens_2d = _extract_tokens_from_outputs(outputs)
             if tokens_2d.ndim == 3:
                 tokens_2d = tokens_2d[0]
