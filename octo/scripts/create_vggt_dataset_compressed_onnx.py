@@ -125,9 +125,11 @@ class CompressedVggtDatasetOnnx(tfds.core.GeneratorBasedBuilder):
         ds = self._original_builder.as_dataset(split=split)
         num_episodes = self._original_builder.info.splits[split].num_examples
 
-        for i, episode in enumerate(tfds.as_numpy(ds)):
+        i = 0
+        for episode in ds:
             steps_list_of_dicts = list(tfds.as_numpy(episode['steps']))
             if not steps_list_of_dicts:
+                i += 1
                 continue
 
             steps = transpose_list_of_dicts(steps_list_of_dicts)
@@ -163,7 +165,8 @@ class CompressedVggtDatasetOnnx(tfds.core.GeneratorBasedBuilder):
             for t in range(len(tokens_compressed)):
                 steps_list_of_dicts[t]['observation']['vggt_tokens'] = tokens_compressed[t]
 
-            yield i, {'steps': steps_list_of_dicts, 'episode_metadata': episode['episode_metadata']}
+            yield i, {'steps': steps_list_of_dicts, 'episode_metadata': tfds.as_numpy(episode['episode_metadata'])}
+            i += 1
 
 
 # -------------------------
@@ -188,7 +191,7 @@ def load_or_create_compressor(
     first = builders[0]
     ds = first.as_dataset(split='train').take(100)
     count = 0
-    for episode in tfds.as_numpy(ds):
+    for episode in ds:
         steps = list(tfds.as_numpy(episode['steps']))
         if not steps:
             continue
