@@ -21,7 +21,6 @@ except Exception as _e:  # pragma: no cover
 
 from vggt_compression_analysis import VGGTCompressor
 from evaluation.supporting_files.load_fn import load_and_preprocess_images
-from evaluation.scripts.run_libero_eval_vggt import _extract_tokens_from_outputs
 
 
 # -------------------------
@@ -147,7 +146,10 @@ class CompressedVggtDatasetOnnx(tfds.core.GeneratorBasedBuilder):
                 Image.fromarray(img).save(temp_img_path)
                 batched = load_and_preprocess_images([temp_img_path])  # (1, 3, H, W) with current eval settings
                 outputs = self._session.run(None, {self._input_name: batched})
-                tokens_2d = _extract_tokens_from_outputs(outputs)  # (L, D)
+                # Local copy of evaluation's token extraction logic
+                tokens_2d = np.asarray(outputs[0])
+                while tokens_2d.ndim > 2 and tokens_2d.shape[0] == 1:
+                    tokens_2d = np.squeeze(tokens_2d, axis=0)
                 if tokens_2d.ndim == 3:
                     tokens_2d = tokens_2d[0]
 
@@ -198,7 +200,9 @@ def load_or_create_compressor(
             Image.fromarray(img).save(temp_img_path)
             batched = load_and_preprocess_images([temp_img_path])
             outputs = session.run(None, {input_name: batched})
-            tokens_2d = _extract_tokens_from_outputs(outputs)
+            tokens_2d = np.asarray(outputs[0])
+            while tokens_2d.ndim > 2 and tokens_2d.shape[0] == 1:
+                tokens_2d = np.squeeze(tokens_2d, axis=0)
             if tokens_2d.ndim == 3:
                 tokens_2d = tokens_2d[0]
             samples.append(tokens_2d)
