@@ -160,14 +160,38 @@ def main(_):
     else:
         text_processor = ModuleSpec.instantiate(config["text_processor"])()
 
+    # def process_batch(batch):
+    #     batch = process_text(batch, text_processor)
+    #     del batch["dataset_name"]
+    #     if "task" not in batch:
+    #         batch["task"] = {}
+    #     if "image_primary" in batch["observation"]:
+    #         # Assumes the goal is the first image in the window_size sequence
+    #         batch["task"]["image_primary"] = batch["observation"]["image_primary"][:, 0]
+        
+    #     return batch
+
+    # ONLY VGGT VERSION
     def process_batch(batch):
         batch = process_text(batch, text_processor)
         del batch["dataset_name"]
         if "task" not in batch:
             batch["task"] = {}
-        if "image_primary" in batch["observation"]:
-            # Assumes the goal is the first image in the window_size sequence
-            batch["task"]["image_primary"] = batch["observation"]["image_primary"][:, 0]
+        # Keep only VGGT tokens in observation
+        obs = batch.get("observation", {})
+        # Drop any image observations (primary/wrist/etc.)
+        for k in list(obs.keys()):
+            if "image" in k:
+                obs.pop(k, None)
+        # Clean pad masks for image entries
+        pad = obs.get("pad_mask_dict")
+        if pad is not None:
+            for k in list(pad.keys()):
+                if "image" in k:
+                    pad.pop(k, None)
+        # Ensure no image goal is used
+        batch["task"].pop("image_primary", None)
+
         return batch
 
     dataset = make_single_dataset(
@@ -232,12 +256,17 @@ def main(_):
     #########
 
     if FLAGS.config.save_dir is not None:
-        save_dir = tf.io.gfile.join(
-            FLAGS.config.save_dir,
-            FLAGS.config.wandb.project,
-            FLAGS.config.wandb.group or "",
-            wandb_id,
-        )
+        # Allow full resume: if a resume_dir is provided, use it directly
+        resume_dir = FLAGS.config.get("resume_dir", None)
+        if resume_dir is not None and isinstance(resume_dir, str) and len(resume_dir) > 0:
+            save_dir = resume_dir
+        else:
+            save_dir = tf.io.gfile.join(
+                FLAGS.config.save_dir,
+                FLAGS.config.wandb.project,
+                FLAGS.config.wandb.group or "",
+                wandb_id,
+            )
         wandb.config.update(dict(save_dir=save_dir), allow_val_change=True)
         logging.info("Saving to %s", save_dir)
         save_callback = SaveCallback(save_dir)
@@ -326,6 +355,23 @@ def main(_):
 
     #########
     #
+    # Resume from checkpoint (full TrainState) if available
+    #
+    #########
+
+    start_step = 0
+    if save_dir is not None:
+        try:
+            latest_step = save_callback.state_checkpointer.latest_step()
+        except Exception:
+            latest_step = None
+        if latest_step is not None:
+            train_state = save_callback.state_checkpointer.restore(latest_step, items=train_state)
+            start_step = int(train_state.step)
+            logging.info("Restored checkpoint from %s at step %d", save_dir, start_step)
+
+    #########
+    #
     # Build validation & visualization callbacks
     #
     #########
@@ -397,8 +443,8 @@ def main(_):
     _batch_check_printed = False 
     
     for i in tqdm.tqdm(
-        range(0, int(FLAGS.config.num_steps)),
-        total=int(FLAGS.config.num_steps),
+        range(start_step, int(FLAGS.config.num_steps)),
+        total=int(FLAGS.config.num_steps) - start_step,
         dynamic_ncols=True,
     ):
         timer.tick("total")
@@ -406,7 +452,7 @@ def main(_):
         with timer("dataset"):
             batch = next(train_data_iter)
             
-        # --- THIS IS OUR NEW DEBUGGING PRINT STATEMENT ---
+        # --- DEBUG BLOCK TO ENSURE VGGT TOKENS ARE HERE ---
         if not _batch_check_printed:
             print("\n" + "="*50)
             print("DEBUG: Final batch check (what the model receives)!")
@@ -421,7 +467,18 @@ def main(_):
                 print("  -> CRITICAL WARNING: 'vggt_tokens' were dropped somewhere in the data pipeline!")
             print("="*50 + "\n")
             _batch_check_printed = True
-        # --- END OF DEBUGGING PRINT STATEMENT ---
+            # --- END OF DEBUGGING BLOCK ---
+        
+            #  --- DEBUG BLOCK TO CHECK IF OBSERVATION IS HERE ---
+            image_obs_keys = [k for k in batch['observation'].keys() if 'image' in k]
+            if image_obs_keys:
+                print(f"  -> WARNING: image observation keys still present: {image_obs_keys}")
+            else:
+                print("  -> WARNING: No image observations present; using only VGGT tokens.")
+            print("="*50 + "\n")
+            _batch_check_printed = True
+            
+            # --- END OF DEBUGGING BLOCK ---
 
         # Optional: dump a few images to verify orientation
         if dump_enabled and dumped < FLAGS.dump_train_images_max:

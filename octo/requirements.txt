@@ -1,5 +1,9 @@
+--extra-index-url https://download.pytorch.org/whl/cu118
+torch==2.3.1
+torchvision==0.18.1
+
 gym >= 0.26
-numpy == 1.24.3
+numpy == 1.26.4
 ml_dtypes == 0.2.0
 chex == 0.1.85
 optax == 0.1.5
@@ -25,3 +29,6 @@ tensorflow_graphics == 2021.12.3
 dlimp @ git+https://github.com/kvablack/dlimp@5edaa4691567873d495633f2708982b42edf1972
 plotly >= 5.16.1
 matplotlib
+Pillow
+huggingface_hub
+scikit-learn

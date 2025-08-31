@@ -32,6 +32,10 @@ export TOKENIZERS_PARALLELISM=false
 export TF_CPP_MIN_LOG_LEVEL=3
 export DISABLE_LIBERO_FLIPS=0
 
+echo "--> Checking for NVIDIA driver with nvidia-smi:"
+nvidia-smi
+echo ""
+
 # GPU diagnostics (runs on the allocated GPU node)
 srun -n 1 python - <<'PY'
 import os, jax, torch
@@ -60,8 +64,8 @@ PY
 
 srun python -m evaluation.scripts.run_libero_eval \
   --model_family octo \
-  --pretrained_checkpoint "/gpfs/home4/pkarageorgis/geo_octo/octo/my_octo_vggt_model_offline/octo_finetune_baseline/experiment_20250823_115519" \
+  --pretrained_checkpoint "/scratch-shared/tmp.cwkV8vOvfY/trained_models/my_octo_vggt_model_offline/octo_finetune_baseline/experiment_20250823_115519_SPATIAL_NO_VGGT" \
   --task_suite_name libero_spatial \
-  --checkpoint_step 150000 \
+  --checkpoint_step 250000 \
   --num_trials_per_task 50 \
   --num_open_loop_steps 4

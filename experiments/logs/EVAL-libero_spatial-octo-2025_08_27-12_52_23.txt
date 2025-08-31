@@ -1,0 +1,30 @@
+Task suite: libero_spatial
+Using default initial states
+
+Task: pick up the black bowl between the plate and the ramekin and place it on the plate
+Starting episode 1...
+[VGGT] Failed to compute tokens at t=10: Could not reshape raw VGGT tokens. Expected shape (261, 2048), but got (1374, 2048). Error: cannot reshape array of size 2813952 into shape (1,261,2048)
+[VGGT] Failed to compute tokens at t=11: Could not reshape raw VGGT tokens. Expected shape (261, 2048), but got (1374, 2048). Error: cannot reshape array of size 2813952 into shape (1,261,2048)
+[VGGT] Failed to compute tokens at t=12: Could not reshape raw VGGT tokens. Expected shape (261, 2048), but got (1374, 2048). Error: cannot reshape array of size 2813952 into shape (1,261,2048)
+[VGGT] Failed to compute tokens at t=13: Could not reshape raw VGGT tokens. Expected shape (261, 2048), but got (1374, 2048). Error: cannot reshape array of size 2813952 into shape (1,261,2048)
+[VGGT] Failed to compute tokens at t=14: Could not reshape raw VGGT tokens. Expected shape (261, 2048), but got (1374, 2048). Error: cannot reshape array of size 2813952 into shape (1,261,2048)
+[VGGT] Failed to compute tokens at t=15: Could not reshape raw VGGT tokens. Expected shape (261, 2048), but got (1374, 2048). Error: cannot reshape array of size 2813952 into shape (1,261,2048)
+[VGGT] Failed to compute tokens at t=16: Could not reshape raw VGGT tokens. Expected shape (261, 2048), but got (1374, 2048). Error: cannot reshape array of size 2813952 into shape (1,261,2048)
+[VGGT] Failed to compute tokens at t=17: Could not reshape raw VGGT tokens. Expected shape (261, 2048), but got (1374, 2048). Error: cannot reshape array of size 2813952 into shape (1,261,2048)
+[VGGT] Failed to compute tokens at t=18: Could not reshape raw VGGT tokens. Expected shape (261, 2048), but got (1374, 2048). Error: cannot reshape array of size 2813952 into shape (1,261,2048)
+[VGGT] Failed to compute tokens at t=19: Could not reshape raw VGGT tokens. Expected shape (261, 2048), but got (1374, 2048). Error: cannot reshape array of size 2813952 into shape (1,261,2048)
+[VGGT] Failed to compute tokens at t=20: Could not reshape raw VGGT tokens. Expected shape (261, 2048), but got (1374, 2048). Error: cannot reshape array of size 2813952 into shape (1,261,2048)
+[VGGT] Failed to compute tokens at t=21: Could not reshape raw VGGT tokens. Expected shape (261, 2048), but got (1374, 2048). Error: cannot reshape array of size 2813952 into shape (1,261,2048)
+[VGGT] Failed to compute tokens at t=22: Could not reshape raw VGGT tokens. Expected shape (261, 2048), but got (1374, 2048). Error: cannot reshape array of size 2813952 into shape (1,261,2048)
+[VGGT] Failed to compute tokens at t=23: Could not reshape raw VGGT tokens. Expected shape (261, 2048), but got (1374, 2048). Error: cannot reshape array of size 2813952 into shape (1,261,2048)
+[VGGT] Failed to compute tokens at t=24: Could not reshape raw VGGT tokens. Expected shape (261, 2048), but got (1374, 2048). Error: cannot reshape array of size 2813952 into shape (1,261,2048)
+[VGGT] Failed to compute tokens at t=25: Could not reshape raw VGGT tokens. Expected shape (261, 2048), but got (1374, 2048). Error: cannot reshape array of size 2813952 into shape (1,261,2048)
+[VGGT] Failed to compute tokens at t=26: Could not reshape raw VGGT tokens. Expected shape (261, 2048), but got (1374, 2048). Error: cannot reshape array of size 2813952 into shape (1,261,2048)
+[VGGT] Failed to compute tokens at t=27: Could not reshape raw VGGT tokens. Expected shape (261, 2048), but got (1374, 2048). Error: cannot reshape array of size 2813952 into shape (1,261,2048)
+[VGGT] Failed to compute tokens at t=28: Could not reshape raw VGGT tokens. Expected shape (261, 2048), but got (1374, 2048). Error: cannot reshape array of size 2813952 into shape (1,261,2048)
+[VGGT] Failed to compute tokens at t=29: Could not reshape raw VGGT tokens. Expected shape (261, 2048), but got (1374, 2048). Error: cannot reshape array of size 2813952 into shape (1,261,2048)
+[VGGT] Failed to compute tokens at t=30: Could not reshape raw VGGT tokens. Expected shape (261, 2048), but got (1374, 2048). Error: cannot reshape array of size 2813952 into shape (1,261,2048)
+[VGGT] Failed to compute tokens at t=31: Could not reshape raw VGGT tokens. Expected shape (261, 2048), but got (1374, 2048). Error: cannot reshape array of size 2813952 into shape (1,261,2048)
+[VGGT] Failed to compute tokens at t=32: Could not reshape raw VGGT tokens. Expected shape (261, 2048), but got (1374, 2048). Error: cannot reshape array of size 2813952 into shape (1,261,2048)
+[VGGT] Failed to compute tokens at t=33: Could not reshape raw VGGT tokens. Expected shape (261, 2048), but got (1374, 2048). Error: cannot reshape array of size 2813952 into shape (1,261,2048)
+[VGGT] Failed to compute tokens at t=34: Could not reshape raw VGGT tokens. Expected shape (261, 2048), but got (1374, 2048). Error: cannot reshape array of size 2813952 into shape (1,261,2048)

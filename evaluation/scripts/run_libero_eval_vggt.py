@@ -389,10 +389,10 @@ def _extract_tokens_from_outputs(outputs: list, cfg: GenerateConfig) -> np.ndarr
     
     # --- For Debugging: Let's see what we got ---
     # You can uncomment this block to see the shapes of ALL outputs
-    print("\n--- DEBUG: ONNX Outputs ---")
-    for i, out in enumerate(outputs):
-        print(f"Output [{i}]: type={type(out)}, shape={np.asarray(out).shape}")
-    print("--------------------------\n")
+    # print("\n--- DEBUG: ONNX Outputs ---")
+    # for i, out in enumerate(outputs):
+    #     print(f"Output [{i}]: type={type(out)}, shape={np.asarray(out).shape}")
+    # print("--------------------------\n")
     
     # Squeeze any unnecessary batch/view dimensions (e.g., shape (1, 1, 261, 2048) -> (261, 2048))
     while arr.ndim > 2 and arr.shape[0] == 1:
@@ -690,16 +690,13 @@ def eval_libero(cfg: GenerateConfig) -> float:
     
     try:
         mcfg = model.config  # <- don't overwrite cfg
-        print("[DEBUG] top keys:", list(mcfg.keys()))
         obs_tok = mcfg.get("model", {}).get("observation_tokenizers") or mcfg.get("observation_tokenizers")
-        print("[DEBUG] obs tokenizers:", list((obs_tok or {}).keys()))
         heads = mcfg.get("heads") or mcfg.get("model", {}).get("heads")
         act_dim = None
         if isinstance(heads, dict):
             act = heads.get("action", {})
             if isinstance(act, dict):
                 act_dim = act.get("dim") or act.get("readout_dim")
-        print("[DEBUG] action head dim (from config):", act_dim)
     except Exception as e:
         print("[DEBUG] config introspection error:", e)
 

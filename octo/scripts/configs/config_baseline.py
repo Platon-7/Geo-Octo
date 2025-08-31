@@ -54,6 +54,7 @@ def get_config(config_string="full,multimodal"):
     window_size = FieldReference(default=1)
 
     config = dict(
+        resume_dir="",
         pretrained_path=placeholder(str),
         pretrained_step=placeholder(int),
         batch_size=64,

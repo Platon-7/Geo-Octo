@@ -232,12 +232,17 @@ def main(_):
     #########
 
     if FLAGS.config.save_dir is not None:
-        save_dir = tf.io.gfile.join(
-            FLAGS.config.save_dir,
-            FLAGS.config.wandb.project,
-            FLAGS.config.wandb.group or "",
-            wandb_id,
-        )
+        # Allow full resume: if a resume_dir is provided, use it directly
+        resume_dir = FLAGS.config.get("resume_dir", None)
+        if resume_dir is not None and isinstance(resume_dir, str) and len(resume_dir) > 0:
+            save_dir = resume_dir
+        else:
+            save_dir = tf.io.gfile.join(
+                FLAGS.config.save_dir,
+                FLAGS.config.wandb.project,
+                FLAGS.config.wandb.group or "",
+                wandb_id,
+            )
         wandb.config.update(dict(save_dir=save_dir), allow_val_change=True)
         logging.info("Saving to %s", save_dir)
         save_callback = SaveCallback(save_dir)
@@ -329,6 +334,17 @@ def main(_):
     # Build validation & visualization callbacks
     #
     #########
+    
+    start_step = 0
+    if save_dir is not None:
+        try:
+            latest_step = save_callback.state_checkpointer.latest_step()
+        except Exception:
+            latest_step = None
+        if latest_step is not None:
+            train_state = save_callback.state_checkpointer.restore(latest_step, items=train_state)
+            start_step = int(train_state.step)
+            logging.info("Restored checkpoint from %s at step %d", save_dir, start_step)
 
     if FLAGS.config.modality == "image_conditioned":
         modes_to_evaluate = ["image_conditioned"]
@@ -394,8 +410,8 @@ def main(_):
             dump_enabled = False
             logging.warning("Disabling dump_train_images: imageio not available or cannot create output dir.")
     for i in tqdm.tqdm(
-        range(0, int(FLAGS.config.num_steps)),
-        total=int(FLAGS.config.num_steps),
+        range(start_step, int(FLAGS.config.num_steps)),
+        total=int(FLAGS.config.num_steps) - start_step,
         dynamic_ncols=True,
     ):
         timer.tick("total")

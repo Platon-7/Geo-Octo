@@ -1,31 +1,97 @@
 #!/bin/bash
-
-#SBATCH --partition=gpu_a100
-#SBATCH --gres=gpu:1            # Reduced to 1 GPU to avoid DDP issues
+#SBATCH --partition=gpu_h100
+#SBATCH --gres=gpu:1
 #SBATCH --cpus-per-task=4
-#SBATCH --gpus=1                # Reduced to 1 GPU to avoid DDP issues
+#SBATCH --gpus=1
 #SBATCH --job-name=Compress_VGGT_Libero
 #SBATCH --ntasks=1
-#SBATCH --time=06:00:00         # Increased time for full train-eval-test cycle
-#SBATCH --mem=122000M            # Decreased memory (we dont need it)
+#SBATCH --time=06:00:00
+#SBATCH --mem=122000M
 #SBATCH --output=outfiles/build_compressed_dataset_%A.out
 
 module purge
 module load 2024
 module load Anaconda3/2024.06-1
-module load CUDA/11.8.0
 
 export WANDB_API_KEY="5d3260b21e8729601f20bfe817abc713a0dcc047"
 export WANDB_ENTITY="nlp-squad"
 export WANDB_PROJECT="Geo_Octo"
 
-source activate octo
-cd octo
+source activate octo-onnx
 
-srun -u python scripts/create_vggt_dataset_compressed.py \
-    --input_data_dir="/home/pkarageorgis/geo_octo/libero_datasets" \
-    --output_data_dir="/scratch-shared/tmp.cwkV8vOvfY/libero_vggt_compressed" \
-    --target_size="32,48" \
-    --compression_samples=2500 \
-    --vggt_batch_size=32 \
-    --overwrite
+# ===================================================================
+# ================= GPU & CUDA DIAGNOSTICS ==========================
+# ===================================================================
+
+echo "################################################"
+echo "#           STARTING DIAGNOSTICS               #"
+echo "################################################"
+echo ""
+
+# 1. Check which node the job is running on
+echo "--> Running on host: $(hostname)"
+echo ""
+
+# 2. Check for NVIDIA drivers using the official utility
+echo "--> Checking for NVIDIA driver with nvidia-smi:"
+nvidia-smi
+echo ""
+
+export NVRTC_LIB_DIR=$(python - <<'PY'
+import os,inspect
+import nvidia.cuda_nvrtc as nvrtc
+print(os.path.join(os.path.dirname(inspect.getfile(nvrtc)),'lib'))
+PY
+)
+export LD_LIBRARY_PATH="$NVRTC_LIB_DIR:$CONDA_PREFIX/lib:$LD_LIBRARY_PATH"
+[ -f "$NVRTC_LIB_DIR/libnvrtc.so" ] || ln -sf $(ls "$NVRTC_LIB_DIR"/libnvrtc.so.* | head -n1) "$NVRTC_LIB_DIR/libnvrtc.so"
+
+# 3. Check CUDA and Conda environment variables
+echo "--> Checking relevant environment variables:"
+echo "    - PATH: $PATH"
+echo "    - LD_LIBRARY_PATH: $LD_LIBRARY_PATH"
+echo "    - CUDA_HOME: $CUDA_HOME"
+echo "    - CUDA_VISIBLE_DEVICES: $CUDA_VISIBLE_DEVICES"
+echo "    - CONDA_PREFIX: $CONDA_PREFIX"
+echo ""
+
+# 4. Check which python and pip are being used
+echo "--> Which python and pip are in the path?"
+which python
+which pip
+echo ""
+
+# 5. List key conda packages
+echo "--> Key GPU packages in Conda environment:"
+conda list 'pytorch|cudatoolkit|tensorflow|jax|onnxruntime'
+echo ""
+
+python -c "import onnxruntime as ort; print(ort.get_available_providers())"
+
+echo "################################################"
+echo "#            DIAGNOSTICS COMPLETE              #"
+echo "################################################"
+echo ""
+
+# srun -u python /gpfs/home4/pkarageorgis/geo_octo/octo/scripts/create_vggt_dataset_compressed.py \
+#     --input_data_dir="/home/pkarageorgis/geo_octo/libero_datasets" \
+#     --output_data_dir="/scratch-shared/tmp.cwkV8vOvfY/libero_vggt_compressed" \
+#     --target_size="32,48" \
+#     --compression_samples=2500 \
+#     --vggt_batch_size=32 \
+#     --overwrite
+
+export PYTHONPATH="/gpfs/home4/pkarageorgis/geo_octo:$PYTHONPATH"
+
+# Build ONNX-compressed datasets
+srun -u python /gpfs/home4/pkarageorgis/geo_octo/octo/scripts/create_vggt_dataset_compressed_onnx.py \
+  --input_data_dir=/home/pkarageorgis/geo_octo/libero_datasets \
+  --output_data_dir=/scratch-shared/tmp.cwkV8vOvfY/libero_vggt_onnx_compressed \
+  --vggt_onnx_path=/home/pkarageorgis/geo_octo/onnx_fp16/vggt_fp16.onnx \
+  --vggt_input_res=224 \
+  --vggt_use_cuda=True \
+  --compression_method=pca \
+  --target_size=32,48 \
+  --compression_samples=2500 \
+  --batch_size_eval=32 \
+  --overwrite

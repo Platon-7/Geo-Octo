@@ -35,7 +35,7 @@ def load_and_preprocess_images(image_path_list):
         raise ValueError("At least 1 image is required")
 
     images = []
-    target_size = 518
+    target_size = 224
 
     # Process all images
     for image_path in image_path_list:
@@ -63,7 +63,7 @@ def load_and_preprocess_images(image_path_list):
             new_width = round(width * (new_height / height) / 14) * 14  # Make divisible by 14
 
         # Resize with new dimensions (width, height)
-        img = img.resize((new_width, new_height), Image.Resampling.BICUBIC)
+        img = img.resize((new_width, new_height), Image.Resampling.BILINEAR)
         img_array = np.array(img, dtype=np.float32) / 255.0   # Convert to numpy array (0, 1)
         img_array = np.transpose(img_array, (2, 0, 1))        # Convert from HWC to CHW format
 

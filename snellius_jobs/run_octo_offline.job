@@ -33,7 +33,17 @@ export JAX_DISABLE_PERSISTENT_CACHE=1
 source activate octo
 cd octo
 
-srun -u python scripts/finetune_vggt.py \
-    --config=scripts/configs/config_vggt.py:full,language_conditioned \
-    --config.pretrained_path=hf://rail-berkeley/octo-base-1.5 \
-    --config.save_dir=./my_octo_vggt_model_offline
+# srun -u python scripts/finetune_vggt.py \
+#     --config=scripts/configs/config_vggt.py:full,language_conditioned \
+#     --config.pretrained_path=hf://rail-berkeley/octo-base-1.5 \
+#     --config.save_dir=./my_octo_vggt_model_offline
+
+# RESUME CODE
+srun -u python scripts/finetune_baseline.py \
+  --config=scripts/configs/config_baseline.py:full,language_conditioned \
+  --config.pretrained_path=/home/pkarageorgis/geo_octo/octo/my_octo_vggt_model_offline/octo_finetune_baseline/experiment_20250823_115519_SPATIAL_NO_VGGT \
+  --config.pretrained_step=150000 \
+  --config.save_dir=/home/pkarageorgis/geo_octo/octo/my_octo_vggt_model_offline \
+  --config.resume_dir="/home/pkarageorgis/geo_octo/octo/my_octo_vggt_model_offline/octo_finetune_baseline/experiment_20250823_115519_SPATIAL_NO_VGGT" \
+  --config.num_steps=250000 \
+  --config.optimizer.learning_rate.decay_steps=250000
