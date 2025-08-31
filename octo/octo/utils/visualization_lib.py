@@ -546,8 +546,17 @@ class WandBFigure:
 
     def __exit__(self, exc_type, exc_value, traceback):
         self.canvas.draw()
-        out_image = np.frombuffer(self.canvas.tostring_rgb(), dtype="uint8")
-        self.image = out_image.reshape(self.fig.canvas.get_width_height()[::-1] + (3,))
+        # Compatibility with newer Matplotlib where tostring_rgb may be removed
+        width, height = self.fig.canvas.get_width_height()
+        try:
+            # Preferred path in older Matplotlib
+            buf = self.canvas.tostring_rgb()
+            arr = np.frombuffer(buf, dtype=np.uint8).reshape(height, width, 3)
+        except AttributeError:
+            # Fallback for newer Matplotlib: use RGBA buffer and drop alpha
+            buf = self.canvas.buffer_rgba()
+            arr = np.frombuffer(buf, dtype=np.uint8).reshape(height, width, 4)[..., :3]
+        self.image = arr
         plt.close(self.fig)
 
 
