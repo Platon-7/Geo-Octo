@@ -387,6 +387,39 @@ class VGGTTokenizer(nn.Module):
 ### END MODIFICATION ###
 
 
+# A minimal tokenizer that just reshapes VGGT tokens into (B, T, N, D) and
+# returns an all-ones mask. No compression, no token learner, no extras.
+class SimpleVGGTTokenizer(nn.Module):
+    @nn.compact
+    def __call__(
+        self,
+        observations: Data,
+        tasks: Data = None,
+        train: bool = False,
+    ) -> TokenGroup:
+        vggt_tokens = observations.get("vggt_tokens")
+        if vggt_tokens is None:
+            raise ValueError("`vggt_tokens` not found in observations.")
+
+        x = jnp.asarray(vggt_tokens, dtype=jnp.float32)
+
+        if x.ndim == 5:
+            # (B, T, H, W, C) -> (B, T, N, C)
+            b, t, h, w, c = x.shape
+            tokens = jnp.reshape(x, (b, t, h * w, c))
+        elif x.ndim == 4:
+            # Assume (B, T, H, W) -> (B, T, N, 1)
+            b, t, h, w = x.shape
+            tokens = jnp.reshape(x[..., None], (b, t, h * w, 1))
+        else:
+            raise ValueError(
+                f"Unsupported vggt_tokens shape {x.shape}. Expected (B,T,H,W) or (B,T,H,W,C)."
+            )
+
+        mask = jnp.ones(tokens.shape[:-1], dtype=jnp.bool_)
+        return TokenGroup(tokens=tokens, mask=mask)
+
+
 class VisionMixer(nn.Module):
     """
     A tokenizer that correctly handles a string-based configuration by using
