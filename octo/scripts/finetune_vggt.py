@@ -47,6 +47,11 @@ flags.DEFINE_bool("debug", False, "Debug config (no wandb logging)")
 flags.DEFINE_bool("dump_train_images", False, "If True, save a few input images for inspection.")
 flags.DEFINE_integer("dump_train_images_max", 20, "Max number of training images to dump.")
 flags.DEFINE_string("dump_train_images_dir", "./train_image_dumps", "Directory to save dumped training images.")
+flags.DEFINE_bool(
+    "use_vision_encoder",
+    True,
+    "If True, keep vision encoder image observations; if False, run VGGT-only.",
+)
 
 default_config_file = os.path.join(
     os.path.dirname(__file__), "configs/finetune_config.py"
@@ -171,26 +176,41 @@ def main(_):
         
     #     return batch
 
-    # ONLY VGGT VERSION
     def process_batch(batch):
         batch = process_text(batch, text_processor)
         del batch["dataset_name"]
         if "task" not in batch:
             batch["task"] = {}
-        # Keep only VGGT tokens in observation
+
+        # Toggle behavior based on flag: keep images (vision encoder) or VGGT-only
         obs = batch.get("observation", {})
-        # Drop any image observations (primary/wrist/etc.)
-        for k in list(obs.keys()):
-            if "image" in k:
-                obs.pop(k, None)
-        # Clean pad masks for image entries
-        pad = obs.get("pad_mask_dict")
-        if pad is not None:
+        if not FLAGS.use_vision_encoder:
+            # VGGT-only: drop image observations and their pad masks
+            for k in list(obs.keys()):
+                if "image" in k:
+                    obs.pop(k, None)
+            pad = obs.get("pad_mask_dict")
+            if pad is None:
+                obs["pad_mask_dict"] = {}
+                pad = obs["pad_mask_dict"]
             for k in list(pad.keys()):
                 if "image" in k:
                     pad.pop(k, None)
-        # Ensure no image goal is used
-        batch["task"].pop("image_primary", None)
+            # Ensure VGGT pad mask exists and aligns with timestep padding
+            if "vggt_tokens" in obs:
+                if "timestep_pad_mask" in obs:
+                    pad["vggt_tokens"] = obs["timestep_pad_mask"].astype(bool)
+            # No image goal when VGGT-only
+            batch["task"].pop("image_primary", None)
+        else:
+            # Vision-encoder path: preserve images; optionally set image goal if available
+            if (
+                "image_primary" in obs
+                and "image_primary" not in batch["task"]
+                and obs["image_primary"].ndim >= 5
+            ):
+                # Use the first timestep image as goal
+                batch["task"]["image_primary"] = obs["image_primary"][:, 0]
 
         return batch
 
