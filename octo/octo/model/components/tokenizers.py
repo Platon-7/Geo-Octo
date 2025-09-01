@@ -380,6 +380,9 @@ class VGGTTokenizer(nn.Module):
 
             tokens = TokenLearner(num_tokens=self.num_output_tokens)(tokens, train=train)
 
+        # Lightweight log for debugging usage
+        logging.info("VGGTTokenizer active: tokens shape %s", tokens.shape)
+
         # Generate mask of shape (B, T, N)
         mask = jnp.ones(tokens.shape[:-1], dtype=jnp.bool_)
 
@@ -415,6 +418,8 @@ class SimpleVGGTTokenizer(nn.Module):
             raise ValueError(
                 f"Unsupported vggt_tokens shape {x.shape}. Expected (B,T,H,W) or (B,T,H,W,C)."
             )
+
+        logging.info("SimpleVGGTTokenizer active: tokens shape %s", tokens.shape)
 
         mask = jnp.ones(tokens.shape[:-1], dtype=jnp.bool_)
         return TokenGroup(tokens=tokens, mask=mask)
@@ -462,10 +467,9 @@ class VisionMixer(nn.Module):
         patch_tokens = self.patch_tokenizer(observations, tasks, train=train)
 
         # Only call VGGT tokenizer if tokens exist in observations to avoid hard failure
+        vggt_tokens = None
         if "vggt_tokens" in observations:
             vggt_tokens = self.vggt_tokenizer(observations, tasks, train=train)
-        else:
-            vggt_tokens = None
 
         # If both modalities are missing, return None so caller can skip this tokenizer
         if patch_tokens is None and vggt_tokens is None:
@@ -473,12 +477,19 @@ class VisionMixer(nn.Module):
 
         # If only one is present, return it directly (no projection needed)
         if patch_tokens is None:
+            logging.info("VisionMixer: returning VGGT-only tokens shape %s", vggt_tokens.tokens.shape)
             return vggt_tokens
         if vggt_tokens is None:
+            logging.info("VisionMixer: returning patch-only tokens shape %s", patch_tokens.tokens.shape)
             return patch_tokens
 
         # Both present: project VGGT features to match patch token feature dim, then concat along token axis
         projected_vggt_tokens = self.vggt_projection(vggt_tokens.tokens)
+        logging.info(
+            "VisionMixer: mixing patch %s with projected vggt %s",
+            patch_tokens.tokens.shape,
+            projected_vggt_tokens.shape,
+        )
         mixed_tokens = jnp.concatenate([patch_tokens.tokens, projected_vggt_tokens], axis=-2)
         mixed_mask = jnp.concatenate([patch_tokens.mask, vggt_tokens.mask], axis=-1)
         return TokenGroup(tokens=mixed_tokens, mask=mixed_mask)
