@@ -458,11 +458,27 @@ class VisionMixer(nn.Module):
         tasks: Data,
         train: bool = False,
     ) -> TokenGroup:
+        # Try image/patch tokens; tokenizer may return None if images are absent
         patch_tokens = self.patch_tokenizer(observations, tasks, train=train)
-        vggt_tokens = self.vggt_tokenizer(observations, tasks, train=train)
-        
+
+        # Only call VGGT tokenizer if tokens exist in observations to avoid hard failure
+        if "vggt_tokens" in observations:
+            vggt_tokens = self.vggt_tokenizer(observations, tasks, train=train)
+        else:
+            vggt_tokens = None
+
+        # If both modalities are missing, return None so caller can skip this tokenizer
+        if patch_tokens is None and vggt_tokens is None:
+            return None
+
+        # If only one is present, return it directly (no projection needed)
+        if patch_tokens is None:
+            return vggt_tokens
+        if vggt_tokens is None:
+            return patch_tokens
+
+        # Both present: project VGGT features to match patch token feature dim, then concat along token axis
         projected_vggt_tokens = self.vggt_projection(vggt_tokens.tokens)
-        
         mixed_tokens = jnp.concatenate([patch_tokens.tokens, projected_vggt_tokens], axis=-2)
         mixed_mask = jnp.concatenate([patch_tokens.mask, vggt_tokens.mask], axis=-1)
         return TokenGroup(tokens=mixed_tokens, mask=mixed_mask)
