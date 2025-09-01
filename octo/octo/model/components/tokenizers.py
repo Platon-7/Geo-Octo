@@ -338,22 +338,38 @@ class VGGTTokenizer(nn.Module):
             raise ValueError(
                 "`vggt_tokens` not found in observations. Ensure they are added in the data pipeline."
             )
-        
-        # Ensure proper dtype for JAX compatibility
-        # Convert to float32 for stable training (avoid float16 precision issues)
-        tokens = jnp.asarray(vggt_tokens, dtype=jnp.float32)
-        
-        # Optional compression: reduce feature dimension
-        if self.use_compression:
-            compressed_dim = int(tokens.shape[-1] * self.compression_ratio)
-            tokens = nn.Dense(
-                features=compressed_dim,
-                name="vggt_compression"
-            )(tokens)
-        
+
+        # Standardize input to (B, T, N, D)
+        # Accept either (B, T, H, W), (B, T, H, W, C), or (B, T, N, D)
+        tokens_raw = jnp.asarray(vggt_tokens, dtype=jnp.float32)
+
+        if tokens_raw.ndim == 5:
+            # (B, T, H, W, C) -> (B, T, N, C)
+            b, t, h, w, c = tokens_raw.shape
+            tokens = jnp.reshape(tokens_raw, (b, t, h * w, c))
+        elif tokens_raw.ndim == 4:
+            # Heuristic: if last dim is large (e.g., 128+), treat as (B, T, N, D)
+            # otherwise treat as (B, T, H, W)
+            b, t, a, b2 = tokens_raw.shape
+            if b2 >= 128:
+                # Already (B, T, N, D)
+                tokens = tokens_raw
+            else:
+                # (B, T, H, W) -> (B, T, N, 1)
+                tokens = tokens_raw[..., None]
+                tokens = jnp.reshape(tokens, (b, t, a * b2, 1))
+        else:
+            raise ValueError(
+                f"Unsupported vggt_tokens shape {tokens_raw.shape}. Expected 4D or 5D (B,T,H,W[,C]) or (B,T,N,D)."
+            )
+
+        # Optional compression: reduce feature dimension (applies to D)
+        if self.use_compression and tokens.shape[-1] > 1:
+            compressed_dim = max(1, int(tokens.shape[-1] * self.compression_ratio))
+            tokens = nn.Dense(features=compressed_dim, name="vggt_compression")(tokens)
+
         # Optional token reduction using TokenLearner
         if self.use_token_learner:
-            # Add positional embeddings
             pos_embed = self.param(
                 "pos_embed",
                 nn.initializers.normal(stddev=0.02),
@@ -361,15 +377,12 @@ class VGGTTokenizer(nn.Module):
             )
             tokens = tokens + jnp.broadcast_to(pos_embed, tokens.shape)
             tokens = nn.LayerNorm(name="vggt_norm")(tokens)
-            
-            # Use TokenLearner to reduce token count
-            tokens = TokenLearner(
-                num_tokens=self.num_output_tokens,
-            )(tokens, train=train)
-        
-        # Generate mask
+
+            tokens = TokenLearner(num_tokens=self.num_output_tokens)(tokens, train=train)
+
+        # Generate mask of shape (B, T, N)
         mask = jnp.ones(tokens.shape[:-1], dtype=jnp.bool_)
-        
+
         return TokenGroup(tokens=tokens, mask=mask)
 ### END MODIFICATION ###
 
