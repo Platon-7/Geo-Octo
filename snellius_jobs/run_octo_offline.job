@@ -4,11 +4,11 @@
 #SBATCH --gres=gpu:1              # Request 4 GPUs instead of 1
 #SBATCH --cpus-per-task=14        # Scale CPUs (3 GPUs × 7 CPUs)
 #SBATCH --gpus=1                 # Request 4 GPUs
-#SBATCH --job-name=Octo_Finetune_Offline_MultiGPU
+#SBATCH --job-name=Octo_Finetune_Offline
 #SBATCH --ntasks=1
 #SBATCH --time=48:00:00
 #SBATCH --mem=121000M             # Double the memory (or adjust as needed)
-#SBATCH --output=outfiles/finetune_offline_octo_multigpu_%A.out
+#SBATCH --output=outfiles/correctly_finetune_offline_octo_%A.out
 
 module purge
 module load 2024
@@ -33,17 +33,59 @@ export JAX_DISABLE_PERSISTENT_CACHE=1
 source activate octo
 cd octo
 
-# srun -u python scripts/finetune_vggt.py \
-#     --config=scripts/configs/config_vggt.py:full,language_conditioned \
-#     --config.pretrained_path=hf://rail-berkeley/octo-base-1.5 \
-#     --config.save_dir=./my_octo_vggt_model_offline
+export NVRTC_LIB_DIR=$(python - <<'PY'
+import os,inspect
+import nvidia.cuda_nvrtc as nvrtc
+print(os.path.join(os.path.dirname(inspect.getfile(nvrtc)),'lib'))
+PY
+)
+export LD_LIBRARY_PATH="$NVRTC_LIB_DIR:$CONDA_PREFIX/lib:$LD_LIBRARY_PATH"
+[ -f "$NVRTC_LIB_DIR/libnvrtc.so" ] || ln -sf $(ls "$NVRTC_LIB_DIR"/libnvrtc.so.* | head -n1) "$NVRTC_LIB_DIR/libnvrtc.so"
+
+export PYTHONPATH="/gpfs/home4/pkarageorgis/geo_octo:$PYTHONPATH"
+
+export XLA_FLAGS="$XLA_FLAGS --xla_gpu_enable_cudnn_frontend=false"
+
+echo "==== JOB ENV DEBUG ===="
+echo "HOST: $(hostname)"
+echo "DATE: $(date)"
+echo "CONDA_PREFIX: $CONDA_PREFIX"
+echo "PYTHON: $(which python)"
+python -c 'import sys; print("PYTHON exe:", sys.executable)'
+echo "XLA_FLAGS: $XLA_FLAGS"
+echo "LD_LIBRARY_PATH: $LD_LIBRARY_PATH"
+echo "NVRTC_LIB_DIR: $NVRTC_LIB_DIR"
+module list 2>&1 | sed -n '1,120p' | cat
+nvidia-smi || true
+echo "========================"
+
+python - <<'PY'
+import os, jax, jaxlib
+from jaxlib import version as jv
+print("==== PYTHON/JAX DEBUG ====")
+print("XLA_FLAGS:", os.environ.get("XLA_FLAGS"))
+print("PYTHONPATH:", os.environ.get("PYTHONPATH"))
+print("jax:", jax.__version__)
+print("jaxlib:", jaxlib.__version__)
+print("cuda baked:", getattr(jv, "__cuda_version__", None))
+print("cudnn baked:", getattr(jv, "__cudnn_version__", None))
+print("jaxlib path:", jaxlib.__file__)
+print("devices:", jax.devices())
+print("==========================")
+PY
+
+srun -u python scripts/finetune_vggt.py \
+    --config=scripts/configs/config_vggt.py:full,language_conditioned \
+    --config.pretrained_path=hf://rail-berkeley/octo-base-1.5 \
+    --config.save_dir=/scratch-shared/tmp.cwkV8vOvfY/trained_models/my_octo_vggt_model_offline \
+    --use_vision_encoder=True
 
 # RESUME CODE
-srun -u python scripts/finetune_baseline.py \
-  --config=scripts/configs/config_baseline.py:full,language_conditioned \
-  --config.pretrained_path=/home/pkarageorgis/geo_octo/octo/my_octo_vggt_model_offline/octo_finetune_baseline/experiment_20250823_115519_SPATIAL_NO_VGGT \
-  --config.pretrained_step=150000 \
-  --config.save_dir=/home/pkarageorgis/geo_octo/octo/my_octo_vggt_model_offline \
-  --config.resume_dir="/home/pkarageorgis/geo_octo/octo/my_octo_vggt_model_offline/octo_finetune_baseline/experiment_20250823_115519_SPATIAL_NO_VGGT" \
-  --config.num_steps=250000 \
-  --config.optimizer.learning_rate.decay_steps=250000
+# srun -u python scripts/finetune_vggt.py \
+#   --config=scripts/configs/config_vggt.py:full,language_conditioned \
+#   --config.pretrained_path=/home/pkarageorgis/geo_octo/octo/my_octo_vggt_model_offline/octo_finetune_baseline/experiment_20250823_115519_SPATIAL_NO_VGGT \
+#   --config.pretrained_step=150000 \
+#   --config.save_dir=/home/pkarageorgis/geo_octo/octo/my_octo_vggt_model_offline \
+#   --config.resume_dir="/home/pkarageorgis/geo_octo/octo/my_octo_vggt_model_offline/octo_finetune_baseline/experiment_20250823_115519_SPATIAL_NO_VGGT" \
+#   --config.num_steps=250000 \
+#   --config.optimizer.learning_rate.decay_steps=250000

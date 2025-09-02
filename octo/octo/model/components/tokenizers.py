@@ -316,64 +316,144 @@ class LowdimObsTokenizer(BinTokenizer):
         return TokenGroup(tokens, mask)
 
 ### START MODIFICATION ###
-class VGGTTokenizer(nn.Module):
-    """
-    A tokenizer for pre-computed VGGT tokens with memory optimization options.
-    """
-    use_compression: bool = True  # Enable compression to reduce memory
-    compression_ratio: float = 0.5  # Compress to 50% of original size
-    use_token_learner: bool = True  # Use token learner to reduce token count
-    num_output_tokens: int = 128  # Reduce from 261 to 128 tokens
-    use_gradient_checkpointing: bool = True  # Enable gradient checkpointing
+# class VGGTTokenizer(nn.Module):
+#     """
+#     A tokenizer for pre-computed VGGT tokens with memory optimization options.
+#     """
+#     use_compression: bool = True  # Enable compression to reduce memory
+#     compression_ratio: float = 0.5  # Compress to 50% of original size
+#     use_token_learner: bool = True  # Use token learner to reduce token count
+#     num_output_tokens: int = 128  # Reduce from 261 to 128 tokens
+#     use_gradient_checkpointing: bool = True  # Enable gradient checkpointing
 
+#     @nn.compact
+#     def __call__(
+#         self,
+#         observations: Data,
+#         tasks: Data,
+#         train: bool = False,
+#     ) -> TokenGroup:
+#         vggt_tokens = observations.get("vggt_tokens")
+#         if vggt_tokens is None:
+#             raise ValueError(
+#                 "`vggt_tokens` not found in observations. Ensure they are added in the data pipeline."
+#             )
+        
+#         # Ensure proper dtype for JAX compatibility
+#         # Convert to float32 for stable training (avoid float16 precision issues)
+#         tokens = jnp.asarray(vggt_tokens, dtype=jnp.float32)
+        
+#         # Optional compression: reduce feature dimension
+#         if self.use_compression:
+#             compressed_dim = int(tokens.shape[-1] * self.compression_ratio)
+#             tokens = nn.Dense(
+#                 features=compressed_dim,
+#                 name="vggt_compression"
+#             )(tokens)
+        
+#         # Optional token reduction using TokenLearner
+#         if self.use_token_learner:
+#             # Add positional embeddings
+#             pos_embed = self.param(
+#                 "pos_embed",
+#                 nn.initializers.normal(stddev=0.02),
+#                 (tokens.shape[-2], tokens.shape[-1]),
+#             )
+#             tokens = tokens + jnp.broadcast_to(pos_embed, tokens.shape)
+#             tokens = nn.LayerNorm(name="vggt_norm")(tokens)
+            
+#             # Use TokenLearner to reduce token count
+#             tokens = TokenLearner(
+#                 num_tokens=self.num_output_tokens,
+#             )(tokens, train=train)
+        
+#         # Generate mask
+#         mask = jnp.ones(tokens.shape[:-1], dtype=jnp.bool_)
+        
+#         return TokenGroup(tokens=tokens, mask=mask)
+# ### END MODIFICATION ###
+
+
+# class VisionMixer(nn.Module):
+#     """
+#     A tokenizer that correctly handles a string-based configuration by using
+#     the ModuleSpec system to instantiate its sub-modules.
+#     """
+#     patch_tokenizer_spec: dict
+#     vggt_tokenizer_spec: dict
+
+#     def setup(self):
+#         """Initializes the sub-tokenizers from their string-based specifications."""
+
+#         # 1. Create a ModuleSpec object from the dictionary spec that uses strings.
+#         patch_spec_obj = ModuleSpec.create(
+#             self.patch_tokenizer_spec['module'],
+#             **self.patch_tokenizer_spec.get('kwargs', {})
+#         )
+#         # 2. Use the framework's instantiate helper to create the module.
+#         self.patch_tokenizer = ModuleSpec.instantiate(patch_spec_obj)()
+        
+#         # Do the same for the VGGT tokenizer.
+#         vggt_spec_obj = ModuleSpec.create(
+#             self.vggt_tokenizer_spec['module'],
+#             **self.vggt_tokenizer_spec.get('kwargs', {})
+#         )
+#         self.vggt_tokenizer = ModuleSpec.instantiate(vggt_spec_obj)()
+        
+#         # Define the projection layer.
+#         # Note: We need to access the 'num_features' from the original dictionary spec.
+#         target_embedding_dim = self.patch_tokenizer_spec['kwargs']['encoder']['kwargs']['num_features']
+#         self.vggt_projection = nn.Dense(features=target_embedding_dim)
+
+
+#     def __call__(
+#         self,
+#         observations: Data,
+#         tasks: Data,
+#         train: bool = False,
+#     ) -> TokenGroup:
+#         patch_tokens = self.patch_tokenizer(observations, tasks, train=train)
+#         vggt_tokens = self.vggt_tokenizer(observations, tasks, train=train)
+        
+#         projected_vggt_tokens = self.vggt_projection(vggt_tokens.tokens)
+        
+#         mixed_tokens = jnp.concatenate([patch_tokens.tokens, projected_vggt_tokens], axis=-2)
+#         mixed_mask = jnp.concatenate([patch_tokens.mask, vggt_tokens.mask], axis=-1)
+#         return TokenGroup(tokens=mixed_tokens, mask=mixed_mask)
+
+### END MODIFICATION ###
+
+class VGGTTokenizer(nn.Module):
     @nn.compact
     def __call__(
         self,
         observations: Data,
-        tasks: Data,
+        tasks: Data = None,
         train: bool = False,
     ) -> TokenGroup:
         vggt_tokens = observations.get("vggt_tokens")
         if vggt_tokens is None:
+            raise ValueError("vggt_tokens not found in observations.")
+        x = jnp.asarray(vggt_tokens, dtype=jnp.float32)
+        
+        if x.ndim == 5:
+            # (B, T, H, W, C) -> (B, T, N, C)
+            b, t, h, w, c = x.shape
+            tokens = jnp.reshape(x, (b, t, h * w, c))
+        elif x.ndim == 4:
+            # Assume (B, T, H, W) -> (B, T, N ,1)
+            b, t, h, w = x.shape            
+            tokens = jnp.reshape(x[..., None], (b, t, h * w, 1))
+        else:
             raise ValueError(
-                "`vggt_tokens` not found in observations. Ensure they are added in the data pipeline."
+                f"Unsupported vggt_tokens shape {x.shape}. Expected (B, T, H, W) or (B, T, N ,1)."
             )
+        logging.info("VGGTTokenizer active: tokens shape is %s", tokens.shape)
         
-        # Ensure proper dtype for JAX compatibility
-        # Convert to float32 for stable training (avoid float16 precision issues)
-        tokens = jnp.asarray(vggt_tokens, dtype=jnp.float32)
-        
-        # Optional compression: reduce feature dimension
-        if self.use_compression:
-            compressed_dim = int(tokens.shape[-1] * self.compression_ratio)
-            tokens = nn.Dense(
-                features=compressed_dim,
-                name="vggt_compression"
-            )(tokens)
-        
-        # Optional token reduction using TokenLearner
-        if self.use_token_learner:
-            # Add positional embeddings
-            pos_embed = self.param(
-                "pos_embed",
-                nn.initializers.normal(stddev=0.02),
-                (tokens.shape[-2], tokens.shape[-1]),
-            )
-            tokens = tokens + jnp.broadcast_to(pos_embed, tokens.shape)
-            tokens = nn.LayerNorm(name="vggt_norm")(tokens)
-            
-            # Use TokenLearner to reduce token count
-            tokens = TokenLearner(
-                num_tokens=self.num_output_tokens,
-            )(tokens, train=train)
-        
-        # Generate mask
         mask = jnp.ones(tokens.shape[:-1], dtype=jnp.bool_)
-        
         return TokenGroup(tokens=tokens, mask=mask)
-### END MODIFICATION ###
 
-
+            
 class VisionMixer(nn.Module):
     """
     A tokenizer that correctly handles a string-based configuration by using
@@ -404,21 +484,41 @@ class VisionMixer(nn.Module):
         # Note: We need to access the 'num_features' from the original dictionary spec.
         target_embedding_dim = self.patch_tokenizer_spec['kwargs']['encoder']['kwargs']['num_features']
         self.vggt_projection = nn.Dense(features=target_embedding_dim)
-
-
+        
+        
     def __call__(
         self,
         observations: Data,
         tasks: Data,
         train: bool = False,
     ) -> TokenGroup:
+        # Try image/patch tokens; tokenizer may return None if images are absent.
         patch_tokens = self.patch_tokenizer(observations, tasks, train=train)
-        vggt_tokens = self.vggt_tokenizer(observations, tasks, train=train)
+
+        # If VGGT tokens exist, call the VGGTTokenizer
+        if "vggt_tokens" in observations:
+            vggt_tokens = self.vggt_tokenizer(observations, tasks, train=train)
+            
+        # If both VGGT and images are missing
+        if patch_tokens is None and vggt_tokens is None:
+            return None
         
+        # If only one is present return it directly, we don't need a projection
+        if patch_tokens is None:
+            return vggt_tokens
+        if vggt_tokens is None:
+            return patch_tokens
+        
+        # If both are present: project VGGT features to match patch token feature dim, then concatenate along token axis
         projected_vggt_tokens = self.vggt_projection(vggt_tokens.tokens)
+        
+        logging.info(
+            "VisionMixer: mixing patch %s with projected vggt %s",
+            patch_tokens.tokens.shape,
+            projected_vggt_tokens.shape,
+        )
         
         mixed_tokens = jnp.concatenate([patch_tokens.tokens, projected_vggt_tokens], axis=-2)
         mixed_mask = jnp.concatenate([patch_tokens.mask, vggt_tokens.mask], axis=-1)
+        
         return TokenGroup(tokens=mixed_tokens, mask=mixed_mask)
-
-### END MODIFICATION ###

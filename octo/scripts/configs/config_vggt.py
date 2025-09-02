@@ -1,7 +1,8 @@
 from ml_collections import ConfigDict
 from ml_collections.config_dict import FieldReference, placeholder
-
+from octo.model.components.tokenizers import VGGTTokenizer, ImageTokenizer, VisionMixer
 from octo.utils.spec import ModuleSpec
+from octo.model.components.vit_encoders import PatchEncoder
 
 
 def get_config(config_string="full,multimodal"):
@@ -9,7 +10,7 @@ def get_config(config_string="full,multimodal"):
     assert task in ["image_conditioned", "language_conditioned", "multimodal"]
     assert mode in ["full", "head_only", "head_mlp_only"]
 
-    UNIFIED_STATS_PATH = "/home/pkarageorgis/geo_octo/libero_datasets/unified_stats/unified_dataset_statistics_libero_spatial_vggt.json"
+    UNIFIED_STATS_PATH = "/home/pkarageorgis/geo_octo/libero_datasets/unified_stats/unified_dataset_statistics_libero_spatial_vggt_onnx.json"
      
     # Fill this in for your own dataset!
 
@@ -18,8 +19,8 @@ def get_config(config_string="full,multimodal"):
     # and second image key should be the wrist view (None if not used)
 
     FINETUNING_KWARGS = {
-        "name": "libero_spatial_vggt_compressed",
-        "data_dir": "/scratch-shared/tmp.cwkV8vOvfY/libero_vggt_compressed",
+        "name": "libero_spatial_vggt_compressed_onnx",
+        "data_dir": "/scratch-shared/tmp.cwkV8vOvfY/libero_vggt_onnx_compressed",
         "dataset_statistics": UNIFIED_STATS_PATH,
         "image_obs_keys": {"primary": "image_primary"},
         "proprio_obs_key": "proprio",
@@ -49,14 +50,14 @@ def get_config(config_string="full,multimodal"):
     else:
         raise ValueError("Invalid mode")
 
-    max_steps = FieldReference(150000)
+    max_steps = FieldReference(250000)
     window_size = FieldReference(default=1)
 
     config = dict(
         resume_dir="",
         pretrained_path=placeholder(str),
         pretrained_step=placeholder(int),
-        batch_size=64,
+        batch_size=16,
         shuffle_buffer_size=10000,
         num_steps=max_steps,
         log_interval=100,
@@ -83,7 +84,7 @@ def get_config(config_string="full,multimodal"):
             weight_decay=0.01,
             clip_gradient=1.0,
             frozen_keys=frozen_keys,
-            grad_accumulation_steps=4,  # if you are using grad accumulation, you need to adjust max_steps accordingly
+            grad_accumulation_steps=16,  # if you are using grad accumulation, you need to adjust max_steps accordingly
         ),
         val_kwargs=dict(
             val_shuffle_buffer_size=1000,
@@ -163,4 +164,39 @@ def get_config(config_string="full,multimodal"):
 
     config["traj_transform_kwargs"] = traj_transform_kwargs
     config["frame_transform_kwargs"] = frame_transform_kwargs
+    
+    config['update_config'] = {
+        "model": {
+            "observation_tokenizers": {
+            "mixed_vision": ModuleSpec.create(
+                VisionMixer,
+                patch_tokenizer_spec={
+                'module': ImageTokenizer,
+                'kwargs': {
+                    'encoder': ModuleSpec.create(PatchEncoder, patch_size=32, num_features=512),
+                    'obs_stack_keys': ("image_primary",),
+                }
+                },
+                vggt_tokenizer_spec={'module': VGGTTokenizer},
+            ),
+            },
+            "repeat_task_tokens": False,
+        }
+    }
+    
+    # VGGT-only choice
+#     config['update_config'] = {
+#         "model": {
+#             "observation_tokenizers": {
+#                 "vggt": ModuleSpec.create(VGGTTokenizer),
+#             },
+#             "repeat_task_tokens": False,
+#         }
+# }
+    
+    config['config_delete_keys'] = {
+        "model": {"observation_tokenizers": {"image_wrist": True}}
+    }
+    
+    
     return ConfigDict(config)

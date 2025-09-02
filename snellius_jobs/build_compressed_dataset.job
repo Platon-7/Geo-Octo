@@ -5,7 +5,7 @@
 #SBATCH --gpus=1
 #SBATCH --job-name=Compress_VGGT_Libero
 #SBATCH --ntasks=1
-#SBATCH --time=06:00:00
+#SBATCH --time=09:00:00
 #SBATCH --mem=122000M
 #SBATCH --output=outfiles/build_compressed_dataset_%A.out
 

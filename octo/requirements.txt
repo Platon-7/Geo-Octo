@@ -15,7 +15,7 @@ flax == 0.7.5
 ml_collections >= 0.1.0
 tqdm >= 4.60.0
 absl-py >= 0.12.0
-scipy >= 1.6.0
+scipy == 1.11.4
 wandb >= 0.12.14
 einops >= 0.6.1
 imageio >= 2.31.1
@@ -28,7 +28,7 @@ tensorflow_datasets == 4.9.2
 tensorflow_graphics == 2021.12.3
 dlimp @ git+https://github.com/kvablack/dlimp@5edaa4691567873d495633f2708982b42edf1972
 plotly >= 5.16.1
-matplotlib
+matplotlib == 3.6.3
 Pillow
 huggingface_hub
 scikit-learn

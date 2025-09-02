@@ -18,55 +18,55 @@ source activate octo
 cd octo
 
 BASE_DATA_DIR=/scratch-shared/tmp.cwkV8vOvfY/libero_datasets
-VGGT_DATA_DIR=/scratch-shared/tmp.cwkV8vOvfY/libero_vggt_compressed
+VGGT_DATA_DIR=/scratch-shared/tmp.cwkV8vOvfY/libero_vggt_onnx_compressed
 OUT_DIR=/home/pkarageorgis/geo_octo/libero_datasets/unified_stats
 
 # No-VGGT variants
-srun -u python scripts/create_unified_statistics.py \
-  --base-data-dir $BASE_DATA_DIR \
-  --dataset-names libero_spatial_no_noops \
-  --output-dir $OUT_DIR \
-  --output-name unified_dataset_statistics_libero_spatial_no_vggt.json
+# srun -u python scripts/create_unified_statistics.py \
+#   --base-data-dir $BASE_DATA_DIR \
+#   --dataset-names libero_spatial_no_noops \
+#   --output-dir $OUT_DIR \
+#   --output-name unified_dataset_statistics_libero_spatial_no_vggt.json
 
-srun -u python scripts/create_unified_statistics.py \
-  --base-data-dir $BASE_DATA_DIR \
-  --dataset-names libero_object_no_noops \
-  --output-dir $OUT_DIR \
-  --output-name unified_dataset_statistics_libero_object_no_vggt.json
+# srun -u python scripts/create_unified_statistics.py \
+#   --base-data-dir $BASE_DATA_DIR \
+#   --dataset-names libero_object_no_noops \
+#   --output-dir $OUT_DIR \
+#   --output-name unified_dataset_statistics_libero_object_no_vggt.json
 
-srun -u python scripts/create_unified_statistics.py \
-  --base-data-dir $BASE_DATA_DIR \
-  --dataset-names libero_goal_no_noops \
-  --output-dir $OUT_DIR \
-  --output-name unified_dataset_statistics_libero_goal_no_vggt.json
+# srun -u python scripts/create_unified_statistics.py \
+#   --base-data-dir $BASE_DATA_DIR \
+#   --dataset-names libero_goal_no_noops \
+#   --output-dir $OUT_DIR \
+#   --output-name unified_dataset_statistics_libero_goal_no_vggt.json
 
-srun -u python scripts/create_unified_statistics.py \
-  --base-data-dir $BASE_DATA_DIR \
-  --dataset-names libero_10_no_noops \
-  --output-dir $OUT_DIR \
-  --output-name unified_dataset_statistics_libero_10_no_vggt.json
+# srun -u python scripts/create_unified_statistics.py \
+#   --base-data-dir $BASE_DATA_DIR \
+#   --dataset-names libero_10_no_noops \
+#   --output-dir $OUT_DIR \
+#   --output-name unified_dataset_statistics_libero_10_no_vggt.json
 
 # VGGT variants (adjust names if your on-disk dirs differ)
 srun -u python scripts/create_unified_statistics.py \
   --base-data-dir $VGGT_DATA_DIR \
-  --dataset-names libero_spatial_vggt_compressed \
+  --dataset-names libero_spatial_vggt_compressed_onnx \
   --output-dir $OUT_DIR \
-  --output-name unified_dataset_statistics_libero_spatial_vggt.json
+  --output-name unified_dataset_statistics_libero_spatial_vggt_onnx.json
 
-srun -u python scripts/create_unified_statistics.py \
-  --base-data-dir $VGGT_DATA_DIR \
-  --dataset-names libero_object_vggt_compressed \
-  --output-dir $OUT_DIR \
-  --output-name unified_dataset_statistics_libero_object_vggt.json
+# srun -u python scripts/create_unified_statistics.py \
+#   --base-data-dir $VGGT_DATA_DIR \
+#   --dataset-names libero_object_vggt_compressed \
+#   --output-dir $OUT_DIR \
+#   --output-name unified_dataset_statistics_libero_object_vggt.json
 
-srun -u python scripts/create_unified_statistics.py \
-  --base-data-dir $VGGT_DATA_DIR \
-  --dataset-names libero_goal_vggt_compressed \
-  --output-dir $OUT_DIR \
-  --output-name unified_dataset_statistics_libero_goal_vggt.json
+# srun -u python scripts/create_unified_statistics.py \
+#   --base-data-dir $VGGT_DATA_DIR \
+#   --dataset-names libero_goal_vggt_compressed \
+#   --output-dir $OUT_DIR \
+#   --output-name unified_dataset_statistics_libero_goal_vggt.json
 
-srun -u python scripts/create_unified_statistics.py \
-  --base-data-dir $VGGT_DATA_DIR \
-  --dataset-names liber_o10_vggt_compressed \
-  --output-dir $OUT_DIR \
-  --output-name unified_dataset_statistics_libero_10_vggt.json
+# srun -u python scripts/create_unified_statistics.py \
+#   --base-data-dir $VGGT_DATA_DIR \
+#   --dataset-names liber_o10_vggt_compressed \
+#   --output-dir $OUT_DIR \
+#   --output-name unified_dataset_statistics_libero_10_vggt.json
