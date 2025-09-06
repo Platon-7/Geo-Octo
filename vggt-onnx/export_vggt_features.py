@@ -17,13 +17,13 @@ def main() -> None:
 
     input_names = ["input_images"]
 
-    # Case 1: all 24 layers -> output [24, P, 2048]
-    model_all = VGGTAllLayersFeatures(base).to(device)
+    # Case 1: all 24 layers -> output [24, 261, 2048]
+    model_all = VGGTAllLayersFeatures(base, num_patch_tokens=261).to(device)
     output_names_all = ["all_layer_features"]
 
-    # Case 2: selected layers [3, 10, 16, 22] (0-based) -> [4, P, 2048]
+    # Case 2: selected layers [3, 10, 16, 22] (0-based) -> [4, 261, 2048]
     selected_indices = [3, 10, 16, 22]
-    model_sel = VGGTSelectedLayersFeatures(base, selected_indices).to(device)
+    model_sel = VGGTSelectedLayersFeatures(base, selected_indices, num_patch_tokens=261).to(device)
     output_names_sel = ["selected_layer_features"]
 
     with torch.no_grad():
