@@ -12,7 +12,7 @@ from vggt.models.aggregator import Aggregator
 from vggt.heads.camera_head import CameraHead
 from vggt.heads.dpt_head import DPTHead
 from vggt.heads.track_head import TrackHead
-import torch.nn.functional as F
+
 
 class VGGT(nn.Module, PyTorchModelHubMixin):
     def __init__(self, img_size=518, patch_size=14, embed_dim=1024):
@@ -24,7 +24,7 @@ class VGGT(nn.Module, PyTorchModelHubMixin):
         self.depth_head = DPTHead(dim_in=2 * embed_dim, output_dim=2, activation="exp", conf_activation="expp1")
         self.track_head = TrackHead(dim_in=2 * embed_dim, patch_size=patch_size)
 
-    def forward(self, images: torch.Tensor, query_points: torch.Tensor = None, return_dense_tokens: bool = False):
+    def forward(self, images: torch.Tensor, query_points: torch.Tensor = None):
         """
         Forward pass of the VGGT model.
 
@@ -34,27 +34,20 @@ class VGGT(nn.Module, PyTorchModelHubMixin):
             query_points (torch.Tensor, optional): Query points for tracking, in pixel coordinates.
                 Shape: [N, 2] or [B, N, 2], where N is the number of query points.
                 Default: None
-            return_dense_tokens (bool): If True, return only the stacked per-layer patch tokens tensor
-                with shape [B, S, L, Hp*Wp, 2048]. Default: False.
 
         Returns:
-            dict or torch.Tensor:
-                If return_dense_tokens is False:
-                    dict with:
-                    - pose_enc (torch.Tensor): [B, S, 9]
-                    - depth (torch.Tensor): [B, S, H, W, 1]
-                    - depth_conf (torch.Tensor): [B, S, H, W]
-                    - world_points (torch.Tensor): [B, S, H, W, 3]
-                    - world_points_conf (torch.Tensor): [B, S, H, W]
-                    - layer_patch_tokens (torch.Tensor): [B, S, L, Hp*Wp, 2048]
-                    - aggregated_tokens (torch.Tensor): last-layer tokens [B, S, P, 2048]
-                    - images (torch.Tensor): input images
-                    Optionally (if query_points provided):
-                    - track (torch.Tensor): [B, S, N, 2]
-                    - vis (torch.Tensor): [B, S, N]
-                    - conf (torch.Tensor): [B, S, N]
-                If return_dense_tokens is True:
-                    torch.Tensor with shape [B, S, L, Hp*Wp, 2048].
+            dict: A dictionary containing the following predictions:
+                - pose_enc (torch.Tensor): Camera pose encoding with shape [B, S, 9] (from the last iteration)
+                - depth (torch.Tensor): Predicted depth maps with shape [B, S, H, W, 1]
+                - depth_conf (torch.Tensor): Confidence scores for depth predictions with shape [B, S, H, W]
+                - world_points (torch.Tensor): 3D world coordinates for each pixel with shape [B, S, H, W, 3]
+                - world_points_conf (torch.Tensor): Confidence scores for world points with shape [B, S, H, W]
+                - images (torch.Tensor): Original input images, preserved for visualization
+
+                If query_points is provided, also includes:
+                - track (torch.Tensor): Point tracks with shape [B, S, N, 2] (from the last iteration), in pixel coordinates
+                - vis (torch.Tensor): Visibility scores for tracked points with shape [B, S, N]
+                - conf (torch.Tensor): Confidence scores for tracked points with shape [B, S, N]
         """
 
         # If without batch dimension, add it
@@ -64,20 +57,8 @@ class VGGT(nn.Module, PyTorchModelHubMixin):
             query_points = query_points.unsqueeze(0)
 
         aggregated_tokens_list, patch_start_idx = self.aggregator(images)
-        # aggregated_tokens_list: list length=L (e.g., 24), each [B, S, P, 2048]
-        # slice patch tokens (exclude camera/register) and stack across layers -> [B, S, L, Hp*Wp, 2048]
-        layer_patch_tokens = torch.stack(
-            [x[:, :, patch_start_idx:, :] for x in aggregated_tokens_list], dim=2
-        )
-
-        # If requested, return only the dense features (useful for ONNX export)
-        if return_dense_tokens:
-            return layer_patch_tokens
 
         predictions = {}
-
-        # Keep last layer tokens for backward compatibility
-        predictions["aggregated_tokens"] = aggregated_tokens_list[-1]
 
         with torch.cuda.amp.autocast(enabled=False):
             if self.camera_head is not None:
@@ -106,8 +87,6 @@ class VGGT(nn.Module, PyTorchModelHubMixin):
             predictions["vis"] = vis
             predictions["conf"] = conf
 
-        # Expose stacked per-layer patch tokens in predictions as well
-        predictions["layer_patch_tokens"] = layer_patch_tokens  # [B, S, L, Hp*Wp, 2048]
         predictions["images"] = images
 
         return predictions

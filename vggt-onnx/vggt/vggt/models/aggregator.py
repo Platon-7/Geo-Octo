@@ -146,7 +146,7 @@ class Aggregator(nn.Module):
         img_size,
         patch_size,
         num_register_tokens,
-        interpolate_antialias=False,
+        interpolate_antialias=True,
         interpolate_offset=0.0,
         block_chunks=0,
         init_values=1.0,

@@ -75,7 +75,7 @@ def load_and_preprocess_images_square(image_path_list, target_size=1024):
         square_img.paste(img, (left, top))
 
         # Resize to target size
-        square_img = square_img.resize((target_size, target_size), Image.Resampling.BILINEAR)
+        square_img = square_img.resize((target_size, target_size), Image.Resampling.BICUBIC)
 
         # Convert to tensor
         img_tensor = to_tensor(square_img)
@@ -132,7 +132,7 @@ def load_and_preprocess_images(image_path_list, mode="crop"):
     images = []
     shapes = set()
     to_tensor = TF.ToTensor()
-    target_size = 224
+    target_size = 518
 
     # First process all images and collect their shapes
     for image_path in image_path_list:
@@ -166,7 +166,7 @@ def load_and_preprocess_images(image_path_list, mode="crop"):
             new_height = round(height * (new_width / width) / 14) * 14
 
         # Resize with new dimensions (width, height)
-        img = img.resize((new_width, new_height), Image.Resampling.BILINEAR)
+        img = img.resize((new_width, new_height), Image.Resampling.BICUBIC)
         img = to_tensor(img)  # Convert to tensor (0, 1)
 
         # Center crop height if it's larger than 518 (only in crop mode)

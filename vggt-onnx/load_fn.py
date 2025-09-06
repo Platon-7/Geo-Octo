@@ -35,7 +35,7 @@ def load_and_preprocess_images(image_path_list):
         raise ValueError("At least 1 image is required")
 
     images = []
-    target_size = 224
+    target_size = 518
 
     # Process all images
     for image_path in image_path_list:
