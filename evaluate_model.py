@@ -16,7 +16,14 @@ from octo.utils.train_callbacks import supply_rng
 from vggt.models.vggt import VGGT
 # ===================================================================
 
-
+try:
+    import jax.numpy as jnp
+    if not hasattr(jnp, 'DeviceArray'):
+        jnp.DeviceArray = jnp.ndarray
+        print("[FIX] Added DeviceArray compatibility shim")
+except ImportError:
+    print("[WARNING] Could not import JAX")
+    
 # ===================================================================
 # This is the VGGT Bridge, copied directly from your finetune.py
 # ===================================================================
@@ -46,7 +53,7 @@ def enrich_single_observation(observation: dict) -> dict:
 
 def main():
     # This will be the path to the model you just saved (e.g., "./my_vggt_model_checkpoint/10")
-    FINETUNED_PATH = "/gpfs/home4/pkarageorgis/geo_octo/octo/my_octo_vggt_model/octo_finetune/experiment_20250705_213435/10"
+    FINETUNED_PATH = "/scratch-shared/tmp.cwkV8vOvfY/trained_models/my_octo_vggt_model_offline/octo_finetune_baseline/experiment_20250823_115519_SPATIAL_NO_VGGT"
     
     wandb.init()
 
@@ -54,7 +61,7 @@ def main():
     model = OctoModel.load_pretrained(FINETUNED_PATH)
 
     # Use a valid LIBERO environment name
-    env = gym.make("libero-90") 
+    env = gym.make("libero-spatial") 
     
     # Add wrappers for history and action chunking
     # The history horizon should match what your model was trained on

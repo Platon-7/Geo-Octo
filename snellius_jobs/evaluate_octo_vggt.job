@@ -39,17 +39,21 @@ print('JAX:', jax.default_backend(), jax.devices())
 print('Torch CUDA:', torch.version.cuda)
 PY
 
-srun python -m evaluation.scripts.run_libero_eval_vggt \
-  --model_family octo \
-  --pretrained_checkpoint "/scratch-shared/tmp.cwkV8vOvfY/trained_models/my_octo_vggt_model_offline/octo_finetune_baseline/experiment_20250825_203446_SPATIAL_VGGT" \
-  --checkpoint_step 250000 \
-  --task_suite_name libero_spatial \
-  --num_trials_per_task 50 \
-  --num_open_loop_steps 4 \
-  --use_vggt_tokens True \
-  --vggt_onnx_path "/home/pkarageorgis/geo_octo/onnx_fp16/vggt_fp16.onnx" \
-  --vggt_compressor_path "/home/pkarageorgis/vggt_compressor_pca_32x48.pkl" \
-  --vggt_input_res 224 \
-  --vggt_output_index 0 \
-  --vggt_raw_tokens 261 \
-  --vggt_raw_dim 2048
+export PYTHONPATH="/gpfs/home4/pkarageorgis/geo_octo/vggt:/gpfs/home4/pkarageorgis/geo_octo/LIBERO:/gpfs/home4/pkarageorgis/geo_octo/octo:$PYTHONPATH"
+
+srun python evaluate_model.py
+
+# srun python -m evaluation.scripts.run_libero_eval_vggt \
+#   --model_family octo \
+#   --pretrained_checkpoint "/scratch-shared/tmp.cwkV8vOvfY/trained_models/my_octo_vggt_model_offline/octo_finetune_baseline/experiment_20250825_203446_SPATIAL_VGGT" \
+#   --checkpoint_step 250000 \
+#   --task_suite_name libero_spatial \
+#   --num_trials_per_task 50 \
+#   --num_open_loop_steps 4 \
+#   --use_vggt_tokens True \
+#   --vggt_onnx_path "/home/pkarageorgis/geo_octo/onnx_fp16/vggt_fp16.onnx" \
+#   --vggt_compressor_path "/home/pkarageorgis/vggt_compressor_pca_32x48.pkl" \
+#   --vggt_input_res 224 \
+#   --vggt_output_index 0 \
+#   --vggt_raw_tokens 261 \
+#   --vggt_raw_dim 2048

@@ -1,0 +1,4 @@
+[submodule "vggt"]
+	path = vggt
+	url = https://github.com/akretz/vggt.git
+	branch = onnx-export
