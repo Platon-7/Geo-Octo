@@ -22,5 +22,10 @@ export WANDB_PROJECT="Geo_Octo"
 
 source activate octo-onnx
 
-srun -u python vggt-onnx/inspect_vggt.py
+# Allow overriding path via env; default to the user's provided directory
+ONNX_PATH=${ONNX_PATH:-/home/pkarageorgis/geo_octo/temp/vggt-onnx/onnx_fp16}
+USE_CUDA=${USE_CUDA:-true}
+INPUT_RES=${INPUT_RES:-224}
+
+srun -u python vggt-onnx/inspect_vggt.py --onnx_path="$ONNX_PATH" --use_cuda="$USE_CUDA" --input_res="$INPUT_RES"
 #srun -u python vggt-onnx/export_vggt.py
