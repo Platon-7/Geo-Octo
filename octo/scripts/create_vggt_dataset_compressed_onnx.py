@@ -167,34 +167,39 @@ class CompressedVggtDatasetOnnx(tfds.core.GeneratorBasedBuilder):
             # Collect per-image features of shape (64, 2048)
             per_image_features_64x2048 = []
             num_images = chw_images.shape[0]
+            # Process the entire episode in batches
             for j in range(0, num_images, batch_size):
                 image_batch = chw_images[j:j+batch_size]  # [K, C, H, W]
-                # Fast path: process as [B=K, S=1] to keep global attention small
+                # Fast path: process as [B=K, S=1]
                 image_batch_5d = np.expand_dims(image_batch, axis=1)  # [K, 1, C, H, W]
+
+                # Request only the required output for efficiency
                 outputs = self._session.run(["layer_patch_tokens"], {self._input_name: image_batch_5d})
                 feats = np.asarray(outputs[0])  # [K, 1, 24, N, 2048]
                 if feats.ndim != 5:
                     logging.error("Unexpected layer_patch_tokens rank: %s with shape %s", feats.ndim, feats.shape)
                     continue
-                K, Sdim, L, N, D = feats.shape
+
+                K, _, L, N, D = feats.shape
                 if L != 24 or D != 2048:
                     logging.warning("Unexpected (L,D)=(%d,%d); expected (24,2048)", L, D)
+
                 sqrt_n = int(round(np.sqrt(N)))
-                if sqrt_n * sqrt_n != N:
-                    logging.warning("Token count %d is not a perfect square; cropping to %d", N, sqrt_n * sqrt_n)
                 N_sq = sqrt_n * sqrt_n
-                for b in range(K):
-                    per_img = feats[b, 0]           # [24, N, 2048]
-                    per_img = per_img[:, :N_sq, :]
-                    per_img = per_img.reshape((L, sqrt_n, sqrt_n, D))
-                    per_img_tf = tf.convert_to_tensor(per_img, dtype=tf.float32)
-                    per_img_small = tf.image.resize(per_img_tf, size=(8, 8), method='bilinear', antialias=True)
-                    per_img_small = per_img_small.numpy().reshape((L, 64, D))
-                    fused = per_img_small.mean(axis=0).astype(np.float16)
-                    per_image_features_64x2048.append(fused)
+
+                # Vectorized post-processing
+                # Squeeze S=1, crop to square tokens, and reshape for resize: [K*24, H, W, D]
+                feats_reshaped = feats.squeeze(axis=1)[:, :, :N_sq, :].reshape(K * L, sqrt_n, sqrt_n, D)
+                feats_tf = tf.convert_to_tensor(feats_reshaped, dtype=tf.float32)
+                feats_small_tf = tf.image.resize(feats_tf, size=(8, 8), method='bilinear', antialias=True)
+                feats_small_np = feats_small_tf.numpy().reshape(K, L, 64, D)  # [K, 24, 64, 2048]
+                fused_batch = feats_small_np.mean(axis=1).astype(np.float16)   # [K, 64, 2048]
+                per_image_features_64x2048.append(fused_batch)
+
             if not per_image_features_64x2048:
                 i += 1; continue
-            features_array = np.stack(per_image_features_64x2048, axis=0)  # [T, 64, 2048]
+            # Concatenate all processed batches across time
+            features_array = np.concatenate(per_image_features_64x2048, axis=0)  # [T, 64, 2048]
             # Apply PCA compressor to obtain (64, 512) or desired target size
             tokens_compressed = self._compressor.compress(features_array).astype(np.float16)
             if len(tokens_compressed) != len(steps_list_of_dicts):
