@@ -126,16 +126,17 @@ class CompressedVggtDatasetOnnx(tfds.core.GeneratorBasedBuilder):
         original_info = self._original_builder.info
         step_features = dict(original_info.features['steps'].feature)
         observation_features = dict(step_features['observation'])
-        # Store (64, 2048) features per image as requested
+        # Store PCA-compressed features with target size (e.g., 64x512)
+        target_h, target_w = self._compressor.target_size
         observation_features['vggt_tokens'] = tfds.features.Tensor(
-            shape=(64, 2048), dtype=np.float16,
-            doc='VGGT per-image tokens after 24-layer aggregation and bilinear downsample to 64x2048.')
+            shape=(target_h, target_w), dtype=np.float16,
+            doc='VGGT tokens after 24-layer aggregation, bilinear downsample to 64x2048, then PCA to target size.')
         step_features['observation'] = tfds.features.FeaturesDict(observation_features)
         final_features = tfds.features.FeaturesDict({
             'steps': tfds.features.Dataset(tfds.features.FeaturesDict(step_features)),
             'episode_metadata': original_info.features['episode_metadata']})
         return tfds.core.DatasetInfo(builder=self,
-            description="Libero dataset with VGGT tokens (24-layer aggregated, resized to 64x2048).",
+            description=f"Libero dataset with VGGT tokens (24-layer aggregated, resized to 64x2048, PCA to {target_h}x{target_w}).",
             features=final_features)
 
     def _split_generators(self, dl_manager):
@@ -202,18 +203,32 @@ class CompressedVggtDatasetOnnx(tfds.core.GeneratorBasedBuilder):
             if not per_image_features_64x2048:
                 i += 1; continue
             features_array = np.stack(per_image_features_64x2048, axis=0)  # [T, 64, 2048]
-            if len(features_array) != len(steps_list_of_dicts):
+            # Apply PCA compressor to obtain (64, 512) or desired target size
+            tokens_compressed = self._compressor.compress(features_array).astype(np.float16)
+            if len(tokens_compressed) != len(steps_list_of_dicts):
                 logging.warning(f"Token/step mismatch in episode {i}. Skipping.")
                 i += 1; continue
-            for t in range(len(features_array)):
-                steps_list_of_dicts[t]['observation']['vggt_tokens'] = features_array[t]
+            for t in range(len(tokens_compressed)):
+                steps_list_of_dicts[t]['observation']['vggt_tokens'] = tokens_compressed[t]
             yield i, {'steps': steps_list_of_dicts, 'episode_metadata': tfds.as_numpy(episode['episode_metadata'])}
             i += 1
 
 
 def load_or_create_compressor(builders, session, input_name, input_res, compressor_path, num_samples, target_size):
     if compressor_path and os.path.exists(compressor_path):
-        return VGGTCompressor.load_compressor(compressor_path)
+        compressor = VGGTCompressor.load_compressor(compressor_path)
+        # Print retained information if available
+        try:
+            import numpy as _np
+            ratio = getattr(compressor, 'explained_variance_ratio_', None)
+            if ratio is None and hasattr(compressor, 'pca'):
+                ratio = getattr(compressor.pca, 'explained_variance_ratio_', None)
+            if ratio is not None:
+                retained = float(_np.sum(_np.asarray(ratio))) * 100.0
+                logging.info("Loaded compressor retains %.2f%% variance", retained)
+        except Exception:
+            pass
+        return compressor
 
     logging.info("Creating new PCA compressor with target size %s", target_size)
     batch_size = FLAGS.batch_size_eval
@@ -232,19 +247,37 @@ def load_or_create_compressor(builders, session, input_name, input_res, compress
         episode_images = trans['observation']['image']
         if episode_images.size == 0: continue
         chw_images = preprocess_images_in_memory(episode_images, input_res)
-        all_episode_tokens = []
+        # Collect per-image (64, 2048) features like in generator
+        per_image_features_64x2048 = []
         num_images = chw_images.shape[0]
         for i in range(0, num_images, batch_size):
-            image_batch = chw_images[i:i + batch_size]
-            outputs = session.run(None, {input_name: image_batch})
-            tokens_batch = np.asarray(outputs[0])
-            while tokens_batch.ndim > 2 and tokens_batch.shape[0] == 1:
-                tokens_batch = np.squeeze(tokens_batch, axis=0)
-            if tokens_batch.ndim == 2:
-                tokens_batch = np.expand_dims(tokens_batch, axis=0)
-            all_episode_tokens.append(tokens_batch)
-        episode_tokens_array = np.concatenate(all_episode_tokens, axis=0)
-        samples.extend(list(episode_tokens_array))
+            image_batch = chw_images[i:i + batch_size]  # [K, C, H, W]
+            image_batch_5d = np.expand_dims(image_batch, axis=0)  # [1, K, C, H, W]
+            outputs = session.run(None, {input_name: image_batch_5d})
+            output_names = [o.name for o in session.get_outputs()]
+            outputs_by_name = {name: arr for name, arr in zip(output_names, outputs)}
+            if 'layer_patch_tokens' not in outputs_by_name:
+                logging.error("layer_patch_tokens not found during compressor sampling; outputs: %s", list(outputs_by_name.keys()))
+                continue
+            feats = np.asarray(outputs_by_name['layer_patch_tokens'])  # [1, K, 24, N, 2048]
+            if feats.ndim != 5:
+                logging.error("Unexpected layer_patch_tokens rank in sampling: %s with shape %s", feats.ndim, feats.shape)
+                continue
+            _, K, L, N, D = feats.shape
+            sqrt_n = int(round(np.sqrt(N)))
+            N_sq = sqrt_n * sqrt_n
+            for k in range(K):
+                per_img = feats[0, k]              # [24, N, 2048]
+                per_img = per_img[:, :N_sq, :]     # ensure square
+                per_img = per_img.reshape((L, sqrt_n, sqrt_n, D))  # [24, H, W, 2048]
+                per_img_tf = tf.convert_to_tensor(per_img, dtype=tf.float32)
+                per_img_small = tf.image.resize(per_img_tf, size=(8, 8), method='bilinear', antialias=True)
+                per_img_small = per_img_small.numpy().reshape((L, 64, D))  # [24,64,2048]
+                fused = per_img_small.mean(axis=0).astype(np.float32)      # [64,2048]
+                per_image_features_64x2048.append(fused)
+        if per_image_features_64x2048:
+            episode_tokens_array = np.stack(per_image_features_64x2048, axis=0)  # [T, 64, 2048]
+            samples.extend(list(episode_tokens_array))
         count = len(samples)
         if count >= num_samples:
             break
@@ -253,6 +286,16 @@ def load_or_create_compressor(builders, session, input_name, input_res, compress
     all_samples = np.stack(samples[:num_samples], axis=0)
     compressor = VGGTCompressor(target_size=target_size)
     compressor.fit_compressor(all_samples)
+    # Print retained information if available
+    try:
+        ratio = getattr(compressor, 'explained_variance_ratio_', None)
+        if ratio is None and hasattr(compressor, 'pca'):
+            ratio = getattr(compressor.pca, 'explained_variance_ratio_', None)
+        if ratio is not None:
+            retained = float(np.sum(np.asarray(ratio))) * 100.0
+            logging.info("Fitted compressor retains %.2f%% variance", retained)
+    except Exception:
+        pass
     save_path = f"vggt_compressor_pca_{target_size[0]}x{target_size[1]}.pkl"
     compressor.save_compressor(save_path)
     logging.info("Saved new compressor to %s", save_path)
