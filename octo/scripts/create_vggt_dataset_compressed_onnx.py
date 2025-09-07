@@ -214,7 +214,7 @@ class CompressedVggtDatasetOnnx(tfds.core.GeneratorBasedBuilder):
             i += 1
 
 
-def load_or_create_compressor(builders, session, input_name, input_res, compressor_path, num_samples, target_size):
+def load_or_create_compressor(builders, session, input_name, input_res, compressor_path, num_samples, target_size, onnx_path=None, sess_options=None):
     if compressor_path and os.path.exists(compressor_path):
         compressor = VGGTCompressor.load_compressor(compressor_path)
         # Print retained information if available
@@ -254,7 +254,14 @@ def load_or_create_compressor(builders, session, input_name, input_res, compress
             image_batch = chw_images[i:i + batch_size]  # [K, C, H, W]
             # Use [B=K, S=1] to reduce memory in global attention
             image_batch_5d = np.expand_dims(image_batch, axis=1)  # [K, 1, C, H, W]
-            outputs = session.run(None, {input_name: image_batch_5d})
+            try:
+                outputs = session.run(None, {input_name: image_batch_5d})
+            except Exception as e:
+                logging.warning("GPU session.run failed during compressor sampling (%s). Falling back to CPU.", e)
+                if onnx_path is None:
+                    raise
+                cpu_session = ort.InferenceSession(onnx_path, sess_options=sess_options, providers=['CPUExecutionProvider'])
+                outputs = cpu_session.run(None, {input_name: image_batch_5d})
             output_names = [o.name for o in session.get_outputs()]
             outputs_by_name = {name: arr for name, arr in zip(output_names, outputs)}
             if 'layer_patch_tokens' not in outputs_by_name:
@@ -351,7 +358,8 @@ def main(_):
     logging.info("Starting compressor load/fit stage...")
     compressor = load_or_create_compressor(
         original_builders, session, input_name, input_res,
-        FLAGS.compressor_path, FLAGS.compression_samples, target_size)
+        FLAGS.compressor_path, FLAGS.compression_samples, target_size,
+        onnx_path=onnx_path, sess_options=sess_options)
     logging.info("Compressor ready. Target size=%s", target_size)
 
     for builder in original_builders:
