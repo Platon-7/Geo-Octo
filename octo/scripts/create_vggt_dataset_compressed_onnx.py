@@ -146,6 +146,7 @@ class CompressedVggtDatasetOnnx(tfds.core.GeneratorBasedBuilder):
         ds = self._original_builder.as_dataset(split=split)
         num_episodes = self._original_builder.info.splits[split].num_examples
         batch_size = FLAGS.batch_size_eval
+        max_seq = max(1, min(FLAGS.batch_size_eval, 4))  # limit S to avoid large GPU kernels
         i = 0
         for episode in tqdm(ds, total=num_episodes, desc=f"Processing {self._original_builder.name}"):
             steps_list_of_dicts = list(tfds.as_numpy(episode['steps']))
@@ -167,39 +168,37 @@ class CompressedVggtDatasetOnnx(tfds.core.GeneratorBasedBuilder):
             num_images = chw_images.shape[0]
             for j in range(0, num_images, batch_size):
                 image_batch = chw_images[j:j+batch_size]  # [K, C, H, W]
-                # ONNX expects [B, S, 3, H, W]; set B=K, S=1 to keep attention memory small
-                image_batch_5d = np.expand_dims(image_batch, axis=1)  # [K, 1, C, H, W]
-                outputs = self._session.run(None, {self._input_name: image_batch_5d})
-                # Build name->output map for robustness
-                output_names = [o.name for o in self._session.get_outputs()]
-                outputs_by_name = {name: arr for name, arr in zip(output_names, outputs)}
-                if 'layer_patch_tokens' not in outputs_by_name:
-                    logging.error("layer_patch_tokens not found in ONNX outputs: %s", list(outputs_by_name.keys()))
-                    continue
-                feats = np.asarray(outputs_by_name['layer_patch_tokens'])  # [K, 1, 24, N, 2048]
-                if feats.ndim != 5:
-                    logging.error("Unexpected layer_patch_tokens rank: %s with shape %s", feats.ndim, feats.shape)
-                    continue
-                K, Sdim, L, N, D = feats.shape
-                if L != 24 or D != 2048:
-                    logging.warning("Unexpected (L,D)=(%d,%d); expected (24,2048)", L, D)
-                # Derive spatial size from N; expect nearly square (e.g., 37x37)
-                sqrt_n = int(round(np.sqrt(N)))
-                if sqrt_n * sqrt_n != N:
-                    logging.warning("Token count %d is not a perfect square; cropping to %d", N, sqrt_n * sqrt_n)
-                N_sq = sqrt_n * sqrt_n
-                # For each image in this batch, produce (64, 2048)
-                for b in range(K):
-                    per_img = feats[b, 0]              # [24, N, 2048]
-                    per_img = per_img[:, :N_sq, :]     # crop if needed
-                    per_img = per_img.reshape((L, sqrt_n, sqrt_n, D))  # [24, H, W, 2048]
-                    # Bilinear resize to 8x8 per layer using TF
-                    per_img_tf = tf.convert_to_tensor(per_img, dtype=tf.float32)  # treat 24 as batch
-                    per_img_small = tf.image.resize(per_img_tf, size=(8, 8), method='bilinear', antialias=True)
-                    per_img_small = per_img_small.numpy().reshape((L, 64, D))  # [24,64,2048]
-                    # Fuse layers by mean -> [64,2048]
-                    fused = per_img_small.mean(axis=0).astype(np.float16)
-                    per_image_features_64x2048.append(fused)
+                # Further split into smaller sequences to keep S small on GPU
+                for s in range(0, image_batch.shape[0], max_seq):
+                    seq = image_batch[s:s+max_seq]  # [K2, C, H, W]
+                    image_batch_5d = np.expand_dims(seq, axis=0)  # [1, K2, C, H, W]
+                    outputs = self._session.run(None, {self._input_name: image_batch_5d})
+                    # Build name->output map for robustness
+                    output_names = [o.name for o in self._session.get_outputs()]
+                    outputs_by_name = {name: arr for name, arr in zip(output_names, outputs)}
+                    if 'layer_patch_tokens' not in outputs_by_name:
+                        logging.error("layer_patch_tokens not found in ONNX outputs: %s", list(outputs_by_name.keys()))
+                        continue
+                    feats = np.asarray(outputs_by_name['layer_patch_tokens'])  # [1, K2, 24, N, 2048]
+                    if feats.ndim != 5:
+                        logging.error("Unexpected layer_patch_tokens rank: %s with shape %s", feats.ndim, feats.shape)
+                        continue
+                    _, K2, L, N, D = feats.shape
+                    if L != 24 or D != 2048:
+                        logging.warning("Unexpected (L,D)=(%d,%d); expected (24,2048)", L, D)
+                    sqrt_n = int(round(np.sqrt(N)))
+                    if sqrt_n * sqrt_n != N:
+                        logging.warning("Token count %d is not a perfect square; cropping to %d", N, sqrt_n * sqrt_n)
+                    N_sq = sqrt_n * sqrt_n
+                    for k2 in range(K2):
+                        per_img = feats[0, k2]           # [24, N, 2048]
+                        per_img = per_img[:, :N_sq, :]
+                        per_img = per_img.reshape((L, sqrt_n, sqrt_n, D))
+                        per_img_tf = tf.convert_to_tensor(per_img, dtype=tf.float32)
+                        per_img_small = tf.image.resize(per_img_tf, size=(8, 8), method='bilinear', antialias=True)
+                        per_img_small = per_img_small.numpy().reshape((L, 64, D))
+                        fused = per_img_small.mean(axis=0).astype(np.float16)
+                        per_image_features_64x2048.append(fused)
             if not per_image_features_64x2048:
                 i += 1; continue
             features_array = np.stack(per_image_features_64x2048, axis=0)  # [T, 64, 2048]
