@@ -170,7 +170,15 @@ class CompressedVggtDatasetOnnx(tfds.core.GeneratorBasedBuilder):
                 image_batch = chw_images[j:j+batch_size]  # [K, C, H, W]
                 # Fast path: process as [B=K, S=1]
                 image_batch_5d = np.expand_dims(image_batch, axis=1)  # [K, 1, C, H, W]
-                image_batch_5d = image_batch_5d.astype(np.float16)
+                # Cast to the ONNX model's expected input dtype (float16 or float32)
+                try:
+                    input_type = self._session.get_inputs()[0].type  # e.g., 'tensor(float16)' or 'tensor(float)'
+                    if 'float16' in input_type:
+                        image_batch_5d = image_batch_5d.astype(np.float16)
+                    else:
+                        image_batch_5d = image_batch_5d.astype(np.float32)
+                except Exception:
+                    image_batch_5d = image_batch_5d.astype(np.float32)
 
                 # Request only the required output for efficiency
                 outputs = self._session.run(["layer_patch_tokens"], {self._input_name: image_batch_5d})
@@ -252,7 +260,15 @@ def load_or_create_compressor(builders, session, input_name, input_res, compress
             image_batch = chw_images[i:i + batch_size]  # [K, C, H, W]
             # Fast path: process as [B=K, S=1]
             image_batch_5d = np.expand_dims(image_batch, axis=1)  # [K, 1, C, H, W]
-            image_batch_5d = image_batch_5d.astype(np.float16)
+            # Cast to the ONNX model's expected input dtype (float16 or float32)
+            try:
+                input_type = session.get_inputs()[0].type
+                if 'float16' in input_type:
+                    image_batch_5d = image_batch_5d.astype(np.float16)
+                else:
+                    image_batch_5d = image_batch_5d.astype(np.float32)
+            except Exception:
+                image_batch_5d = image_batch_5d.astype(np.float32)
             try:
                 outputs = session.run(["layer_patch_tokens"], {input_name: image_batch_5d})
             except Exception as e:
@@ -260,6 +276,15 @@ def load_or_create_compressor(builders, session, input_name, input_res, compress
                 if onnx_path is None:
                     raise
                 cpu_session = ort.InferenceSession(onnx_path, sess_options=sess_options, providers=['CPUExecutionProvider'])
+                # Ensure dtype also matches CPU session expectations
+                try:
+                    cpu_in_type = cpu_session.get_inputs()[0].type
+                    if 'float16' in cpu_in_type and image_batch_5d.dtype != np.float16:
+                        image_batch_5d = image_batch_5d.astype(np.float16)
+                    if 'float16' not in cpu_in_type and image_batch_5d.dtype != np.float32:
+                        image_batch_5d = image_batch_5d.astype(np.float32)
+                except Exception:
+                    pass
                 outputs = cpu_session.run(["layer_patch_tokens"], {input_name: image_batch_5d})
             feats = np.asarray(outputs[0])  # [K, 1, 24, N, 2048]
             if feats.ndim != 5:
