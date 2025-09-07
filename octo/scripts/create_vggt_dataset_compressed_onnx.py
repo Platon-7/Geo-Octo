@@ -167,8 +167,8 @@ class CompressedVggtDatasetOnnx(tfds.core.GeneratorBasedBuilder):
             num_images = chw_images.shape[0]
             for j in range(0, num_images, batch_size):
                 image_batch = chw_images[j:j+batch_size]  # [K, C, H, W]
-                # ONNX expects [B, S, 3, H, W]; set B=1, S=K
-                image_batch_5d = np.expand_dims(image_batch, axis=0)
+                # ONNX expects [B, S, 3, H, W]; set B=K, S=1 to keep attention memory small
+                image_batch_5d = np.expand_dims(image_batch, axis=1)  # [K, 1, C, H, W]
                 outputs = self._session.run(None, {self._input_name: image_batch_5d})
                 # Build name->output map for robustness
                 output_names = [o.name for o in self._session.get_outputs()]
@@ -176,11 +176,11 @@ class CompressedVggtDatasetOnnx(tfds.core.GeneratorBasedBuilder):
                 if 'layer_patch_tokens' not in outputs_by_name:
                     logging.error("layer_patch_tokens not found in ONNX outputs: %s", list(outputs_by_name.keys()))
                     continue
-                feats = np.asarray(outputs_by_name['layer_patch_tokens'])  # [1, K, 24, N, 2048]
+                feats = np.asarray(outputs_by_name['layer_patch_tokens'])  # [K, 1, 24, N, 2048]
                 if feats.ndim != 5:
                     logging.error("Unexpected layer_patch_tokens rank: %s with shape %s", feats.ndim, feats.shape)
                     continue
-                _, K, L, N, D = feats.shape
+                K, Sdim, L, N, D = feats.shape
                 if L != 24 or D != 2048:
                     logging.warning("Unexpected (L,D)=(%d,%d); expected (24,2048)", L, D)
                 # Derive spatial size from N; expect nearly square (e.g., 37x37)
@@ -189,8 +189,8 @@ class CompressedVggtDatasetOnnx(tfds.core.GeneratorBasedBuilder):
                     logging.warning("Token count %d is not a perfect square; cropping to %d", N, sqrt_n * sqrt_n)
                 N_sq = sqrt_n * sqrt_n
                 # For each image in this batch, produce (64, 2048)
-                for k in range(K):
-                    per_img = feats[0, k]              # [24, N, 2048]
+                for b in range(K):
+                    per_img = feats[b, 0]              # [24, N, 2048]
                     per_img = per_img[:, :N_sq, :]     # crop if needed
                     per_img = per_img.reshape((L, sqrt_n, sqrt_n, D))  # [24, H, W, 2048]
                     # Bilinear resize to 8x8 per layer using TF
@@ -252,22 +252,23 @@ def load_or_create_compressor(builders, session, input_name, input_res, compress
         num_images = chw_images.shape[0]
         for i in range(0, num_images, batch_size):
             image_batch = chw_images[i:i + batch_size]  # [K, C, H, W]
-            image_batch_5d = np.expand_dims(image_batch, axis=0)  # [1, K, C, H, W]
+            # Use [B=K, S=1] to reduce memory in global attention
+            image_batch_5d = np.expand_dims(image_batch, axis=1)  # [K, 1, C, H, W]
             outputs = session.run(None, {input_name: image_batch_5d})
             output_names = [o.name for o in session.get_outputs()]
             outputs_by_name = {name: arr for name, arr in zip(output_names, outputs)}
             if 'layer_patch_tokens' not in outputs_by_name:
                 logging.error("layer_patch_tokens not found during compressor sampling; outputs: %s", list(outputs_by_name.keys()))
                 continue
-            feats = np.asarray(outputs_by_name['layer_patch_tokens'])  # [1, K, 24, N, 2048]
+            feats = np.asarray(outputs_by_name['layer_patch_tokens'])  # [K, 1, 24, N, 2048]
             if feats.ndim != 5:
                 logging.error("Unexpected layer_patch_tokens rank in sampling: %s with shape %s", feats.ndim, feats.shape)
                 continue
-            _, K, L, N, D = feats.shape
+            K, Sdim, L, N, D = feats.shape
             sqrt_n = int(round(np.sqrt(N)))
             N_sq = sqrt_n * sqrt_n
-            for k in range(K):
-                per_img = feats[0, k]              # [24, N, 2048]
+            for b in range(K):
+                per_img = feats[b, 0]              # [24, N, 2048]
                 per_img = per_img[:, :N_sq, :]     # ensure square
                 per_img = per_img.reshape((L, sqrt_n, sqrt_n, D))  # [24, H, W, 2048]
                 per_img_tf = tf.convert_to_tensor(per_img, dtype=tf.float32)
