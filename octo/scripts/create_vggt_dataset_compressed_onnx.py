@@ -126,16 +126,16 @@ class CompressedVggtDatasetOnnx(tfds.core.GeneratorBasedBuilder):
         original_info = self._original_builder.info
         step_features = dict(original_info.features['steps'].feature)
         observation_features = dict(step_features['observation'])
-        target_h, target_w = self._compressor.target_size
+        # Store (64, 2048) features per image as requested
         observation_features['vggt_tokens'] = tfds.features.Tensor(
-            shape=(target_h, target_w), dtype=np.float16,
-            doc='Compressed VGGT tokens using ONNX-based extraction.')
+            shape=(64, 2048), dtype=np.float16,
+            doc='VGGT per-image tokens after 24-layer aggregation and bilinear downsample to 64x2048.')
         step_features['observation'] = tfds.features.FeaturesDict(observation_features)
         final_features = tfds.features.FeaturesDict({
             'steps': tfds.features.Dataset(tfds.features.FeaturesDict(step_features)),
             'episode_metadata': original_info.features['episode_metadata']})
         return tfds.core.DatasetInfo(builder=self,
-            description=f"Libero dataset with compressed VGGT tokens (ONNX, {target_h}x{target_w}).",
+            description="Libero dataset with VGGT tokens (24-layer aggregated, resized to 64x2048).",
             features=final_features)
 
     def _split_generators(self, dl_manager):
@@ -154,27 +154,59 @@ class CompressedVggtDatasetOnnx(tfds.core.GeneratorBasedBuilder):
             if 'image' not in steps['observation'] or len(steps['observation']['image']) == 0:
                 i += 1; continue
             images_np = steps['observation']['image']
+            # Confirm original image resolution (expect 128x128x3)
+            try:
+                first_shape = images_np[0].shape if hasattr(images_np, '__len__') and len(images_np) > 0 else None
+                logging.info("First episode image shape: %s", first_shape)
+            except Exception:
+                pass
             chw_images = preprocess_images_in_memory(images_np, self._input_res)
-            all_tokens_uncompressed = []
+            # Collect per-image features of shape (64, 2048)
+            per_image_features_64x2048 = []
             num_images = chw_images.shape[0]
             for j in range(0, num_images, batch_size):
-                image_batch = chw_images[j:j+batch_size]
-                outputs = self._session.run(None, {self._input_name: image_batch})
-                tokens_batch = np.asarray(outputs[0])
-                while tokens_batch.ndim > 2 and tokens_batch.shape[0] == 1:
-                    tokens_batch = np.squeeze(tokens_batch, axis=0)
-                if tokens_batch.ndim == 2:
-                    tokens_batch = np.expand_dims(tokens_batch, axis=0)
-                all_tokens_uncompressed.append(tokens_batch)
-            if not all_tokens_uncompressed:
+                image_batch = chw_images[j:j+batch_size]  # [K, C, H, W]
+                # ONNX expects [B, S, 3, H, W]; set B=1, S=K
+                image_batch_5d = np.expand_dims(image_batch, axis=0)
+                outputs = self._session.run(None, {self._input_name: image_batch_5d})
+                # Build name->output map for robustness
+                output_names = [o.name for o in self._session.get_outputs()]
+                outputs_by_name = {name: arr for name, arr in zip(output_names, outputs)}
+                if 'layer_patch_tokens' not in outputs_by_name:
+                    logging.error("layer_patch_tokens not found in ONNX outputs: %s", list(outputs_by_name.keys()))
+                    continue
+                feats = np.asarray(outputs_by_name['layer_patch_tokens'])  # [1, K, 24, N, 2048]
+                if feats.ndim != 5:
+                    logging.error("Unexpected layer_patch_tokens rank: %s with shape %s", feats.ndim, feats.shape)
+                    continue
+                _, K, L, N, D = feats.shape
+                if L != 24 or D != 2048:
+                    logging.warning("Unexpected (L,D)=(%d,%d); expected (24,2048)", L, D)
+                # Derive spatial size from N; expect nearly square (e.g., 37x37)
+                sqrt_n = int(round(np.sqrt(N)))
+                if sqrt_n * sqrt_n != N:
+                    logging.warning("Token count %d is not a perfect square; cropping to %d", N, sqrt_n * sqrt_n)
+                N_sq = sqrt_n * sqrt_n
+                # For each image in this batch, produce (64, 2048)
+                for k in range(K):
+                    per_img = feats[0, k]              # [24, N, 2048]
+                    per_img = per_img[:, :N_sq, :]     # crop if needed
+                    per_img = per_img.reshape((L, sqrt_n, sqrt_n, D))  # [24, H, W, 2048]
+                    # Bilinear resize to 8x8 per layer using TF
+                    per_img_tf = tf.convert_to_tensor(per_img, dtype=tf.float32)  # treat 24 as batch
+                    per_img_small = tf.image.resize(per_img_tf, size=(8, 8), method='bilinear', antialias=True)
+                    per_img_small = per_img_small.numpy().reshape((L, 64, D))  # [24,64,2048]
+                    # Fuse layers by mean -> [64,2048]
+                    fused = per_img_small.mean(axis=0).astype(np.float16)
+                    per_image_features_64x2048.append(fused)
+            if not per_image_features_64x2048:
                 i += 1; continue
-            all_tokens_uncompressed = np.concatenate(all_tokens_uncompressed, axis=0)
-            tokens_compressed = self._compressor.compress(all_tokens_uncompressed).astype(np.float16)
-            if len(tokens_compressed) != len(steps_list_of_dicts):
+            features_array = np.stack(per_image_features_64x2048, axis=0)  # [T, 64, 2048]
+            if len(features_array) != len(steps_list_of_dicts):
                 logging.warning(f"Token/step mismatch in episode {i}. Skipping.")
                 i += 1; continue
-            for t in range(len(tokens_compressed)):
-                steps_list_of_dicts[t]['observation']['vggt_tokens'] = tokens_compressed[t]
+            for t in range(len(features_array)):
+                steps_list_of_dicts[t]['observation']['vggt_tokens'] = features_array[t]
             yield i, {'steps': steps_list_of_dicts, 'episode_metadata': tfds.as_numpy(episode['episode_metadata'])}
             i += 1
 
