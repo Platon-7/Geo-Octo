@@ -31,7 +31,6 @@ flags.DEFINE_string("target_size", "32,48", "Target compressed size as 'height,w
 flags.DEFINE_integer("compression_samples", 2500, "Number of samples for fitting a new compressor.")
 flags.DEFINE_integer("batch_size_eval", 32, "ONNX inference batch size (images per call). Default 32 for performance.")
 flags.DEFINE_bool("overwrite", False, "Overwrite existing datasets under output_data_dir.")
-flags.DEFINE_integer("onnx_seq_chunk", 8, "Max frames per ONNX call (sequence length S per run).")
 
 
 # -------------------------
@@ -147,7 +146,6 @@ class CompressedVggtDatasetOnnx(tfds.core.GeneratorBasedBuilder):
         ds = self._original_builder.as_dataset(split=split)
         num_episodes = self._original_builder.info.splits[split].num_examples
         batch_size = FLAGS.batch_size_eval
-        max_seq = max(1, int(FLAGS.onnx_seq_chunk))  # tune S-chunk for GPU throughput
         i = 0
         for episode in tqdm(ds, total=num_episodes, desc=f"Processing {self._original_builder.name}"):
             steps_list_of_dicts = list(tfds.as_numpy(episode['steps']))
@@ -172,6 +170,7 @@ class CompressedVggtDatasetOnnx(tfds.core.GeneratorBasedBuilder):
                 image_batch = chw_images[j:j+batch_size]  # [K, C, H, W]
                 # Fast path: process as [B=K, S=1]
                 image_batch_5d = np.expand_dims(image_batch, axis=1)  # [K, 1, C, H, W]
+                image_batch_5d = image_batch_5d.astype(np.float16)
 
                 # Request only the required output for efficiency
                 outputs = self._session.run(["layer_patch_tokens"], {self._input_name: image_batch_5d})
@@ -187,13 +186,15 @@ class CompressedVggtDatasetOnnx(tfds.core.GeneratorBasedBuilder):
                 sqrt_n = int(round(np.sqrt(N)))
                 N_sq = sqrt_n * sqrt_n
 
-                # Vectorized post-processing
+                # Vectorized post-processing on CPU
                 # Squeeze S=1, crop to square tokens, and reshape for resize: [K*24, H, W, D]
                 feats_reshaped = feats.squeeze(axis=1)[:, :, :N_sq, :].reshape(K * L, sqrt_n, sqrt_n, D)
-                feats_tf = tf.convert_to_tensor(feats_reshaped, dtype=tf.float32)
-                feats_small_tf = tf.image.resize(feats_tf, size=(8, 8), method='bilinear', antialias=True)
-                feats_small_np = feats_small_tf.numpy().reshape(K, L, 64, D)  # [K, 24, 64, 2048]
-                fused_batch = feats_small_np.mean(axis=1).astype(np.float16)   # [K, 64, 2048]
+                with tf.device('/CPU:0'):
+                    feats_tf = tf.convert_to_tensor(feats_reshaped, dtype=tf.float32)
+                    feats_small_tf = tf.image.resize(feats_tf, size=(8, 8), method='bilinear', antialias=True)  # [K*L,8,8,D]
+                    feats_small_flat = tf.reshape(feats_small_tf, [K, L, 64, D])  # [K,24,64,2048]
+                    fused_batch_tf = tf.cast(tf.reduce_mean(feats_small_flat, axis=1), tf.float16)  # [K,64,2048]
+                fused_batch = fused_batch_tf.numpy()
                 per_image_features_64x2048.append(fused_batch)
 
             if not per_image_features_64x2048:
@@ -249,36 +250,39 @@ def load_or_create_compressor(builders, session, input_name, input_res, compress
         num_images = chw_images.shape[0]
         for i in range(0, num_images, batch_size):
             image_batch = chw_images[i:i + batch_size]  # [K, C, H, W]
-            # Use the same sequence chunking approach as the generator
-            for s in range(0, image_batch.shape[0], max(1, int(FLAGS.onnx_seq_chunk))):
-                seq = image_batch[s:s + max(1, int(FLAGS.onnx_seq_chunk))]  # [K2, C, H, W]
-                image_batch_5d = np.expand_dims(seq, axis=0)  # [1, K2, C, H, W]
-                try:
-                    outputs = session.run(["layer_patch_tokens"], {input_name: image_batch_5d})
-                except Exception as e:
-                    logging.warning("GPU session.run failed during compressor sampling (%s). Falling back to CPU.", e)
-                    if onnx_path is None:
-                        raise
-                    cpu_session = ort.InferenceSession(onnx_path, sess_options=sess_options, providers=['CPUExecutionProvider'])
-                    outputs = cpu_session.run(["layer_patch_tokens"], {input_name: image_batch_5d})
-                feats = np.asarray(outputs[0])  # [1, K2, 24, N, 2048]
-                if feats.ndim != 5:
-                    logging.error("Unexpected layer_patch_tokens rank in sampling: %s with shape %s", feats.ndim, feats.shape)
-                    continue
-                _, K2, L, N, D = feats.shape
-                sqrt_n = int(round(np.sqrt(N)))
-                N_sq = sqrt_n * sqrt_n
-                for k2 in range(K2):
-                    per_img = feats[0, k2]              # [24, N, 2048]
-                    per_img = per_img[:, :N_sq, :]     # ensure square
-                    per_img = per_img.reshape((L, sqrt_n, sqrt_n, D))  # [24, H, W, 2048]
-                    per_img_tf = tf.convert_to_tensor(per_img, dtype=tf.float32)
-                    per_img_small = tf.image.resize(per_img_tf, size=(8, 8), method='bilinear', antialias=True)
-                    per_img_small = per_img_small.numpy().reshape((L, 64, D))  # [24,64,2048]
-                    fused = per_img_small.mean(axis=0).astype(np.float32)      # [64,2048]
-                    per_image_features_64x2048.append(fused)
+            # Fast path: process as [B=K, S=1]
+            image_batch_5d = np.expand_dims(image_batch, axis=1)  # [K, 1, C, H, W]
+            image_batch_5d = image_batch_5d.astype(np.float16)
+            try:
+                outputs = session.run(["layer_patch_tokens"], {input_name: image_batch_5d})
+            except Exception as e:
+                logging.warning("GPU session.run failed during compressor sampling (%s). Falling back to CPU.", e)
+                if onnx_path is None:
+                    raise
+                cpu_session = ort.InferenceSession(onnx_path, sess_options=sess_options, providers=['CPUExecutionProvider'])
+                outputs = cpu_session.run(["layer_patch_tokens"], {input_name: image_batch_5d})
+            feats = np.asarray(outputs[0])  # [K, 1, 24, N, 2048]
+            if feats.ndim != 5:
+                logging.error("Unexpected layer_patch_tokens rank in sampling: %s with shape %s", feats.ndim, feats.shape)
+                continue
+            K, _, L, N, D = feats.shape
+            if L != 24 or D != 2048:
+                logging.warning("Unexpected (L,D)=(%d,%d); expected (24,2048)", L, D)
+
+            sqrt_n = int(round(np.sqrt(N)))
+            N_sq = sqrt_n * sqrt_n
+
+            # Vectorized post-processing on CPU
+            feats_reshaped = feats.squeeze(axis=1)[:, :, :N_sq, :].reshape(K * L, sqrt_n, sqrt_n, D)
+            with tf.device('/CPU:0'):
+                feats_tf = tf.convert_to_tensor(feats_reshaped, dtype=tf.float32)
+                feats_small_tf = tf.image.resize(feats_tf, size=(8, 8), method='bilinear', antialias=True)
+                feats_small_flat = tf.reshape(feats_small_tf, [K, L, 64, D])
+                fused_batch_tf = tf.cast(tf.reduce_mean(feats_small_flat, axis=1), tf.float16)
+            fused_batch = fused_batch_tf.numpy()
+            per_image_features_64x2048.append(fused_batch)
         if per_image_features_64x2048:
-            episode_tokens_array = np.stack(per_image_features_64x2048, axis=0)  # [T, 64, 2048]
+            episode_tokens_array = np.concatenate(per_image_features_64x2048, axis=0)  # [T, 64, 2048]
             samples.extend(list(episode_tokens_array))
         count = len(samples)
         if count >= num_samples:
@@ -332,7 +336,10 @@ def main(_):
     sess_options = ort.SessionOptions()
     sess_options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
 
-    providers = ['CUDAExecutionProvider'] if FLAGS.vggt_use_cuda else ['CPUExecutionProvider']
+    if FLAGS.vggt_use_cuda:
+        providers = [("CUDAExecutionProvider", {"arena_extend_strategy": "kSameAsRequested"}), "CPUExecutionProvider"]
+    else:
+        providers = ['CPUExecutionProvider']
     session = ort.InferenceSession(onnx_path, sess_options=sess_options, providers=providers)
     input_name = session.get_inputs()[0].name
     logging.info("Loaded ONNX model %s with input '%s' and ALL graph optimizations enabled.", onnx_path, input_name)
