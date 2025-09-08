@@ -520,9 +520,10 @@ class VisionMixer(nn.Module):
             projected_vggt_tokens.shape,
         )
         
-        # Concatenation mode: use module field or environment override
+        # Concatenation mode: prefer environment override, fallback to module field
         import os
-        concat_mode = self.concat_mode or os.environ.get("VGGT_CONCAT_MODE", "tokens")
+        concat_mode_env = os.environ.get("VGGT_CONCAT_MODE")
+        concat_mode = concat_mode_env if concat_mode_env else (self.concat_mode or "tokens")
 
         if concat_mode == "features":
             # Concatenate along feature/channel axis (last axis)
