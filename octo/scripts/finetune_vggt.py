@@ -271,7 +271,7 @@ def main(_):
                 _walk(prefix + [str(k)], obj[k])
         elif isinstance(obj, (list, tuple)):
             for idx, v in enumerate(obj):
-                _walk(prefix + [f"[{idx}]"];, v)
+                _walk(prefix + [f"[{idx}]"], v)
         else:
             _print_leaf_info(prefix, obj)
 
