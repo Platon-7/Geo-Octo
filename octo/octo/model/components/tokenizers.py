@@ -509,7 +509,7 @@ class VisionMixer(nn.Module):
         if vggt_tokens is None:
             return patch_tokens
         
-        # If both are present: project VGGT features to match patch token feature dim, then concatenate along token axis
+        # If both are present: project VGGT features to match patch token feature dim
         projected_vggt_tokens = self.vggt_projection(vggt_tokens.tokens)
         
         logging.info(
@@ -518,7 +518,22 @@ class VisionMixer(nn.Module):
             projected_vggt_tokens.shape,
         )
         
-        mixed_tokens = jnp.concatenate([patch_tokens.tokens, projected_vggt_tokens], axis=-2)
-        mixed_mask = jnp.concatenate([patch_tokens.mask, vggt_tokens.mask], axis=-1)
+        # Concatenation mode: 'tokens' (default) or 'features'
+        # Read from observations/task optional flag; default to tokens
+        concat_mode = observations.get("vggt_concat_mode") if isinstance(observations, dict) else None
+        if concat_mode is None and isinstance(tasks, dict):
+            concat_mode = tasks.get("vggt_concat_mode")
+        if concat_mode is None:
+            concat_mode = "tokens"
+
+        if concat_mode == "features":
+            # Concatenate along feature/channel axis (last axis)
+            # shapes: (B,T,N,C) -> (B,T,N,C+C_vggt)
+            mixed_tokens = jnp.concatenate([patch_tokens.tokens, projected_vggt_tokens], axis=-1)
+            mixed_mask = jnp.logical_or(patch_tokens.mask.astype(bool), vggt_tokens.mask.astype(bool))
+        else:
+            # Concatenate along token axis (second-to-last)
+            mixed_tokens = jnp.concatenate([patch_tokens.tokens, projected_vggt_tokens], axis=-2)
+            mixed_mask = jnp.concatenate([patch_tokens.mask, vggt_tokens.mask], axis=-1)
         
         return TokenGroup(tokens=mixed_tokens, mask=mixed_mask)

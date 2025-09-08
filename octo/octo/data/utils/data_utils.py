@@ -479,6 +479,13 @@ def standardize_libero_vggt(traj: dict) -> dict:
         if 'vggt_tokens' in traj['observation']:
             vggt_shape = traj['observation']['vggt_tokens'].shape
             print(f"  -> SUCCESS: 'vggt_tokens' are present with shape: {vggt_shape}")
+            try:
+                if len(vggt_shape) >= 2 and tuple(vggt_shape[-2:]) == (64, 512):
+                    print("     OK: vggt_tokens last two dims are (64, 512) as expected.")
+                else:
+                    print("     WARNING: expected last two dims (64, 512), got", vggt_shape[-2:])
+            except Exception:
+                pass
         else:
             print("  -> WARNING: 'vggt_tokens' NOT found in the observation dict.")
         print("="*50 + "\n")

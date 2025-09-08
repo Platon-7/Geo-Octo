@@ -65,6 +65,12 @@ flags.DEFINE_bool("dump_train_images", False, "If True, save a few input images 
 flags.DEFINE_integer("dump_train_images_max", 20, "Max number of training images to dump.")
 flags.DEFINE_string("dump_train_images_dir", "./train_image_dumps", "Directory to save dumped training images.")
 flags.DEFINE_bool("use_vision_encoder", True, "If True then use Octo's vision encoder, else discard it.")
+flags.DEFINE_enum(
+    "vggt_concat_mode",
+    "tokens",
+    ["tokens", "features"],
+    "How to combine VGGT tokens with patch tokens: 'tokens' (concat along token axis) or 'features' (concat along feature axis).",
+)
 
 default_config_file = os.path.join(
     os.path.dirname(__file__), "configs/finetune_config.py"
@@ -220,6 +226,9 @@ def main(_):
             if "image_primary" in batch["observation"]:
                 # Assumes the goal is the first image in the window_size sequence
                 batch["task"]["image_primary"] = batch["observation"]["image_primary"][:, 0]
+
+        # Pass concat mode to the model via observations/tasks for VisionMixer to pick up
+        batch["observation"]["vggt_concat_mode"] = FLAGS.vggt_concat_mode
 
         return batch
 
