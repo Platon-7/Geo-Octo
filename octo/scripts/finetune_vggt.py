@@ -353,12 +353,32 @@ def main(_):
         logging.info("Saving to %s", save_dir)
         save_callback = SaveCallback(save_dir)
 
-        # Add window_size to top of config, to make eval easier
-        new_config = ConfigDict(model.config)
-        new_config["window_size"] = example_batch["observation"][
-            "timestep_pad_mask"
-        ].shape[1]
-        model = model.replace(config=new_config)
+        # Add window_size to top of config, to make eval easier, and sanitize config for JSON
+        def _to_jsonable(o):
+            import numpy as _np
+            if isinstance(o, (str, int, float, bool)) or o is None:
+                return o
+            if isinstance(o, dict):
+                return {k: _to_jsonable(v) for k, v in o.items()}
+            if isinstance(o, (list, tuple)):
+                return [_to_jsonable(v) for v in o]
+            # numpy scalars
+            if isinstance(o, (_np.generic,)):
+                return _np.asarray(o).tolist()
+            # class types (e.g., module specs)
+            if isinstance(o, type):
+                return f"{o.__module__}.{o.__name__}"
+            # jax/np arrays: replace with shape/dtype or string
+            shape = getattr(o, 'shape', None)
+            dtype = getattr(o, 'dtype', None)
+            if shape is not None and dtype is not None:
+                return {"__array__": True, "shape": tuple(shape), "dtype": str(dtype)}
+            return str(o)
+
+        new_config = dict(model.config)
+        new_config["window_size"] = example_batch["observation"]["timestep_pad_mask"].shape[1]
+        sanitized_config = _to_jsonable(new_config)
+        model = model.replace(config=sanitized_config)
 
         # Save finetuning config since it's not saved by SaveCallback, i.e. as part of model.save_pretrained()
         with tf.io.gfile.GFile(
