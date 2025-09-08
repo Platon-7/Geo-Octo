@@ -172,6 +172,18 @@ def main(_):
     config = ConfigDict(flax.traverse_util.unflatten_dict(flat_config))
     config.update(FLAGS.config.get("update_config", ConfigDict()))
     config = config.to_dict()
+
+    # Inject VisionMixer concat_mode from CLI flag into ModuleSpec kwargs
+    try:
+        mv = config["model"]["observation_tokenizers"].get("mixed_vision")
+        if isinstance(mv, dict):
+            mv_kwargs = mv.get("kwargs", {})
+            mv_kwargs["concat_mode"] = FLAGS.vggt_concat_mode
+            mv["kwargs"] = mv_kwargs
+            config["model"]["observation_tokenizers"]["mixed_vision"] = mv
+            logging.info("Set VisionMixer.concat_mode to %s via CLI", FLAGS.vggt_concat_mode)
+    except Exception as _e:
+        logging.warning("Could not set VisionMixer.concat_mode: %s", _e)
     check_config_diff(config, pretrained_model.config)
 
     #########
