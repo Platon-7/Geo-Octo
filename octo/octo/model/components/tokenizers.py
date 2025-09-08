@@ -441,12 +441,15 @@ class VGGTTokenizer(nn.Module):
             b, t, h, w, c = x.shape
             tokens = jnp.reshape(x, (b, t, h * w, c))
         elif x.ndim == 4:
-            # Assume (B, T, H, W) -> (B, T, N ,1)
-            b, t, h, w = x.shape            
-            tokens = jnp.reshape(x[..., None], (b, t, h * w, 1))
+            # Support (B, T, N, C) directly; fallback to (B, T, H, W) -> (B, T, N, 1)
+            b, t, a, b2 = x.shape
+            if b2 > 4:
+                tokens = x  # already (B, T, N, C)
+            else:
+                tokens = jnp.reshape(x[..., None], (b, t, a * b2, 1))
         else:
             raise ValueError(
-                f"Unsupported vggt_tokens shape {x.shape}. Expected (B, T, H, W) or (B, T, N ,1)."
+                f"Unsupported vggt_tokens shape {x.shape}. Expected (B, T, H, W, C) or (B, T, N, C)."
             )
         logging.info("VGGTTokenizer active: tokens shape is %s", tokens.shape)
         
@@ -481,10 +484,8 @@ class VisionMixer(nn.Module):
         )
         self.vggt_tokenizer = ModuleSpec.instantiate(vggt_spec_obj)()
         
-        # Define the projection layer.
-        # Note: We need to access the 'num_features' from the original dictionary spec.
-        target_embedding_dim = self.patch_tokenizer_spec['kwargs']['encoder']['kwargs']['num_features']
-        self.vggt_projection = nn.Dense(features=target_embedding_dim)
+        # Previously we projected VGGT features to match patch dim; no longer needed with (64,512) inputs
+        # Kept no projection layer to avoid unnecessary params
         
         
     def __call__(
@@ -504,17 +505,17 @@ class VisionMixer(nn.Module):
         if patch_tokens is None and vggt_tokens is None:
             return None
         
-        # If only one is present return it directly, we don't need a projection
+        # If only one is present return it directly
         if patch_tokens is None:
             return vggt_tokens
         if vggt_tokens is None:
             return patch_tokens
         
-        # If both are present: project VGGT features to match patch token feature dim
-        projected_vggt_tokens = self.vggt_projection(vggt_tokens.tokens)
+        # If both are present: use VGGT features directly (already (N,C) aligned with vision encoder)
+        projected_vggt_tokens = vggt_tokens.tokens
         
         logging.info(
-            "VisionMixer: mixing patch %s with projected vggt %s",
+            "VisionMixer: mixing patch %s with vggt %s",
             patch_tokens.tokens.shape,
             projected_vggt_tokens.shape,
         )
@@ -525,7 +526,6 @@ class VisionMixer(nn.Module):
 
         if concat_mode == "features":
             # Concatenate along feature/channel axis (last axis)
-            # shapes: (B,T,N,C) -> (B,T,N,C+C_vggt)
             mixed_tokens = jnp.concatenate([patch_tokens.tokens, projected_vggt_tokens], axis=-1)
             mixed_mask = jnp.logical_or(patch_tokens.mask.astype(bool), vggt_tokens.mask.astype(bool))
         else:
