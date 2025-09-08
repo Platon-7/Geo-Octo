@@ -85,6 +85,8 @@ config_flags.DEFINE_config_file(
 
 def main(_):
     initialize_compilation_cache()
+    # Ensure VisionMixer picks up concat mode without polluting the batch
+    os.environ["VGGT_CONCAT_MODE"] = FLAGS.vggt_concat_mode
     devices = jax.devices()
     logging.info(
         f"""
@@ -226,9 +228,6 @@ def main(_):
             if "image_primary" in batch["observation"]:
                 # Assumes the goal is the first image in the window_size sequence
                 batch["task"]["image_primary"] = batch["observation"]["image_primary"][:, 0]
-
-        # Pass concat mode to the model via observations/tasks for VisionMixer to pick up
-        batch["observation"]["vggt_concat_mode"] = FLAGS.vggt_concat_mode
 
         return batch
 
