@@ -536,4 +536,11 @@ class VisionMixer(nn.Module):
             mixed_tokens = jnp.concatenate([patch_tokens.tokens, projected_vggt_tokens], axis=-2)
             mixed_mask = jnp.concatenate([patch_tokens.mask, vggt_tokens.mask], axis=-1)
         
+        logging.info(
+            "VisionMixer: concat_mode=%s final tokens %s mask %s",
+            concat_mode,
+            mixed_tokens.shape,
+            mixed_mask.shape,
+        )
+
         return TokenGroup(tokens=mixed_tokens, mask=mixed_mask)
