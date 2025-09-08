@@ -469,19 +469,25 @@ class VisionMixer(nn.Module):
     def setup(self):
         """Initializes the sub-tokenizers from their string-based specifications."""
 
-        # 1. Create a ModuleSpec object from the dictionary spec that uses strings.
-        patch_spec_obj = ModuleSpec.create(
-            self.patch_tokenizer_spec['module'],
-            **self.patch_tokenizer_spec.get('kwargs', {})
-        )
-        # 2. Use the framework's instantiate helper to create the module.
+        # 1. Normalize patch_tokenizer_spec to a ModuleSpec (supports legacy and new formats)
+        if isinstance(self.patch_tokenizer_spec, dict) and set(self.patch_tokenizer_spec.keys()) == {"module", "name", "args", "kwargs"}:
+            patch_spec_obj = self.patch_tokenizer_spec  # already a ModuleSpec
+        else:
+            patch_spec_obj = ModuleSpec.create(
+                self.patch_tokenizer_spec['module'],
+                **self.patch_tokenizer_spec.get('kwargs', {})
+            )
+        # 2. Instantiate
         self.patch_tokenizer = ModuleSpec.instantiate(patch_spec_obj)()
         
         # Do the same for the VGGT tokenizer.
-        vggt_spec_obj = ModuleSpec.create(
-            self.vggt_tokenizer_spec['module'],
-            **self.vggt_tokenizer_spec.get('kwargs', {})
-        )
+        if isinstance(self.vggt_tokenizer_spec, dict) and set(self.vggt_tokenizer_spec.keys()) == {"module", "name", "args", "kwargs"}:
+            vggt_spec_obj = self.vggt_tokenizer_spec
+        else:
+            vggt_spec_obj = ModuleSpec.create(
+                self.vggt_tokenizer_spec['module'],
+                **self.vggt_tokenizer_spec.get('kwargs', {})
+            )
         self.vggt_tokenizer = ModuleSpec.instantiate(vggt_spec_obj)()
         
         # Previously we projected VGGT features to match patch dim; no longer needed with (64,512) inputs
