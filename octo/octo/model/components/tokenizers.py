@@ -461,6 +461,7 @@ class VisionMixer(nn.Module):
     """
     patch_tokenizer_spec: dict
     vggt_tokenizer_spec: dict
+    concat_mode: str = "tokens"  # 'tokens' or 'features'; can be overridden via env VGGT_CONCAT_MODE
 
     def setup(self):
         """Initializes the sub-tokenizers from their string-based specifications."""
@@ -518,13 +519,9 @@ class VisionMixer(nn.Module):
             projected_vggt_tokens.shape,
         )
         
-        # Concatenation mode: 'tokens' (default) or 'features'
-        # Read from observations/task optional flag; default to tokens
-        concat_mode = observations.get("vggt_concat_mode") if isinstance(observations, dict) else None
-        if concat_mode is None and isinstance(tasks, dict):
-            concat_mode = tasks.get("vggt_concat_mode")
-        if concat_mode is None:
-            concat_mode = "tokens"
+        # Concatenation mode: use module field or environment override
+        import os
+        concat_mode = self.concat_mode or os.environ.get("VGGT_CONCAT_MODE", "tokens")
 
         if concat_mode == "features":
             # Concatenate along feature/channel axis (last axis)
