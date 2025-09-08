@@ -247,6 +247,39 @@ def main(_):
     train_data_iter = map(process_batch, train_data_iter)
     example_batch = next(train_data_iter)
 
+    # ---- DIAGNOSTIC: Inspect example_batch shapes and detect non-sliceable leaves ----
+    def _print_leaf_info(key_path, x):
+        try:
+            shape = getattr(x, "shape", None)
+            dtype = getattr(x, "dtype", type(x))
+            sliceable = True
+            err = None
+            try:
+                _ = x[:1]
+            except Exception as _e:
+                sliceable = False
+                err = str(_e)
+            print(f"[BATCH] {'/'.join(key_path):<60} shape={shape} dtype={dtype} sliceable={sliceable}")
+            if not sliceable:
+                print(f"        -> slice error: {err}")
+        except Exception as e:
+            print(f"[BATCH] {'/'.join(key_path)}: <error printing leaf> {e}")
+
+    def _walk(prefix, obj):
+        if isinstance(obj, dict):
+            for k in sorted(obj.keys()):
+                _walk(prefix + [str(k)], obj[k])
+        elif isinstance(obj, (list, tuple)):
+            for idx, v in enumerate(obj):
+                _walk(prefix + [f"[{idx}]"];, v)
+        else:
+            _print_leaf_info(prefix, obj)
+
+    print("\n=== DIAGNOSTIC: example_batch leaf summary (pre-initialization) ===")
+    _walk([], example_batch)
+    print("=== END DIAGNOSTIC ===\n")
+    # ---- END DIAGNOSTIC ----
+
     #########
     #
     # Load Pretrained Model
