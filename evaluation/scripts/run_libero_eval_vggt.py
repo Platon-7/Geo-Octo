@@ -106,6 +106,14 @@ logging.basicConfig(
     handlers=[logging.StreamHandler()],
 )
 logger = logging.getLogger(__name__)
+# Match ONNX expected input dtype
+def _np_dtype_for_session(sess) -> np.dtype:
+    try:
+        t = sess.get_inputs()[0].type  # e.g., 'tensor(float16)' or 'tensor(float)'
+        return np.float16 if 'float16' in t else np.float32
+    except Exception:
+        return np.float32
+
 
 # After logging.basicConfig(...)
 
@@ -427,6 +435,10 @@ def compute_compressed_vggt_tokens(image: np.ndarray, vggt_ctx: dict) -> Optiona
     Image.fromarray(image).save(temp_img_path)
     # Use configurable input resolution (e.g., 224)
     preprocessed_image_np = load_and_preprocess_images([temp_img_path], target_size=cfg.vggt_input_res)
+    # Ensure dtype matches ONNX expectation
+    exp_dtype = _np_dtype_for_session(session)
+    if preprocessed_image_np.dtype != exp_dtype:
+        preprocessed_image_np = preprocessed_image_np.astype(exp_dtype)
 
     # --- Step 3: Run ONNX inference ---
     # The output is a list of all output nodes from the ONNX model.
