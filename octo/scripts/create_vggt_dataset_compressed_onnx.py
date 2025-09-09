@@ -216,6 +216,7 @@ class CompressedVggtDatasetOnnx(tfds.core.GeneratorBasedBuilder):
                     feats_selected = feats_squeezed[:, self._layer_indices, :N_sq, :]  # subset layers
                 else:
                     feats_selected = feats_squeezed[:, :, :N_sq, :]  # all layers
+                logging.info("Feature shape before bilinear resize (per-image): %s", feats_selected.shape[1:])
                 L_selected = feats_selected.shape[1]
                 feats_reshaped = feats_selected.reshape(K * L_selected, sqrt_n, sqrt_n, D)
                 with tf.device('/CPU:0'):
@@ -319,6 +320,7 @@ def load_or_create_compressor(builders, session, input_name, input_res, compress
                 feats_selected = feats_squeezed[:, layer_indices, :N_sq, :]
             else:
                 feats_selected = feats_squeezed[:, :, :N_sq, :]
+            logging.info("Feature shape before bilinear resize (per-image): %s", feats_selected.shape[1:])
             L_selected = feats_selected.shape[1]
             feats_reshaped = feats_selected.reshape(K * L_selected, sqrt_n, sqrt_n, D)
             with tf.device('/CPU:0'):
