@@ -65,6 +65,12 @@ flags.DEFINE_bool("dump_train_images", False, "If True, save a few input images 
 flags.DEFINE_integer("dump_train_images_max", 20, "Max number of training images to dump.")
 flags.DEFINE_string("dump_train_images_dir", "./train_image_dumps", "Directory to save dumped training images.")
 flags.DEFINE_bool("use_vision_encoder", True, "If True then use Octo's vision encoder, else discard it.")
+flags.DEFINE_enum(
+    "vggt_concat_mode",
+    "tokens",
+    ["tokens", "features"],
+    "How to combine VGGT tokens with patch tokens: 'tokens' (concat along token axis) or 'features' (concat along feature axis).",
+)
 
 default_config_file = os.path.join(
     os.path.dirname(__file__), "configs/finetune_config.py"
@@ -78,7 +84,9 @@ config_flags.DEFINE_config_file(
 
 
 def main(_):
-    initialize_compilation_cache()
+    # initialize_compilation_cache()
+    # Ensure VisionMixer picks up concat mode without polluting the batch
+    os.environ["VGGT_CONCAT_MODE"] = FLAGS.vggt_concat_mode
     devices = jax.devices()
     logging.info(
         f"""
@@ -164,6 +172,18 @@ def main(_):
     config = ConfigDict(flax.traverse_util.unflatten_dict(flat_config))
     config.update(FLAGS.config.get("update_config", ConfigDict()))
     config = config.to_dict()
+
+    # Inject VisionMixer concat_mode from CLI flag into ModuleSpec kwargs
+    try:
+        mv = config["model"]["observation_tokenizers"].get("mixed_vision")
+        if isinstance(mv, dict):
+            mv_kwargs = mv.get("kwargs", {})
+            mv_kwargs["concat_mode"] = FLAGS.vggt_concat_mode
+            mv["kwargs"] = mv_kwargs
+            config["model"]["observation_tokenizers"]["mixed_vision"] = mv
+            logging.info("Set VisionMixer.concat_mode to %s via CLI", FLAGS.vggt_concat_mode)
+    except Exception as _e:
+        logging.warning("Could not set VisionMixer.concat_mode: %s", _e)
     check_config_diff(config, pretrained_model.config)
 
     #########
@@ -238,6 +258,39 @@ def main(_):
     )
     train_data_iter = map(process_batch, train_data_iter)
     example_batch = next(train_data_iter)
+
+    # ---- DIAGNOSTIC: Inspect example_batch shapes and detect non-sliceable leaves ----
+    def _print_leaf_info(key_path, x):
+        try:
+            shape = getattr(x, "shape", None)
+            dtype = getattr(x, "dtype", type(x))
+            sliceable = True
+            err = None
+            try:
+                _ = x[:1]
+            except Exception as _e:
+                sliceable = False
+                err = str(_e)
+            print(f"[BATCH] {'/'.join(key_path):<60} shape={shape} dtype={dtype} sliceable={sliceable}")
+            if not sliceable:
+                print(f"        -> slice error: {err}")
+        except Exception as e:
+            print(f"[BATCH] {'/'.join(key_path)}: <error printing leaf> {e}")
+
+    def _walk(prefix, obj):
+        if isinstance(obj, dict):
+            for k in sorted(obj.keys()):
+                _walk(prefix + [str(k)], obj[k])
+        elif isinstance(obj, (list, tuple)):
+            for idx, v in enumerate(obj):
+                _walk(prefix + [f"[{idx}]"], v)
+        else:
+            _print_leaf_info(prefix, obj)
+
+    print("\n=== DIAGNOSTIC: example_batch leaf summary (pre-initialization) ===")
+    _walk([], example_batch)
+    print("=== END DIAGNOSTIC ===\n")
+    # ---- END DIAGNOSTIC ----
 
     #########
     #

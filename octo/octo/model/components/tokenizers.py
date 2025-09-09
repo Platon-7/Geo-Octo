@@ -441,12 +441,15 @@ class VGGTTokenizer(nn.Module):
             b, t, h, w, c = x.shape
             tokens = jnp.reshape(x, (b, t, h * w, c))
         elif x.ndim == 4:
-            # Assume (B, T, H, W) -> (B, T, N ,1)
-            b, t, h, w = x.shape            
-            tokens = jnp.reshape(x[..., None], (b, t, h * w, 1))
+            # Support (B, T, N, C) directly; fallback to (B, T, H, W) -> (B, T, N, 1)
+            b, t, a, b2 = x.shape
+            if b2 > 4:
+                tokens = x  # already (B, T, N, C)
+            else:
+                tokens = jnp.reshape(x[..., None], (b, t, a * b2, 1))
         else:
             raise ValueError(
-                f"Unsupported vggt_tokens shape {x.shape}. Expected (B, T, H, W) or (B, T, N ,1)."
+                f"Unsupported vggt_tokens shape {x.shape}. Expected (B, T, H, W, C) or (B, T, N, C)."
             )
         logging.info("VGGTTokenizer active: tokens shape is %s", tokens.shape)
         
@@ -461,6 +464,7 @@ class VisionMixer(nn.Module):
     """
     patch_tokenizer_spec: dict
     vggt_tokenizer_spec: dict
+    concat_mode: str = "tokens"  # 'tokens' or 'features'; can be overridden via env VGGT_CONCAT_MODE
 
     def setup(self):
         """Initializes the sub-tokenizers from their string-based specifications."""
@@ -480,10 +484,8 @@ class VisionMixer(nn.Module):
         )
         self.vggt_tokenizer = ModuleSpec.instantiate(vggt_spec_obj)()
         
-        # Define the projection layer.
-        # Note: We need to access the 'num_features' from the original dictionary spec.
-        target_embedding_dim = self.patch_tokenizer_spec['kwargs']['encoder']['kwargs']['num_features']
-        self.vggt_projection = nn.Dense(features=target_embedding_dim)
+        # Previously we projected VGGT features to match patch dim; no longer needed with (64,512) inputs
+        # Kept no projection layer to avoid unnecessary params
         
         
     def __call__(
@@ -503,22 +505,40 @@ class VisionMixer(nn.Module):
         if patch_tokens is None and vggt_tokens is None:
             return None
         
-        # If only one is present return it directly, we don't need a projection
+        # If only one is present return it directly
         if patch_tokens is None:
             return vggt_tokens
         if vggt_tokens is None:
             return patch_tokens
         
-        # If both are present: project VGGT features to match patch token feature dim, then concatenate along token axis
-        projected_vggt_tokens = self.vggt_projection(vggt_tokens.tokens)
+        # If both are present: use VGGT features directly (already (N,C) aligned with vision encoder)
+        projected_vggt_tokens = vggt_tokens.tokens
         
         logging.info(
-            "VisionMixer: mixing patch %s with projected vggt %s",
+            "VisionMixer: mixing patch %s with vggt %s",
             patch_tokens.tokens.shape,
             projected_vggt_tokens.shape,
         )
         
-        mixed_tokens = jnp.concatenate([patch_tokens.tokens, projected_vggt_tokens], axis=-2)
-        mixed_mask = jnp.concatenate([patch_tokens.mask, vggt_tokens.mask], axis=-1)
+        # Concatenation mode: prefer environment override, fallback to module field
+        import os
+        concat_mode_env = os.environ.get("VGGT_CONCAT_MODE")
+        concat_mode = concat_mode_env if concat_mode_env else (self.concat_mode or "tokens")
+
+        if concat_mode == "features":
+            # Concatenate along feature/channel axis (last axis)
+            mixed_tokens = jnp.concatenate([patch_tokens.tokens, projected_vggt_tokens], axis=-1)
+            mixed_mask = jnp.logical_or(patch_tokens.mask.astype(bool), vggt_tokens.mask.astype(bool))
+        else:
+            # Concatenate along token axis (second-to-last)
+            mixed_tokens = jnp.concatenate([patch_tokens.tokens, projected_vggt_tokens], axis=-2)
+            mixed_mask = jnp.concatenate([patch_tokens.mask, vggt_tokens.mask], axis=-1)
         
+        logging.info(
+            "VisionMixer: concat_mode=%s final tokens %s mask %s",
+            concat_mode,
+            mixed_tokens.shape,
+            mixed_mask.shape,
+        )
+
         return TokenGroup(tokens=mixed_tokens, mask=mixed_mask)

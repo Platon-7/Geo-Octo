@@ -20,7 +20,7 @@ export WANDB_ENTITY="nlp-squad"
 export WANDB_PROJECT="Geo_Octo"
 
 
-source activate octo-onnx
+source activate onnx-build
 
-srun -u python vggt-onnx/inspect_vggt.py
+srun -u python octo/scripts/inspect_onnx_model.py /home/pkarageorgis/geo_octo/vggt-onnx/onnx_fp16
 #srun -u python vggt-onnx/export_vggt.py

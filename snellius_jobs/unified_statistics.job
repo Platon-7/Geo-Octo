@@ -18,7 +18,7 @@ source activate octo
 cd octo
 
 BASE_DATA_DIR=/scratch-shared/tmp.cwkV8vOvfY/libero_datasets
-VGGT_DATA_DIR=/scratch-shared/tmp.cwkV8vOvfY/libero_vggt_onnx_compressed
+VGGT_DATA_DIR=/scratch-shared/tmp.cwkV8vOvfY/libero_vggt_onnx_compressed_24
 OUT_DIR=/home/pkarageorgis/geo_octo/libero_datasets/unified_stats
 
 # No-VGGT variants

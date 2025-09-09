@@ -60,6 +60,21 @@ class VGGT(nn.Module, PyTorchModelHubMixin):
 
         predictions = {}
 
+        # --- MODIFIED CODE BLOCK FOR FLEXIBLE FEATURE EXTRACTION ---
+
+        layers_to_extract = aggregated_tokens_list
+
+        # Stack the list of selected layer outputs into a single tensor.
+        # We also slice off the special tokens (camera/register) to get only patch tokens.
+        layer_patch_tokens = torch.stack(
+            [x[:, :, patch_start_idx:, :] for x in layers_to_extract], dim=2
+        )
+        # The resulting shape is [B, S, L_selected, Hp*Wp, 2048]
+
+        # Add this powerful new tensor to our output dictionary.
+        predictions["layer_patch_tokens"] = layer_patch_tokens
+        # --- END OF MODIFIED CODE BLOCK ---
+
         with torch.cuda.amp.autocast(enabled=False):
             if self.camera_head is not None:
                 pose_enc_list = self.camera_head(aggregated_tokens_list)

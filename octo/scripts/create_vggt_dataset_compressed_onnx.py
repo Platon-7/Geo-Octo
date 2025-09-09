@@ -16,6 +16,16 @@ except Exception as _e:  # pragma: no cover
 from vggt_compression_analysis import VGGTCompressor
 
 # -------------------------
+# Helper to match ONNX expected input dtype
+# -------------------------
+def _np_dtype_for_session(sess) -> np.dtype:
+    try:
+        t = sess.get_inputs()[0].type  # e.g., 'tensor(float16)' or 'tensor(float)'
+        return np.float16 if 'float16' in t else np.float32
+    except Exception:
+        return np.float32
+
+# -------------------------
 # Flags (No changes needed here)
 # -------------------------
 FLAGS = flags.FLAGS
@@ -126,16 +136,17 @@ class CompressedVggtDatasetOnnx(tfds.core.GeneratorBasedBuilder):
         original_info = self._original_builder.info
         step_features = dict(original_info.features['steps'].feature)
         observation_features = dict(step_features['observation'])
+        # Store PCA-compressed features with target size (e.g., 64x512)
         target_h, target_w = self._compressor.target_size
         observation_features['vggt_tokens'] = tfds.features.Tensor(
             shape=(target_h, target_w), dtype=np.float16,
-            doc='Compressed VGGT tokens using ONNX-based extraction.')
+            doc='VGGT tokens after 24-layer aggregation, bilinear downsample to 64x2048, then PCA to target size.')
         step_features['observation'] = tfds.features.FeaturesDict(observation_features)
         final_features = tfds.features.FeaturesDict({
             'steps': tfds.features.Dataset(tfds.features.FeaturesDict(step_features)),
             'episode_metadata': original_info.features['episode_metadata']})
         return tfds.core.DatasetInfo(builder=self,
-            description=f"Libero dataset with compressed VGGT tokens (ONNX, {target_h}x{target_w}).",
+            description=f"Libero dataset with VGGT tokens (24-layer aggregated, resized to 64x2048, PCA to {target_h}x{target_w}).",
             features=final_features)
 
     def _split_generators(self, dl_manager):
@@ -154,22 +165,57 @@ class CompressedVggtDatasetOnnx(tfds.core.GeneratorBasedBuilder):
             if 'image' not in steps['observation'] or len(steps['observation']['image']) == 0:
                 i += 1; continue
             images_np = steps['observation']['image']
+            # Confirm original image resolution (expect 128x128x3)
+            try:
+                first_shape = images_np[0].shape if hasattr(images_np, '__len__') and len(images_np) > 0 else None
+                logging.info("First episode image shape: %s", first_shape)
+            except Exception:
+                pass
             chw_images = preprocess_images_in_memory(images_np, self._input_res)
-            all_tokens_uncompressed = []
+            # Collect per-image features of shape (64, 2048)
+            per_image_features_64x2048 = []
             num_images = chw_images.shape[0]
+            # Process the entire episode in batches
             for j in range(0, num_images, batch_size):
-                image_batch = chw_images[j:j+batch_size]
-                outputs = self._session.run(None, {self._input_name: image_batch})
-                tokens_batch = np.asarray(outputs[0])
-                while tokens_batch.ndim > 2 and tokens_batch.shape[0] == 1:
-                    tokens_batch = np.squeeze(tokens_batch, axis=0)
-                if tokens_batch.ndim == 2:
-                    tokens_batch = np.expand_dims(tokens_batch, axis=0)
-                all_tokens_uncompressed.append(tokens_batch)
-            if not all_tokens_uncompressed:
+                image_batch = chw_images[j:j+batch_size]  # [K, C, H, W]
+                # Fast path: process as [B=K, S=1]
+                image_batch_5d = np.expand_dims(image_batch, axis=1)  # [K, 1, C, H, W]
+                # Match ONNX expected dtype
+                exp_dtype = _np_dtype_for_session(self._session)
+                if image_batch_5d.dtype != exp_dtype:
+                    image_batch_5d = image_batch_5d.astype(exp_dtype)
+
+                # Request only the required output for efficiency
+                outputs = self._session.run(["layer_patch_tokens"], {self._input_name: image_batch_5d})
+                feats = np.asarray(outputs[0])  # [K, 1, 24, N, 2048]
+                if feats.ndim != 5:
+                    logging.error("Unexpected layer_patch_tokens rank: %s with shape %s", feats.ndim, feats.shape)
+                    continue
+
+                K, _, L, N, D = feats.shape
+                if L != 24 or D != 2048:
+                    logging.warning("Unexpected (L,D)=(%d,%d); expected (24,2048)", L, D)
+
+                sqrt_n = int(round(np.sqrt(N)))
+                N_sq = sqrt_n * sqrt_n
+
+                # Vectorized post-processing on CPU
+                # Squeeze S=1, crop to square tokens, and reshape for resize: [K*24, H, W, D]
+                feats_reshaped = feats.squeeze(axis=1)[:, :, :N_sq, :].reshape(K * L, sqrt_n, sqrt_n, D)
+                with tf.device('/CPU:0'):
+                    feats_tf = tf.convert_to_tensor(feats_reshaped, dtype=tf.float32)
+                    feats_small_tf = tf.image.resize(feats_tf, size=(8, 8), method='bilinear', antialias=True)  # [K*L,8,8,D]
+                    feats_small_flat = tf.reshape(feats_small_tf, [K, L, 64, D])  # [K,24,64,2048]
+                    fused_batch_tf = tf.cast(tf.reduce_mean(feats_small_flat, axis=1), tf.float16)  # [K,64,2048]
+                fused_batch = fused_batch_tf.numpy()
+                per_image_features_64x2048.append(fused_batch)
+
+            if not per_image_features_64x2048:
                 i += 1; continue
-            all_tokens_uncompressed = np.concatenate(all_tokens_uncompressed, axis=0)
-            tokens_compressed = self._compressor.compress(all_tokens_uncompressed).astype(np.float16)
+            # Concatenate all processed batches across time
+            features_array = np.concatenate(per_image_features_64x2048, axis=0)  # [T, 64, 2048]
+            # Apply PCA compressor to obtain (64, 512) or desired target size
+            tokens_compressed = self._compressor.compress(features_array).astype(np.float16)
             if len(tokens_compressed) != len(steps_list_of_dicts):
                 logging.warning(f"Token/step mismatch in episode {i}. Skipping.")
                 i += 1; continue
@@ -179,9 +225,21 @@ class CompressedVggtDatasetOnnx(tfds.core.GeneratorBasedBuilder):
             i += 1
 
 
-def load_or_create_compressor(builders, session, input_name, input_res, compressor_path, num_samples, target_size):
+def load_or_create_compressor(builders, session, input_name, input_res, compressor_path, num_samples, target_size, onnx_path=None, sess_options=None):
     if compressor_path and os.path.exists(compressor_path):
-        return VGGTCompressor.load_compressor(compressor_path)
+        compressor = VGGTCompressor.load_compressor(compressor_path)
+        # Print retained information if available
+        try:
+            import numpy as _np
+            ratio = getattr(compressor, 'explained_variance_ratio_', None)
+            if ratio is None and hasattr(compressor, 'pca'):
+                ratio = getattr(compressor.pca, 'explained_variance_ratio_', None)
+            if ratio is not None:
+                retained = float(_np.sum(_np.asarray(ratio))) * 100.0
+                logging.info("Loaded compressor retains %.2f%% variance", retained)
+        except Exception:
+            pass
+        return compressor
 
     logging.info("Creating new PCA compressor with target size %s", target_size)
     batch_size = FLAGS.batch_size_eval
@@ -200,19 +258,52 @@ def load_or_create_compressor(builders, session, input_name, input_res, compress
         episode_images = trans['observation']['image']
         if episode_images.size == 0: continue
         chw_images = preprocess_images_in_memory(episode_images, input_res)
-        all_episode_tokens = []
+        # Collect per-image (64, 2048) features like in generator
+        per_image_features_64x2048 = []
         num_images = chw_images.shape[0]
         for i in range(0, num_images, batch_size):
-            image_batch = chw_images[i:i + batch_size]
-            outputs = session.run(None, {input_name: image_batch})
-            tokens_batch = np.asarray(outputs[0])
-            while tokens_batch.ndim > 2 and tokens_batch.shape[0] == 1:
-                tokens_batch = np.squeeze(tokens_batch, axis=0)
-            if tokens_batch.ndim == 2:
-                tokens_batch = np.expand_dims(tokens_batch, axis=0)
-            all_episode_tokens.append(tokens_batch)
-        episode_tokens_array = np.concatenate(all_episode_tokens, axis=0)
-        samples.extend(list(episode_tokens_array))
+            image_batch = chw_images[i:i + batch_size]  # [K, C, H, W]
+            # Fast path: process as [B=K, S=1]
+            image_batch_5d = np.expand_dims(image_batch, axis=1)  # [K, 1, C, H, W]
+            # Match ONNX expected dtype (GPU session)
+            exp_dtype = _np_dtype_for_session(session)
+            if image_batch_5d.dtype != exp_dtype:
+                image_batch_5d = image_batch_5d.astype(exp_dtype)
+            try:
+                outputs = session.run(["layer_patch_tokens"], {input_name: image_batch_5d})
+            except Exception as e:
+                logging.warning("GPU session.run failed during compressor sampling (%s). Falling back to CPU.", e)
+                if onnx_path is None:
+                    raise
+                cpu_session = ort.InferenceSession(onnx_path, sess_options=sess_options, providers=['CPUExecutionProvider'])
+                # Ensure dtype matches CPU session expectation
+                cpu_exp_dtype = _np_dtype_for_session(cpu_session)
+                if image_batch_5d.dtype != cpu_exp_dtype:
+                    image_batch_5d = image_batch_5d.astype(cpu_exp_dtype)
+                outputs = cpu_session.run(["layer_patch_tokens"], {input_name: image_batch_5d})
+            feats = np.asarray(outputs[0])  # [K, 1, 24, N, 2048]
+            if feats.ndim != 5:
+                logging.error("Unexpected layer_patch_tokens rank in sampling: %s with shape %s", feats.ndim, feats.shape)
+                continue
+            K, _, L, N, D = feats.shape
+            if L != 24 or D != 2048:
+                logging.warning("Unexpected (L,D)=(%d,%d); expected (24,2048)", L, D)
+
+            sqrt_n = int(round(np.sqrt(N)))
+            N_sq = sqrt_n * sqrt_n
+
+            # Vectorized post-processing on CPU
+            feats_reshaped = feats.squeeze(axis=1)[:, :, :N_sq, :].reshape(K * L, sqrt_n, sqrt_n, D)
+            with tf.device('/CPU:0'):
+                feats_tf = tf.convert_to_tensor(feats_reshaped, dtype=tf.float32)
+                feats_small_tf = tf.image.resize(feats_tf, size=(8, 8), method='bilinear', antialias=True)
+                feats_small_flat = tf.reshape(feats_small_tf, [K, L, 64, D])
+                fused_batch_tf = tf.cast(tf.reduce_mean(feats_small_flat, axis=1), tf.float16)
+            fused_batch = fused_batch_tf.numpy()
+            per_image_features_64x2048.append(fused_batch)
+        if per_image_features_64x2048:
+            episode_tokens_array = np.concatenate(per_image_features_64x2048, axis=0)  # [T, 64, 2048]
+            samples.extend(list(episode_tokens_array))
         count = len(samples)
         if count >= num_samples:
             break
@@ -221,6 +312,16 @@ def load_or_create_compressor(builders, session, input_name, input_res, compress
     all_samples = np.stack(samples[:num_samples], axis=0)
     compressor = VGGTCompressor(target_size=target_size)
     compressor.fit_compressor(all_samples)
+    # Print retained information if available
+    try:
+        ratio = getattr(compressor, 'explained_variance_ratio_', None)
+        if ratio is None and hasattr(compressor, 'pca'):
+            ratio = getattr(compressor.pca, 'explained_variance_ratio_', None)
+        if ratio is not None:
+            retained = float(np.sum(np.asarray(ratio))) * 100.0
+            logging.info("Fitted compressor retains %.2f%% variance", retained)
+    except Exception:
+        pass
     save_path = f"vggt_compressor_pca_{target_size[0]}x{target_size[1]}.pkl"
     compressor.save_compressor(save_path)
     logging.info("Saved new compressor to %s", save_path)
@@ -255,7 +356,10 @@ def main(_):
     sess_options = ort.SessionOptions()
     sess_options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
 
-    providers = ['CUDAExecutionProvider'] if FLAGS.vggt_use_cuda else ['CPUExecutionProvider']
+    if FLAGS.vggt_use_cuda:
+        providers = [("CUDAExecutionProvider", {"arena_extend_strategy": "kSameAsRequested"}), "CPUExecutionProvider"]
+    else:
+        providers = ['CPUExecutionProvider']
     session = ort.InferenceSession(onnx_path, sess_options=sess_options, providers=providers)
     input_name = session.get_inputs()[0].name
     logging.info("Loaded ONNX model %s with input '%s' and ALL graph optimizations enabled.", onnx_path, input_name)
@@ -275,7 +379,8 @@ def main(_):
     logging.info("Starting compressor load/fit stage...")
     compressor = load_or_create_compressor(
         original_builders, session, input_name, input_res,
-        FLAGS.compressor_path, FLAGS.compression_samples, target_size)
+        FLAGS.compressor_path, FLAGS.compression_samples, target_size,
+        onnx_path=onnx_path, sess_options=sess_options)
     logging.info("Compressor ready. Target size=%s", target_size)
 
     for builder in original_builders:

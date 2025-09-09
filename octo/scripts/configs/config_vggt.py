@@ -20,7 +20,7 @@ def get_config(config_string="full,multimodal"):
 
     FINETUNING_KWARGS = {
         "name": "libero_spatial_vggt_compressed_onnx",
-        "data_dir": "/scratch-shared/tmp.cwkV8vOvfY/libero_vggt_onnx_compressed",
+        "data_dir": "/scratch-shared/tmp.cwkV8vOvfY/libero_vggt_onnx_compressed_24",
         "dataset_statistics": UNIFIED_STATS_PATH,
         "image_obs_keys": {"primary": "image_primary"},
         "proprio_obs_key": "proprio",
@@ -57,16 +57,16 @@ def get_config(config_string="full,multimodal"):
         resume_dir="",
         pretrained_path=placeholder(str),
         pretrained_step=placeholder(int),
-        batch_size=16,
+        batch_size=64,
         shuffle_buffer_size=10000,
         num_steps=max_steps,
         log_interval=100,
-        eval_interval=5000,
-        save_interval=5000,
+        eval_interval=100,
+        save_interval=100,
         save_dir=placeholder(str),
         seed=42,
         wandb=dict(
-            project="octo_finetune_baseline", group=placeholder(str), entity=placeholder(str)
+            project="octo_finetune_vggt", group=placeholder(str), entity=placeholder(str)
         ),
         dataset_kwargs=FINETUNING_KWARGS,
         modality=task,
@@ -84,14 +84,14 @@ def get_config(config_string="full,multimodal"):
             weight_decay=0.01,
             clip_gradient=1.0,
             frozen_keys=frozen_keys,
-            grad_accumulation_steps=16,  # if you are using grad accumulation, you need to adjust max_steps accordingly
+            grad_accumulation_steps=4,  # if you are using grad accumulation, you need to adjust max_steps accordingly
         ),
         val_kwargs=dict(
             val_shuffle_buffer_size=1000,
             num_val_batches=16,
         ),
         viz_kwargs=dict(
-            eval_batch_size=32,
+            eval_batch_size=128,
             trajs_for_metrics=100,
             trajs_for_viz=8,
             samples_per_state=8,
@@ -165,24 +165,50 @@ def get_config(config_string="full,multimodal"):
     config["traj_transform_kwargs"] = traj_transform_kwargs
     config["frame_transform_kwargs"] = frame_transform_kwargs
     
+    # config['update_config'] = {
+    #     "model": {
+    #         "observation_tokenizers": {
+    #         "mixed_vision": ModuleSpec.create(
+    #             VisionMixer,
+    #             patch_tokenizer_spec={
+    #             'module': ImageTokenizer,
+    #             'kwargs': {
+    #                 'encoder': ModuleSpec.create(PatchEncoder, patch_size=32, num_features=512),
+    #                 'obs_stack_keys': ("image_primary",),
+    #             }
+    #             },
+    #             vggt_tokenizer_spec={'module': VGGTTokenizer},
+    #         ),
+    #         },
+    #         "repeat_task_tokens": False,
+    #     }
+    # }
+    
     config['update_config'] = {
-        "model": {
-            "observation_tokenizers": {
+    "model": {
+        "observation_tokenizers": {
             "mixed_vision": ModuleSpec.create(
-                VisionMixer,
+                "octo.model.components.tokenizers:VisionMixer",
                 patch_tokenizer_spec={
-                'module': ImageTokenizer,
-                'kwargs': {
-                    'encoder': ModuleSpec.create(PatchEncoder, patch_size=32, num_features=512),
-                    'obs_stack_keys': ("image_primary",),
-                }
+                    "module": "octo.model.components.tokenizers:ImageTokenizer",
+                    "kwargs": {
+                        "encoder": ModuleSpec.create(
+                            "octo.model.components.vit_encoders:PatchEncoder",
+                            patch_size=32,
+                            num_features=512,
+                        ),
+                        "obs_stack_keys": ("image_primary",),
+                    },
                 },
-                vggt_tokenizer_spec={'module': VGGTTokenizer},
+                vggt_tokenizer_spec={
+                    "module": "octo.model.components.tokenizers:VGGTTokenizer",
+                },
             ),
-            },
-            "repeat_task_tokens": False,
-        }
+        },
+        "repeat_task_tokens": False,
     }
+}
+    
     
     # VGGT-only choice
 #     config['update_config'] = {
@@ -198,5 +224,7 @@ def get_config(config_string="full,multimodal"):
         "model": {"observation_tokenizers": {"image_wrist": True}}
     }
     
+    
+
     
     return ConfigDict(config)
