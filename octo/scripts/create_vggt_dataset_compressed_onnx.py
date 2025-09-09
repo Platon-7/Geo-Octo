@@ -140,13 +140,13 @@ class CompressedVggtDatasetOnnx(tfds.core.GeneratorBasedBuilder):
         target_h, target_w = self._compressor.target_size
         observation_features['vggt_tokens'] = tfds.features.Tensor(
             shape=(target_h, target_w), dtype=np.float16,
-            doc='VGGT tokens after 24-layer aggregation, bilinear downsample to 64x2048, then PCA to target size.')
+            doc='VGGT tokens after 4-layer aggregation, bilinear downsample to 64x2048, then PCA to target size.')
         step_features['observation'] = tfds.features.FeaturesDict(observation_features)
         final_features = tfds.features.FeaturesDict({
             'steps': tfds.features.Dataset(tfds.features.FeaturesDict(step_features)),
             'episode_metadata': original_info.features['episode_metadata']})
         return tfds.core.DatasetInfo(builder=self,
-            description=f"Libero dataset with VGGT tokens (24-layer aggregated, resized to 64x2048, PCA to {target_h}x{target_w}).",
+            description=f"Libero dataset with VGGT tokens (4-layer aggregated, resized to 64x2048, PCA to {target_h}x{target_w}).",
             features=final_features)
 
     def _split_generators(self, dl_manager):
@@ -200,12 +200,16 @@ class CompressedVggtDatasetOnnx(tfds.core.GeneratorBasedBuilder):
                 N_sq = sqrt_n * sqrt_n
 
                 # Vectorized post-processing on CPU
-                # Squeeze S=1, crop to square tokens, and reshape for resize: [K*24, H, W, D]
-                feats_reshaped = feats.squeeze(axis=1)[:, :, :N_sq, :].reshape(K * L, sqrt_n, sqrt_n, D)
+                # Slice to 4 specific layers (4th, 11th, 17th, 23rd) before interpolation
+                layer_indices = [3, 10, 16, 22]  # 0-based indices
+                feats_squeezed = feats.squeeze(axis=1)  # [K, L, N, D]
+                feats_selected = feats_squeezed[:, layer_indices, :N_sq, :]  # [K, 4, N_sq, D]
+                L_selected = feats_selected.shape[1]
+                feats_reshaped = feats_selected.reshape(K * L_selected, sqrt_n, sqrt_n, D)  # [K*4, H, W, D]
                 with tf.device('/CPU:0'):
                     feats_tf = tf.convert_to_tensor(feats_reshaped, dtype=tf.float32)
-                    feats_small_tf = tf.image.resize(feats_tf, size=(8, 8), method='bilinear', antialias=True)  # [K*L,8,8,D]
-                    feats_small_flat = tf.reshape(feats_small_tf, [K, L, 64, D])  # [K,24,64,2048]
+                    feats_small_tf = tf.image.resize(feats_tf, size=(8, 8), method='bilinear', antialias=True)  # [K*4,8,8,D]
+                    feats_small_flat = tf.reshape(feats_small_tf, [K, L_selected, 64, D])  # [K,4,64,2048]
                     fused_batch_tf = tf.cast(tf.reduce_mean(feats_small_flat, axis=1), tf.float16)  # [K,64,2048]
                 fused_batch = fused_batch_tf.numpy()
                 per_image_features_64x2048.append(fused_batch)
@@ -292,12 +296,16 @@ def load_or_create_compressor(builders, session, input_name, input_res, compress
             sqrt_n = int(round(np.sqrt(N)))
             N_sq = sqrt_n * sqrt_n
 
-            # Vectorized post-processing on CPU
-            feats_reshaped = feats.squeeze(axis=1)[:, :, :N_sq, :].reshape(K * L, sqrt_n, sqrt_n, D)
+            # Vectorized post-processing on CPU with layer slicing
+            layer_indices = [3, 10, 16, 22]  # 0-based indices for 4th, 11th, 17th, 23rd
+            feats_squeezed = feats.squeeze(axis=1)  # [K, L, N, D]
+            feats_selected = feats_squeezed[:, layer_indices, :N_sq, :]  # [K, 4, N_sq, D]
+            L_selected = feats_selected.shape[1]
+            feats_reshaped = feats_selected.reshape(K * L_selected, sqrt_n, sqrt_n, D)
             with tf.device('/CPU:0'):
                 feats_tf = tf.convert_to_tensor(feats_reshaped, dtype=tf.float32)
                 feats_small_tf = tf.image.resize(feats_tf, size=(8, 8), method='bilinear', antialias=True)
-                feats_small_flat = tf.reshape(feats_small_tf, [K, L, 64, D])
+                feats_small_flat = tf.reshape(feats_small_tf, [K, L_selected, 64, D])
                 fused_batch_tf = tf.cast(tf.reduce_mean(feats_small_flat, axis=1), tf.float16)
             fused_batch = fused_batch_tf.numpy()
             per_image_features_64x2048.append(fused_batch)
