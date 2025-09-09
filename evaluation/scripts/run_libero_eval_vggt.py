@@ -431,14 +431,15 @@ def compute_compressed_vggt_tokens(image: np.ndarray, vggt_ctx: dict) -> Optiona
 
     # --- Step 2: Preprocess the image mirroring dataset pipeline (in-memory, no temp file) ---
     preprocessed_image_np = load_and_preprocess_images([image], target_size=cfg.vggt_input_res)
-    # Ensure dtype matches ONNX expectation
+    # Ensure dtype matches ONNX expectation and expand to 5D [B, 1, C, H, W]
     exp_dtype = _np_dtype_for_session(session)
     if preprocessed_image_np.dtype != exp_dtype:
         preprocessed_image_np = preprocessed_image_np.astype(exp_dtype)
+    preprocessed_image_5d = np.expand_dims(preprocessed_image_np, axis=1)
 
     # --- Step 3: Run ONNX inference ---
     # The output is a list of all output nodes from the ONNX model.
-    outputs = session.run(["layer_patch_tokens"], {input_name: preprocessed_image_np})
+    outputs = session.run(["layer_patch_tokens"], {input_name: preprocessed_image_5d})
 
     # --- Step 4: Extract and reshape the raw tokens ---
     # We reuse the logic from your previous helper to robustly find the main output.
