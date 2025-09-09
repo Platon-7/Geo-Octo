@@ -10,14 +10,16 @@ from PIL import Image
 import numpy as np
 
 
-def load_and_preprocess_images(image_path_list, target_size=224):
+def load_and_preprocess_images(images_or_paths, target_size=224):
     """
-    A quick start function to load and preprocess images for model input.
-    Uses padding mode to preserve all pixels by making the largest dimension
-    518px and padding the smaller dimension to reach a square shape.
+    Load and preprocess images for VGGT input, matching the offline pipeline.
+
+    Accepts either:
+      - a list of file paths (strings/Paths), or
+      - a list of in-memory NumPy arrays with shape (H, W, C)
 
     Args:
-        image_path_list (list): List of paths to image files
+        images_or_paths (list): List of file paths or HWC NumPy arrays
 
     Returns:
         numpy.ndarray: Batched array of preprocessed images with shape (N, 3, target_size, target_size)
@@ -31,15 +33,33 @@ def load_and_preprocess_images(image_path_list, target_size=224):
           and the smaller dimension is padded to reach a square shape (518x518)
     """
     # Check for empty list
-    if len(image_path_list) == 0:
+    if len(images_or_paths) == 0:
         raise ValueError("At least 1 image is required")
 
     images = []
 
     # Process all images
-    for image_path in image_path_list:
-        # Open image
-        img = Image.open(image_path)
+    for item in images_or_paths:
+        # Open image from path or NumPy
+        if isinstance(item, str):
+            img = Image.open(item)
+        elif hasattr(item, "__fspath__"):
+            img = Image.open(item.__fspath__())
+        elif isinstance(item, np.ndarray):
+            # Expect HWC; if CHW, transpose
+            arr = item
+            if arr.ndim != 3:
+                raise ValueError(f"Expected image array with 3 dims (HWC), got shape {arr.shape}")
+            if arr.shape[-1] in (1, 3, 4):
+                # HWC
+                img = Image.fromarray(arr)
+            elif arr.shape[0] in (1, 3, 4):
+                # CHW -> HWC
+                img = Image.fromarray(np.transpose(arr, (1, 2, 0)))
+            else:
+                raise ValueError(f"Unrecognized image array shape {arr.shape}; expected HWC/CHW with C in (1,3,4)")
+        else:
+            raise ValueError("Each item must be a file path or a NumPy array")
 
         # If there's an alpha channel, blend onto white background:
         if img.mode == "RGBA":
@@ -89,7 +109,7 @@ def load_and_preprocess_images(image_path_list, target_size=224):
     images = np.stack(images)  # concatenate images
 
     # Ensure correct shape when single image
-    if len(image_path_list) == 1:
+    if len(images_or_paths) == 1:
         # Verify shape is (1, C, H, W)
         if images.ndim == 3:
             images = np.expand_dims(images, axis=0)

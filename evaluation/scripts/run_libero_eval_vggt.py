@@ -429,12 +429,8 @@ def compute_compressed_vggt_tokens(image: np.ndarray, vggt_ctx: dict) -> Optiona
     if session is None or input_name is None or compressor is None:
         raise RuntimeError("VGGT context is missing required components (session, input_name, or compressor).")
 
-    # --- Step 2: Preprocess the image mirroring dataset pipeline ---
-    # Save to tmp to reuse the same loader (ensures identical behavior)
-    temp_img_path = "/tmp/vggt_online_frame.png"
-    Image.fromarray(image).save(temp_img_path)
-    # Use configurable input resolution (e.g., 224)
-    preprocessed_image_np = load_and_preprocess_images([temp_img_path], target_size=cfg.vggt_input_res)
+    # --- Step 2: Preprocess the image mirroring dataset pipeline (in-memory, no temp file) ---
+    preprocessed_image_np = load_and_preprocess_images([image], target_size=cfg.vggt_input_res)
     # Ensure dtype matches ONNX expectation
     exp_dtype = _np_dtype_for_session(session)
     if preprocessed_image_np.dtype != exp_dtype:
