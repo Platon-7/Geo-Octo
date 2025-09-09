@@ -10,7 +10,7 @@ from PIL import Image
 import numpy as np
 
 
-def load_and_preprocess_images(image_path_list):
+def load_and_preprocess_images(image_path_list, target_size=224):
     """
     A quick start function to load and preprocess images for model input.
     Uses padding mode to preserve all pixels by making the largest dimension
@@ -20,7 +20,7 @@ def load_and_preprocess_images(image_path_list):
         image_path_list (list): List of paths to image files
 
     Returns:
-        numpy.ndarray: Batched array of preprocessed images with shape (N, 3, 518, 518)
+        numpy.ndarray: Batched array of preprocessed images with shape (N, 3, target_size, target_size)
 
     Raises:
         ValueError: If the input list is empty
@@ -35,7 +35,6 @@ def load_and_preprocess_images(image_path_list):
         raise ValueError("At least 1 image is required")
 
     images = []
-    target_size = 224
 
     # Process all images
     for image_path in image_path_list:
@@ -54,7 +53,7 @@ def load_and_preprocess_images(image_path_list):
 
         width, height = img.size
 
-        # Make the largest dimension 518px while maintaining aspect ratio
+        # Make the largest dimension `target_size` while maintaining aspect ratio
         if width >= height:
             new_width = target_size
             new_height = round(height * (new_width / width) / 14) * 14  # Make divisible by 14
