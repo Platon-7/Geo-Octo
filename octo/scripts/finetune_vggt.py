@@ -82,6 +82,13 @@ config_flags.DEFINE_config_file(
     lock_config=False,
 )
 
+# Optional: stop training early while keeping scheduler based on full num_steps
+flags.DEFINE_integer(
+    "early_stop_steps",
+    -1,
+    "If >0, stop training after this many steps without altering the scheduler.",
+)
+
 
 def main(_):
     # initialize_compilation_cache()
@@ -613,6 +620,20 @@ def main(_):
         if (i + 1) % FLAGS.config.save_interval == 0 and save_dir is not None:
             logging.info("Saving checkpoint...")
             save_callback(train_state, i + 1)
+
+        # Early stop without changing cosine schedule or config
+        if isinstance(FLAGS.early_stop_steps, int) and FLAGS.early_stop_steps > 0 and (i + 1) >= FLAGS.early_stop_steps:
+            logging.info(
+                "Early stopping at step %d (configured early_stop_steps=%d). Cosine scheduler remained at num_steps=%d.",
+                i + 1,
+                int(FLAGS.early_stop_steps),
+                int(FLAGS.config.num_steps),
+            )
+            # Save a final checkpoint if not just saved this step
+            if (i + 1) % FLAGS.config.save_interval != 0 and save_dir is not None:
+                logging.info("Saving final checkpoint before early stop...")
+                save_callback(train_state, i + 1)
+            break
 
 
 if __name__ == "__main__":
