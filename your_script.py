@@ -139,6 +139,12 @@ def find_all_gt_paths(root: str) -> List[str]:
     return sorted(glob(pattern, recursive=True))
 
 
+def _fix_worker(args: Tuple[str, int]) -> str:
+    """Top-level worker for multiprocessing (must be picklable)."""
+    path, heart_label = args
+    return fix_single_gt(path, heart_label)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Fix tampered heart annotations (GT.nii.gz -> GT_fixed.nii.gz)")
     parser.add_argument("--source_dir", required=True, type=str, help="Absolute path to data root containing Patient_* subfolders")
@@ -174,9 +180,8 @@ def main() -> None:
         import multiprocessing as mp
 
         with mp.Pool(processes=num_workers) as pool:
-            for out in pool.imap_unordered(
-                lambda path: fix_single_gt(path, args.heart_label), gt_paths
-            ):
+            iterable = ((p, args.heart_label) for p in gt_paths)
+            for out in pool.imap_unordered(_fix_worker, iterable):
                 results.append(out)
 
     # Print a brief report
