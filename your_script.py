@@ -136,15 +136,14 @@ def fix_single_gt(gt_path: str, heart_label: int) -> str:
 
         corrected_heart[roi_slices] = roi_result
 
-    # Preserve non-heart labels exactly
-    output_labels = labels.copy()
-    output_labels[heart_mask] = 0  # remove tampered heart completely
-    # Only write heart into background positions to avoid altering other classes
-    write_positions = corrected_heart & (output_labels == 0)
+    # Merge: heart first, then rest on top (explicit overlay)
+    output_labels = np.zeros_like(labels)
     if np.issubdtype(output_labels.dtype, np.floating):
-        output_labels[write_positions] = float(heart_label)
+        output_labels[corrected_heart] = float(heart_label)
     else:
-        output_labels[write_positions] = heart_label
+        output_labels[corrected_heart] = heart_label
+    non_heart_mask = labels != heart_label
+    output_labels[non_heart_mask] = labels[non_heart_mask]
 
     out_img = nib.Nifti1Image(output_labels.astype(labels.dtype, copy=False), img.affine, img.header)
     out_path = os.path.join(os.path.dirname(gt_path), "GT_fixed.nii.gz")
