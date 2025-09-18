@@ -139,17 +139,10 @@ def find_all_gt_paths(root: str) -> List[str]:
     return sorted(glob(pattern, recursive=True))
 
 
-def _fix_worker(args: Tuple[str, int]) -> str:
-    """Top-level worker for multiprocessing (must be picklable)."""
-    path, heart_label = args
-    return fix_single_gt(path, heart_label)
-
-
 def main() -> None:
     parser = argparse.ArgumentParser(description="Fix tampered heart annotations (GT.nii.gz -> GT_fixed.nii.gz)")
     parser.add_argument("--source_dir", required=True, type=str, help="Absolute path to data root containing Patient_* subfolders")
     parser.add_argument("--heart_label", default=2, type=int, help="Numeric label id for the heart (default: 2)")
-    parser.add_argument("--workers", default=1, type=int, help="Number of parallel workers (default: 1)")
     args = parser.parse_args()
 
     gt_paths = find_all_gt_paths(args.source_dir)
@@ -159,22 +152,11 @@ def main() -> None:
     # Prebuild matrix once (also warms up numpy just a bit)
     _ = build_tamper_affine_matrix()
 
-    # Process, optionally in parallel. Multiprocessing has overhead; the
-    # operation is relatively fast per volume, so limit to a modest pool size.
-    num_workers = max(1, int(args.workers))
-
+    # Sequential processing only
     results: List[str] = []
-    if num_workers == 1:
-        for p in gt_paths:
-            out = fix_single_gt(p, args.heart_label)
-            results.append(out)
-    else:
-        import multiprocessing as mp
-
-        with mp.Pool(processes=num_workers) as pool:
-            iterable = ((p, args.heart_label) for p in gt_paths)
-            for out in pool.imap_unordered(_fix_worker, iterable):
-                results.append(out)
+    for p in gt_paths:
+        out = fix_single_gt(p, args.heart_label)
+        results.append(out)
 
     # Print a brief report
     print(f"Fixed {len(results)} cases. Example output: {results[0]}")
