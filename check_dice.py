@@ -47,6 +47,7 @@ def main() -> None:
     parser.add_argument("--baseline", default="gt", choices=["gt", "reference"], help="What to compare GT_fixed against")
     parser.add_argument("--reference_dir", type=str, default=None, help="If baseline=reference, path with clean GT under matching Patient_* folders")
     parser.add_argument("--heart_label", type=int, default=2, help="Numeric id for heart label")
+    parser.add_argument("--background_label", type=int, default=0, help="Numeric id for background (excluded from 'non-heart unaffected' check)")
     args = parser.parse_args()
 
     patients = list_patients(args.source_dir)
@@ -98,7 +99,11 @@ def main() -> None:
         print(f"Heart label {heart} -> mean {heart_arr.mean():.6f}, min {heart_arr.min():.6f}")
     # Non-heart exactness if compared against GT
     if args.baseline == "gt":
-        non_hearts = [l for l in per_class_scores.keys() if l != args.heart_label]
+        # Exclude heart and background from the 'non-heart unaffected' check
+        non_hearts = [
+            l for l in per_class_scores.keys()
+            if l != args.heart_label and l != args.background_label
+        ]
         all_ok = True
         for l in non_hearts:
             arr = np.array(per_class_scores[l])
