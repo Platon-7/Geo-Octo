@@ -149,7 +149,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Fix tampered heart annotations (GT.nii.gz -> GT_fixed.nii.gz)")
     parser.add_argument("--source_dir", required=True, type=str, help="Absolute path to data root containing Patient_* subfolders")
     parser.add_argument("--heart_label", default=2, type=int, help="Numeric label id for the heart (default: 2)")
-    parser.add_argument("--workers", default=0, type=int, help="Number of parallel workers (0=auto)")
+    parser.add_argument("--workers", default=1, type=int, help="Number of parallel workers (default: 1)")
     args = parser.parse_args()
 
     gt_paths = find_all_gt_paths(args.source_dir)
@@ -161,15 +161,7 @@ def main() -> None:
 
     # Process, optionally in parallel. Multiprocessing has overhead; the
     # operation is relatively fast per volume, so limit to a modest pool size.
-    num_workers = args.workers
-    if num_workers <= 0:
-        try:
-            import multiprocessing as mp
-
-            cpu_cnt = max(1, mp.cpu_count() - 1)
-            num_workers = min(8, cpu_cnt)
-        except Exception:
-            num_workers = 1
+    num_workers = max(1, int(args.workers))
 
     results: List[str] = []
     if num_workers == 1:
