@@ -8,10 +8,9 @@ Usage:
 Behavior:
   - Finds every Patient_XX/GT.nii.gz under --source_dir
   - Extracts only the heart label (default id=2)
-  - Applies the inverse of the tampering by sampling the tampered mask
-    with the forward tamper matrix (scipy.ndimage.affine_transform maps
-    output -> input). The known sequence is T1 -> R2 -> T3 -> T4 applied
-    on coordinates, which composes to M = T4 @ T3 @ R2 @ T1.
+  - Applies a fast sparse coordinate transform to the heart mask only,
+    using the composed affine (no heavy volume-wide resampling). The known
+    sequence is T1 -> R2 -> T3 -> T4 applied on coordinates.
   - Writes the corrected label map as GT_fixed.nii.gz in the same folder.
   - Non-heart labels are preserved exactly; heart voxels are only written
     into background positions to ensure other classes remain unaffected.
@@ -34,8 +33,8 @@ import nibabel as nib
 from scipy.ndimage import affine_transform
 
 
-def build_recovery_affine_matrix() -> Tuple[np.ndarray, np.ndarray]:
-    """Return (A, b) to undo the tamper with affine_transform.
+def build_forward_matrix() -> np.ndarray:
+    """Return forward 4x4 matrix M that maps tampered -> corrected coords.
 
     Using homogeneous transforms:
       T1 = translate(+275, +200, 0)
@@ -43,49 +42,38 @@ def build_recovery_affine_matrix() -> Tuple[np.ndarray, np.ndarray]:
       T3 = T1^{-1} = translate(-275, -200, 0)
       T4 = translate(+50, +40, +15)
 
-    The composed tamper mapping on coordinates is:
-      M = T4 @ T3 @ R2 @ T1
-
-    For affine_transform, the mapping is input(x) sampled at x = A @ o + b.
-    To recover the pre-tampered mask, we produce output o on the original grid
-    and sample at x = M @ o in the tampered grid, so we pass A,b from M.
+    We empirically match the correct composition used in your working
+    implementation: M = T1 @ Rz @ T3 @ T4
     """
 
-    # Build transforms in NumPy index space (z, y, x).
-    # Input translations given in world order (x, y, z) from the assignment.
-    def T_world(tx: float, ty: float, tz: float) -> np.ndarray:
-        # Convert to index order (dz, dy, dx) = (tz, ty, tx)
-        dz, dy, dx = float(tz), float(ty), float(tx)
+    # Build transforms directly in array index order (x, y, z), consistent
+    # with the original working version.
+    def T(tx: float, ty: float, tz: float) -> np.ndarray:
         m = np.eye(4, dtype=np.float64)
-        m[0, 3] = dz
-        m[1, 3] = dy
-        m[2, 3] = dx
+        m[0, 3] = tx
+        m[1, 3] = ty
+        m[2, 3] = tz
         return m
 
     phi = -27.0 * np.pi / 180.0
     cos_p = float(np.cos(phi))
     sin_p = float(np.sin(phi))
-    # Rotation about the world Z-axis means: keep z fixed, rotate x<->y plane.
-    # In index order (z,y,x), that mixes axes (y,x) while leaving z intact.
-    Rz = np.array([
-        [1.0, 0.0, 0.0, 0.0],      # z' = z
-        [0.0, cos_p, sin_p, 0.0],  # y' = cos*y + sin*x
-        [0.0, -sin_p, cos_p, 0.0], # x' = -sin*y + cos*x
-        [0.0, 0.0, 0.0, 1.0],
-    ], dtype=np.float64)
+    Rz = np.array(
+        [
+            [cos_p, -sin_p, 0.0, 0.0],
+            [sin_p, cos_p, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0],
+            [0.0, 0.0, 0.0, 1.0],
+        ],
+        dtype=np.float64,
+    )
 
-    T1 = T_world(275.0, 200.0, 0.0)
-    T3 = T_world(-275.0, -200.0, 0.0)  # T1^{-1}
-    T4 = T_world(50.0, 40.0, 15.0)
+    T1 = T(275.0, 200.0, 0.0)
+    T3 = T(-275.0, -200.0, 0.0)  # T1^{-1}
+    T4 = T(50.0, 40.0, 15.0)
 
-    # Compose in the documented order: apply T1 -> R2 -> T3 -> T4
-    M = T4 @ T3 @ Rz @ T1
-    # For affine_transform, output[o] = input[A @ o + b]. To recover the
-    # original from the tampered input, we sample at tampered coords x = M @ o,
-    # hence we pass A = M (not the inverse), built in index space.
-    A = M[:3, :3].astype(np.float64)
-    b = M[:3, 3].astype(np.float64)
-    return A, b
+    M = T1 @ Rz @ T3 @ T4
+    return M
 
 
 def fix_single_gt(gt_path: str, heart_label: int) -> str:
@@ -106,22 +94,24 @@ def fix_single_gt(gt_path: str, heart_label: int) -> str:
     # Extract heart mask only
     heart_mask = labels == heart_label
 
-    # Compose transform once
-    A, b = build_recovery_affine_matrix()
-
-    # Apply transform on the heart mask only
-    corrected_heart = affine_transform(
-        heart_mask.astype(np.uint8),
-        matrix=A,
-        offset=b,
-        output_shape=heart_mask.shape,
-        order=0,
-        mode="constant",
-        cval=0.0,
-        prefilter=False,
-    )
-
-    corrected_heart = corrected_heart.astype(bool)
+    # Compose forward transform once (no matrix inversion) and map only the heart voxels
+    M = build_forward_matrix()
+    idx = np.argwhere(heart_mask)
+    corrected_heart = np.zeros_like(heart_mask, dtype=bool)
+    if idx.size != 0:
+        ones = np.ones((idx.shape[0], 1), dtype=np.float64)
+        pts = np.concatenate([idx.astype(np.float64), ones], axis=1)  # (N,4) with (x,y,z,1)
+        new = pts @ M.T
+        new_xyz = np.rint(new[:, :3]).astype(np.int64)
+        X, Y, Z = heart_mask.shape
+        valid = (
+            (new_xyz[:, 0] >= 0) & (new_xyz[:, 0] < X) &
+            (new_xyz[:, 1] >= 0) & (new_xyz[:, 1] < Y) &
+            (new_xyz[:, 2] >= 0) & (new_xyz[:, 2] < Z)
+        )
+        new_xyz = new_xyz[valid]
+        if new_xyz.size:
+            corrected_heart[new_xyz[:, 0], new_xyz[:, 1], new_xyz[:, 2]] = True
 
     # Preserve non-heart labels exactly
     output_labels = labels.copy()
@@ -157,7 +147,7 @@ def main() -> None:
         raise SystemExit(f"No GT.nii.gz files found under {args.source_dir}")
 
     # Prebuild matrix once (also warms up numpy just a bit)
-    _ = build_recovery_affine_matrix()
+    _ = build_forward_matrix()
 
     # Sequential processing only
     results: List[str] = []
