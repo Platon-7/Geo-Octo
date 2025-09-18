@@ -34,8 +34,8 @@ import nibabel as nib
 from scipy.ndimage import affine_transform
 
 
-def build_tamper_affine_matrix() -> Tuple[np.ndarray, np.ndarray]:
-    """Return (A, b) for scipy.ndimage.affine_transform.
+def build_recovery_affine_matrix() -> Tuple[np.ndarray, np.ndarray]:
+    """Return (A, b) to undo the tamper with affine_transform.
 
     Using homogeneous transforms:
       T1 = translate(+275, +200, 0)
@@ -75,7 +75,11 @@ def build_tamper_affine_matrix() -> Tuple[np.ndarray, np.ndarray]:
     T3 = T(-275.0, -200.0, 0.0)  # T1^{-1}
     T4 = T(50.0, 40.0, 15.0)
 
+    # Tamper composition (applied conceptually in order T1 -> R2 -> T3 -> T4)
     M = T4 @ T3 @ Rz @ T1  # 4x4
+    # For affine_transform, output[o] = input[A @ o + b]. To recover the
+    # original from the tampered input, we must sample tampered at x = M @ o,
+    # hence we pass A = M (not the inverse).
     A = M[:3, :3].astype(np.float64)
     b = M[:3, 3].astype(np.float64)
     return A, b
@@ -100,7 +104,7 @@ def fix_single_gt(gt_path: str, heart_label: int) -> str:
     heart_mask = labels == heart_label
 
     # Compose transform once
-    A, b = build_tamper_affine_matrix()
+    A, b = build_recovery_affine_matrix()
 
     # Apply transform on the heart mask only
     corrected_heart = affine_transform(
@@ -150,7 +154,7 @@ def main() -> None:
         raise SystemExit(f"No GT.nii.gz files found under {args.source_dir}")
 
     # Prebuild matrix once (also warms up numpy just a bit)
-    _ = build_tamper_affine_matrix()
+    _ = build_recovery_affine_matrix()
 
     # Sequential processing only
     results: List[str] = []
