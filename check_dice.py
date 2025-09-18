@@ -48,6 +48,7 @@ def main() -> None:
     parser.add_argument("--reference_dir", type=str, default=None, help="If baseline=reference, path with clean GT under matching Patient_* folders")
     parser.add_argument("--heart_label", type=int, default=2, help="Numeric id for heart label")
     parser.add_argument("--background_label", type=int, default=0, help="Numeric id for background (excluded from 'non-heart unaffected' check)")
+    parser.add_argument("--use_patient27_gt2", action="store_true", help="When baseline=gt, compare Patient_27 against GT2.nii.gz if present")
     args = parser.parse_args()
 
     patients = list_patients(args.source_dir)
@@ -59,9 +60,14 @@ def main() -> None:
 
     for p in patients:
         fixed_path = os.path.join(p, "GT_fixed.nii.gz")
-        base_path = os.path.join(p, "GT.nii.gz") if args.baseline == "gt" else os.path.join(
-            os.path.join(args.reference_dir or ""), os.path.basename(p), "GT.nii.gz"
-        )
+        if args.baseline == "gt":
+            # Optional special case: Patient_27 has untampered GT2
+            if args.use_patient27_gt2 and os.path.basename(p).lower() in {"patient_27", "patient27"}:
+                base_path = os.path.join(p, "GT2.nii.gz")
+            else:
+                base_path = os.path.join(p, "GT.nii.gz")
+        else:
+            base_path = os.path.join(os.path.join(args.reference_dir or ""), os.path.basename(p), "GT.nii.gz")
 
         if not os.path.exists(fixed_path) or not os.path.exists(base_path):
             failed_paths.append(p)
