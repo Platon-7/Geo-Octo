@@ -94,24 +94,47 @@ def fix_single_gt(gt_path: str, heart_label: int) -> str:
     # Extract heart mask only
     heart_mask = labels == heart_label
 
-    # Compose forward transform once (no matrix inversion) and map only the heart voxels
-    M = build_forward_matrix()
+    # Compose transform once
+    M = build_forward_matrix()  # forward mapping tampered -> corrected
+    Minv = np.linalg.inv(M)
+    A_full = Minv[:3, :3].astype(np.float64)
+    b_full = Minv[:3, 3].astype(np.float64)
+
+    # Compute tight output ROI by transforming heart voxel coords forward
     idx = np.argwhere(heart_mask)
     corrected_heart = np.zeros_like(heart_mask, dtype=bool)
     if idx.size != 0:
         ones = np.ones((idx.shape[0], 1), dtype=np.float64)
         pts = np.concatenate([idx.astype(np.float64), ones], axis=1)  # (N,4) with (x,y,z,1)
         new = pts @ M.T
-        new_xyz = np.rint(new[:, :3]).astype(np.int64)
+        new_xyz_f = new[:, :3]
+        mins = np.floor(new_xyz_f.min(axis=0) - 1).astype(int)
+        maxs = np.ceil(new_xyz_f.max(axis=0) + 2).astype(int)
         X, Y, Z = heart_mask.shape
-        valid = (
-            (new_xyz[:, 0] >= 0) & (new_xyz[:, 0] < X) &
-            (new_xyz[:, 1] >= 0) & (new_xyz[:, 1] < Y) &
-            (new_xyz[:, 2] >= 0) & (new_xyz[:, 2] < Z)
-        )
-        new_xyz = new_xyz[valid]
-        if new_xyz.size:
-            corrected_heart[new_xyz[:, 0], new_xyz[:, 1], new_xyz[:, 2]] = True
+        start = np.maximum(mins, 0)
+        end = np.minimum(maxs, np.array([X, Y, Z], dtype=int))
+        if np.any(end - start <= 0):
+            # Fallback to whole-volume (very unlikely)
+            roi_slices = (slice(0, X), slice(0, Y), slice(0, Z))
+            start = np.array([0, 0, 0], dtype=int)
+        else:
+            roi_slices = (slice(start[0], end[0]), slice(start[1], end[1]), slice(start[2], end[2]))
+
+        # Adjust offset for ROI-local coordinates: x = A @ (o + start) + b
+        b_roi = (A_full @ start.astype(np.float64)) + b_full
+        roi_shape = (end - start).tolist()
+        roi_result = affine_transform(
+            heart_mask.astype(np.uint8),
+            matrix=A_full,
+            offset=b_roi,
+            output_shape=roi_shape,
+            order=0,
+            mode="constant",
+            cval=0.0,
+            prefilter=False,
+        ).astype(bool)
+
+        corrected_heart[roi_slices] = roi_result
 
     # Preserve non-heart labels exactly
     output_labels = labels.copy()
