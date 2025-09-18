@@ -51,35 +51,38 @@ def build_recovery_affine_matrix() -> Tuple[np.ndarray, np.ndarray]:
     and sample at x = M @ o in the tampered grid, so we pass A,b from M.
     """
 
-    def T(tx: float, ty: float, tz: float) -> np.ndarray:
+    # Build transforms in NumPy index space (z, y, x).
+    # Input translations given in world order (x, y, z) from the assignment.
+    def T_world(tx: float, ty: float, tz: float) -> np.ndarray:
+        # Convert to index order (dz, dy, dx) = (tz, ty, tx)
+        dz, dy, dx = float(tz), float(ty), float(tx)
         m = np.eye(4, dtype=np.float64)
-        m[0, 3] = tx
-        m[1, 3] = ty
-        m[2, 3] = tz
+        m[0, 3] = dz
+        m[1, 3] = dy
+        m[2, 3] = dx
         return m
 
     phi = -27.0 * np.pi / 180.0
     cos_p = float(np.cos(phi))
     sin_p = float(np.sin(phi))
-    Rz = np.array(
-        [
-            [cos_p, -sin_p, 0.0, 0.0],
-            [sin_p, cos_p, 0.0, 0.0],
-            [0.0, 0.0, 1.0, 0.0],
-            [0.0, 0.0, 0.0, 1.0],
-        ],
-        dtype=np.float64,
-    )
+    # Rotation about the world Z-axis means: keep z fixed, rotate x<->y plane.
+    # In index order (z,y,x), that mixes axes (y,x) while leaving z intact.
+    Rz = np.array([
+        [1.0, 0.0, 0.0, 0.0],      # z' = z
+        [0.0, cos_p, sin_p, 0.0],  # y' = cos*y + sin*x
+        [0.0, -sin_p, cos_p, 0.0], # x' = -sin*y + cos*x
+        [0.0, 0.0, 0.0, 1.0],
+    ], dtype=np.float64)
 
-    T1 = T(275.0, 200.0, 0.0)
-    T3 = T(-275.0, -200.0, 0.0)  # T1^{-1}
-    T4 = T(50.0, 40.0, 15.0)
+    T1 = T_world(275.0, 200.0, 0.0)
+    T3 = T_world(-275.0, -200.0, 0.0)  # T1^{-1}
+    T4 = T_world(50.0, 40.0, 15.0)
 
-    # Tamper composition (applied conceptually in order T1 -> R2 -> T3 -> T4)
-    M = T4 @ T3 @ Rz @ T1  # 4x4
+    # Compose in the documented order: apply T1 -> R2 -> T3 -> T4
+    M = T4 @ T3 @ Rz @ T1
     # For affine_transform, output[o] = input[A @ o + b]. To recover the
-    # original from the tampered input, we must sample tampered at x = M @ o,
-    # hence we pass A = M (not the inverse).
+    # original from the tampered input, we sample at tampered coords x = M @ o,
+    # hence we pass A = M (not the inverse), built in index space.
     A = M[:3, :3].astype(np.float64)
     b = M[:3, 3].astype(np.float64)
     return A, b
