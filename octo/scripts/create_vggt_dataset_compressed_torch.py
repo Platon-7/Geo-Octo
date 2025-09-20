@@ -38,6 +38,12 @@ flags.DEFINE_integer("ae_epochs", 3, "Autoencoder training epochs (lightweight).
 flags.DEFINE_float("ae_lr", 1e-3, "Autoencoder learning rate.")
 flags.DEFINE_integer("ae_hidden", 2048, "Autoencoder hidden dimension for MLP bottleneck.")
 
+# Build/resume controls
+flags.DEFINE_bool("overwrite", False, "If True, delete existing TFDS output before building.")
+flags.DEFINE_bool("build_dataset", True, "If False, only train/load AE and exit (no TFDS build).")
+flags.DEFINE_integer("skip_episodes", 0, "Skip this many episodes at the start (resume/chunk).")
+flags.DEFINE_integer("max_episodes", -1, "Process up to this many episodes after skipping; -1 means all.")
+
 
 # -------------------------
 # Image preprocessing (identical to ONNX script)
@@ -289,7 +295,13 @@ class CompressedVggtDatasetTorch(tfds.core.GeneratorBasedBuilder):
         num_episodes = self._original_builder.info.splits[split].num_examples
         batch_size = FLAGS.batch_size_eval
         i = 0
+        processed = 0
         for episode in tfds.as_numpy(ds):
+            if i < FLAGS.skip_episodes:
+                i += 1
+                continue
+            if FLAGS.max_episodes >= 0 and processed >= FLAGS.max_episodes:
+                break
             steps_list_of_dicts = list(episode['steps'])
             if not steps_list_of_dicts:
                 i += 1; continue
@@ -326,6 +338,7 @@ class CompressedVggtDatasetTorch(tfds.core.GeneratorBasedBuilder):
                     steps_list_of_dicts[t]['observation']['vggt_tokens'] = tokens_array[t]
                 yield i, {'steps': steps_list_of_dicts, 'episode_metadata': episode['episode_metadata']}
             i += 1
+            processed += 1
 
 
 # -------------------------
@@ -460,6 +473,11 @@ def main(_):
         compressor = compressor.to(device).eval()
         logging.info("Loaded AE compressor from %s", ae_path)
 
+    # If user only wants to fit/load the AE, stop here
+    if not FLAGS.build_dataset:
+        logging.info("build_dataset=False -> exiting after AE fit/load.")
+        return
+
     # Build each compressed dataset
     for builder in original_builders:
         logging.info("###### PROCESSING DATASET: %s ######", builder.name)
@@ -474,7 +492,7 @@ def main(_):
 
             # Overwrite if requested by removing destination dir
             dataset_output_dir = os.path.join(output_root, new_builder.name)
-            if tf.io.gfile.exists(dataset_output_dir):
+            if FLAGS.overwrite and tf.io.gfile.exists(dataset_output_dir):
                 logging.warning("Overwriting existing dataset at %s", dataset_output_dir)
                 tf.io.gfile.rmtree(dataset_output_dir)
 
