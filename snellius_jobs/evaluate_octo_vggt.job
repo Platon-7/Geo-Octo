@@ -46,7 +46,7 @@ export PYTHONPATH="/gpfs/home4/pkarageorgis/geo_octo/vggt:/gpfs/home4/pkarageorg
 srun python -m evaluation.scripts.run_libero_eval_vggt \
   --model_family octo \
   --pretrained_checkpoint "/scratch-shared/tmp.cwkV8vOvfY/trained_models/my_octo_vggt_model_offline/octo_finetune_vggt/experiment_20250916_163115" \
-  --checkpoint_step 150000 \
+  --checkpoint_step 50000 \
   --task_suite_name libero_spatial \
   --num_trials_per_task 50 \
   --num_open_loop_steps 4 \
@@ -58,4 +58,5 @@ srun python -m evaluation.scripts.run_libero_eval_vggt \
   --vggt_raw_tokens 64 \
   --vggt_raw_dim 512 \
   --vggt_agg_layers 24 \
+  --vggt_only_eval True \
   --vggt_layer_indices=None

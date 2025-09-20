@@ -206,6 +206,7 @@ class GenerateConfig:
     vggt_raw_dim: int = 2048                         # Expected token embedding dimension before compression
     vggt_agg_layers: int = 24                        # 24 for all layers, <24 to slice subset
     vggt_layer_indices: str = "3,10,16,22"           # Used when vggt_agg_layers < 24 (0-based indices)
+    vggt_only_eval: bool = False                     # Used when finetuning removed vision encoder completely
 
     #################################################################################################################
     # Utils

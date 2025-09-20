@@ -208,18 +208,32 @@ def get_action(
         # Build Octo observation and sample a single-step action
         import jax
 
-        # Read expected window and image size from the model's example batch
+        # Infer window and whether the checkpoint expects images
         expected_window = 1
+        try:
+            ex_obs = model.example_batch["observation"]
+            expected_window = int(ex_obs["timestep_pad_mask"].shape[1])
+        except Exception:
+            ex_obs = {}
         target_h, target_w = None, None
         try:
-            ex = model.example_batch["observation"]["image_primary"]
-            if ex.ndim >= 5:
-                expected_window = int(ex.shape[1])
-                target_h, target_w = int(ex.shape[2]), int(ex.shape[3])
+            ex_img = ex_obs.get("image_primary")
+            if ex_img is not None and ex_img.ndim >= 5:
+                target_h, target_w = int(ex_img.shape[2]), int(ex_img.shape[3])
         except Exception:
             pass
 
-        # Maintain minimal histories only to satisfy window requirements
+        # VGGT-only if checkpoint has no image_primary OR user forces it
+        force_vggt_only = bool(getattr(cfg, "vggt_only_eval", False))
+        expect_images = ("image_primary" in ex_obs) and (not force_vggt_only)
+        
+        # Print once, flush to bypass buffering
+        if not hasattr(get_action, "_printed"):
+            print(f"[EVAL] expect_images={expect_images}, vggt_only_eval={force_vggt_only}, has_img_in_ckpt={'image_primary' in ex_obs}", flush=True)
+            get_action._printed = True
+
+        # Maintain histories sized to the model’s expected window
+        from collections import deque
         global IMAGE_HISTORY, PROPRIO_HISTORY, VGGT_HISTORY
         if getattr(IMAGE_HISTORY, "maxlen", None) != expected_window:
             IMAGE_HISTORY = deque(list(IMAGE_HISTORY), maxlen=expected_window)
@@ -228,21 +242,19 @@ def get_action(
         if getattr(VGGT_HISTORY, "maxlen", None) != expected_window:
             VGGT_HISTORY = deque(list(VGGT_HISTORY), maxlen=expected_window)
 
-        # Use env images directly (assumed already correct resolution from env setup)
+        # Images (only if expected)
         image = obs["full_image"]
-        IMAGE_HISTORY.append(image)
-        while len(IMAGE_HISTORY) < expected_window:
+        if expect_images:
             IMAGE_HISTORY.append(image)
-        image_stack = np.stack(list(IMAGE_HISTORY), axis=0)  # (T, H, W, 3)
+            while len(IMAGE_HISTORY) < expected_window:
+                IMAGE_HISTORY.append(image)
+            image_stack = np.stack(list(IMAGE_HISTORY), axis=0)  # (T, H, W, 3)
 
-        # Minimal proprio handling: accept provided state, clip/pad to 7 dims expected by checkpoint
+        # Proprio (7-D)
         proprio_dim = 7
         if "state" in obs and obs["state"] is not None:
             state_vec = np.asarray(obs["state"], dtype=np.float32).reshape(-1)
-            if state_vec.shape[-1] >= proprio_dim:
-                state_vec = state_vec[:proprio_dim]
-            else:
-                state_vec = np.pad(state_vec, (0, proprio_dim - state_vec.shape[-1]))
+            state_vec = state_vec[:proprio_dim] if state_vec.shape[-1] >= proprio_dim else np.pad(state_vec, (0, proprio_dim - state_vec.shape[-1]))
             PROPRIO_HISTORY.append(state_vec)
         else:
             PROPRIO_HISTORY.append(np.zeros((proprio_dim,), dtype=np.float32))
@@ -250,7 +262,7 @@ def get_action(
             PROPRIO_HISTORY.append(PROPRIO_HISTORY[-1])
         proprio_stack = np.stack(list(PROPRIO_HISTORY), axis=0)  # (T, D)
 
-        # Optional VGGT token handling: expect per-step compressed grid (H, W)
+        # Optional VGGT tokens
         vggt_stack = None
         if "vggt_tokens" in obs and obs["vggt_tokens"] is not None:
             current_tokens = np.asarray(obs["vggt_tokens"])  # (H, W)
@@ -259,25 +271,30 @@ def get_action(
                 VGGT_HISTORY.append(VGGT_HISTORY[-1])
             vggt_stack = np.stack(list(VGGT_HISTORY), axis=0)  # (T, H, W)
 
-        # Build observation dict matching model.example_batch keys and shapes
+        # Build observation dict to match the checkpoint schema
         T = expected_window
         observation = {
-            "image_primary": image_stack[np.newaxis, ...],  # (1, T, H, W, 3)
             "timestep": np.arange(T, dtype=np.int32)[np.newaxis, ...],
             "task_completed": np.zeros((1, T, 4), dtype=bool),
             "timestep_pad_mask": np.ones((1, T), dtype=bool),
             "pad_mask_dict": {
-                "image_primary": np.ones((1, T), dtype=bool),
                 "timestep": np.ones((1, T), dtype=bool),
                 "proprio": np.ones((1, T), dtype=bool),
             },
-            "proprio": proprio_stack[np.newaxis, ...],  # (1, T, D)
+            "proprio": proprio_stack[np.newaxis, ...],
         }
+
+        # Conditionally add image_primary
+        if expect_images:
+            observation["image_primary"] = image_stack[np.newaxis, ...]
+            observation["pad_mask_dict"]["image_primary"] = np.ones((1, T), dtype=bool)
+
+        # Conditionally add vggt_tokens
         if vggt_stack is not None:
-            observation["vggt_tokens"] = vggt_stack[np.newaxis, ...]  # (1, T, H, W)
+            observation["vggt_tokens"] = vggt_stack[np.newaxis, ...]  # (1, T, 64, 512) or (1, T, H, W)
             observation["pad_mask_dict"]["vggt_tokens"] = np.ones((1, T), dtype=bool)
 
-        # Construct task using model's text processor; do not override representation
+        # Construct task from text without touching its representation
         task = model.create_tasks(texts=[task_label])
 
         # Sample action
