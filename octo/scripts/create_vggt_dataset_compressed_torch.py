@@ -243,6 +243,17 @@ def transpose_list_of_dicts(list_of_dicts):
     return final
 
 
+def _first_image_from_builder(builder) -> np.ndarray:
+    """Safely fetch the first image from the first episode of a TFDS builder.
+
+    TFDS stores 'steps' as a nested IterableDataset; we must iterate it rather than index.
+    """
+    ds = builder.as_dataset(split='train').take(1)
+    episode = next(iter(tfds.as_numpy(ds)))
+    first_step = next(iter(tfds.as_numpy(episode['steps'])))
+    return np.asarray(first_step['observation']['image'])
+
+
 class CompressedVggtDatasetTorch(tfds.core.GeneratorBasedBuilder):
     VERSION = tfds.core.Version('1.0.0')
 
@@ -359,9 +370,7 @@ def _sample_tokens_for_ae(builders: List[tfds.core.DatasetBuilder], extractor: T
 def _fit_autoencoder(builders: List[tfds.core.DatasetBuilder], extractor: TorchVGGTExtractor, target_size: Tuple[int, int], device: torch.device) -> AECompressor:
     target_h, target_w = target_size  # expect (64, 512)
     # Determine L and D by running a tiny probe
-    probe_ds = builders[0].as_dataset(split='train').take(1)
-    probe = next(iter(tfds.as_numpy(probe_ds)))
-    first_image = np.asarray(probe['steps'][0]['observation']['image'])
+    first_image = _first_image_from_builder(builders[0])
     chw = preprocess_images_in_memory(np.asarray([first_image]), FLAGS.vggt_input_res)
     klnd, sqrt_n = extractor.extract_layers(chw)
     L = klnd.shape[1]
@@ -442,9 +451,7 @@ def main(_):
     if compressor is None:
         # Load
         # Compute L and D similar to fit (quick probe)
-        probe_ds = original_builders[0].as_dataset(split='train').take(1)
-        probe = next(iter(tfds.as_numpy(probe_ds)))
-        first_image = np.asarray(probe['steps'][0]['observation']['image'])
+        first_image = _first_image_from_builder(original_builders[0])
         chw = preprocess_images_in_memory(np.asarray([first_image]), FLAGS.vggt_input_res)
         klnd, _ = extractor.extract_layers(chw)
         L = klnd.shape[1]; D = klnd.shape[3]
