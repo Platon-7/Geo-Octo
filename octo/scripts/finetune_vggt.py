@@ -173,18 +173,18 @@ def main(_):
     config.update(FLAGS.config.get("update_config", ConfigDict()))
     config = config.to_dict()
 
-    # Inject VisionMixer concat_mode from CLI flag into ModuleSpec kwargs
-    try:
-        mv = config["model"]["observation_tokenizers"].get("mixed_vision")
-        if isinstance(mv, dict):
-            mv_kwargs = mv.get("kwargs", {})
-            mv_kwargs["concat_mode"] = FLAGS.vggt_concat_mode
-            mv["kwargs"] = mv_kwargs
-            config["model"]["observation_tokenizers"]["mixed_vision"] = mv
-            logging.info("Set VisionMixer.concat_mode to %s via CLI", FLAGS.vggt_concat_mode)
-    except Exception as _e:
-        logging.warning("Could not set VisionMixer.concat_mode: %s", _e)
-    check_config_diff(config, pretrained_model.config)
+    # Inject VisionMixer concat_mode from CLI flag into ModuleSpec kwargs <- ADD THIS ONLY IF YOU WANT TO USE THE VISION ENCODER
+    # try:
+    #     mv = config["model"]["observation_tokenizers"].get("mixed_vision")
+    #     if isinstance(mv, dict):
+    #         mv_kwargs = mv.get("kwargs", {})
+    #         mv_kwargs["concat_mode"] = FLAGS.vggt_concat_mode
+    #         mv["kwargs"] = mv_kwargs
+    #         config["model"]["observation_tokenizers"]["mixed_vision"] = mv
+    #         logging.info("Set VisionMixer.concat_mode to %s via CLI", FLAGS.vggt_concat_mode)
+    # except Exception as _e:
+    #     logging.warning("Could not set VisionMixer.concat_mode: %s", _e)
+
 
     #########
     #
@@ -300,6 +300,10 @@ def main(_):
 
     rng = jax.random.PRNGKey(FLAGS.config.seed)
     rng, init_rng = jax.random.split(rng)
+
+    logging.info("Final observation_tokenizers keys: %s",
+             list(config["model"]["observation_tokenizers"].keys()))
+
     model = OctoModel.from_config(
         config,
         example_batch,
@@ -613,6 +617,19 @@ def main(_):
         if (i + 1) % FLAGS.config.save_interval == 0 and save_dir is not None:
             logging.info("Saving checkpoint...")
             save_callback(train_state, i + 1)
+            
+        # Early stop at 150k steps while keeping cosine schedule at 250k
+        # if (i + 1) >= 150000:
+        #     logging.info(
+        #         "Early stopping at step %d (target 150000). Cosine scheduler remains configured for %d steps.",
+        #         i + 1,
+        #         int(FLAGS.config.num_steps),
+        #     )
+        #     # Save a final checkpoint if not saved this step
+        #     if (i + 1) % FLAGS.config.save_interval != 0 and save_dir is not None:
+        #         logging.info("Saving final checkpoint before early stop...")
+        #         save_callback(train_state, i + 1)
+        #     break
 
 
 if __name__ == "__main__":

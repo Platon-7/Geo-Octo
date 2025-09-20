@@ -80,7 +80,7 @@ srun -u python scripts/finetune_vggt.py \
     --config=scripts/configs/config_vggt.py:full,language_conditioned \
     --config.pretrained_path=hf://rail-berkeley/octo-base-1.5 \
     --config.save_dir=/scratch-shared/tmp.cwkV8vOvfY/trained_models/my_octo_vggt_model_offline \
-    --use_vision_encoder=True \
+    --use_vision_encoder=False \
     --vggt_concat_mode="features"
 
 # RESUME CODE

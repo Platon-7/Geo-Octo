@@ -41,6 +41,8 @@ flags.DEFINE_string("target_size", "32,48", "Target compressed size as 'height,w
 flags.DEFINE_integer("compression_samples", 2500, "Number of samples for fitting a new compressor.")
 flags.DEFINE_integer("batch_size_eval", 32, "ONNX inference batch size (images per call). Default 32 for performance.")
 flags.DEFINE_bool("overwrite", False, "Overwrite existing datasets under output_data_dir.")
+flags.DEFINE_integer("vggt_agg_layers", 24, "Number of layers to aggregate (24 for all, or e.g., 4 for subset).")
+flags.DEFINE_string("vggt_layer_indices", "3,10,16,22", "Comma-separated 0-based layer indices to use when aggregating a subset (only used if vggt_agg_layers < 24).")
 
 
 # -------------------------
@@ -123,12 +125,20 @@ def transpose_list_of_dicts(list_of_dicts):
 class CompressedVggtDatasetOnnx(tfds.core.GeneratorBasedBuilder):
     VERSION = tfds.core.Version('1.0.0')
 
-    def __init__(self, original_builder, session, input_name, input_res, compressor, **kwargs):
+    def __init__(self, original_builder, session, input_name, input_res, compressor, agg_layers=24, layer_indices=None, **kwargs):
         self._original_builder = original_builder
         self._session = session
         self._input_name = input_name
         self._input_res = input_res
         self._compressor = compressor
+        self._agg_layers = int(agg_layers)
+        if self._agg_layers < 24:
+            if layer_indices is None:
+                self._layer_indices = [3, 10, 16, 22]
+            else:
+                self._layer_indices = list(layer_indices)
+        else:
+            self._layer_indices = None
         self.name = f"{self._original_builder.name}_vggt_compressed_onnx"
         super().__init__(**kwargs)
 
@@ -138,15 +148,16 @@ class CompressedVggtDatasetOnnx(tfds.core.GeneratorBasedBuilder):
         observation_features = dict(step_features['observation'])
         # Store PCA-compressed features with target size (e.g., 64x512)
         target_h, target_w = self._compressor.target_size
+        agg_desc = f"{self._agg_layers}-layer aggregated" if self._agg_layers != 24 else "24-layer aggregated"
         observation_features['vggt_tokens'] = tfds.features.Tensor(
             shape=(target_h, target_w), dtype=np.float16,
-            doc='VGGT tokens after 24-layer aggregation, bilinear downsample to 64x2048, then PCA to target size.')
+            doc=f'VGGT tokens after {agg_desc}, bilinear downsample to 64x2048, then PCA to target size.')
         step_features['observation'] = tfds.features.FeaturesDict(observation_features)
         final_features = tfds.features.FeaturesDict({
             'steps': tfds.features.Dataset(tfds.features.FeaturesDict(step_features)),
             'episode_metadata': original_info.features['episode_metadata']})
         return tfds.core.DatasetInfo(builder=self,
-            description=f"Libero dataset with VGGT tokens (24-layer aggregated, resized to 64x2048, PCA to {target_h}x{target_w}).",
+            description=f"Libero dataset with VGGT tokens ({agg_desc}, resized to 64x2048, PCA to {target_h}x{target_w}).",
             features=final_features)
 
     def _split_generators(self, dl_manager):
@@ -200,13 +211,19 @@ class CompressedVggtDatasetOnnx(tfds.core.GeneratorBasedBuilder):
                 N_sq = sqrt_n * sqrt_n
 
                 # Vectorized post-processing on CPU
-                # Squeeze S=1, crop to square tokens, and reshape for resize: [K*24, H, W, D]
-                feats_reshaped = feats.squeeze(axis=1)[:, :, :N_sq, :].reshape(K * L, sqrt_n, sqrt_n, D)
+                feats_squeezed = feats.squeeze(axis=1)  # [K, L, N, D]
+                if self._layer_indices is not None:
+                    feats_selected = feats_squeezed[:, self._layer_indices, :N_sq, :]  # subset layers
+                else:
+                    feats_selected = feats_squeezed[:, :, :N_sq, :]  # all layers
+                logging.info("Feature shape before bilinear resize (per-image): %s", feats_selected.shape[1:])
+                L_selected = feats_selected.shape[1]
+                feats_reshaped = feats_selected.reshape(K * L_selected, sqrt_n, sqrt_n, D)
                 with tf.device('/CPU:0'):
                     feats_tf = tf.convert_to_tensor(feats_reshaped, dtype=tf.float32)
-                    feats_small_tf = tf.image.resize(feats_tf, size=(8, 8), method='bilinear', antialias=True)  # [K*L,8,8,D]
-                    feats_small_flat = tf.reshape(feats_small_tf, [K, L, 64, D])  # [K,24,64,2048]
-                    fused_batch_tf = tf.cast(tf.reduce_mean(feats_small_flat, axis=1), tf.float16)  # [K,64,2048]
+                    feats_small_tf = tf.image.resize(feats_tf, size=(8, 8), method='bilinear', antialias=True)
+                    feats_small_flat = tf.reshape(feats_small_tf, [K, L_selected, 64, D])
+                    fused_batch_tf = tf.cast(tf.reduce_mean(feats_small_flat, axis=1), tf.float16)
                 fused_batch = fused_batch_tf.numpy()
                 per_image_features_64x2048.append(fused_batch)
 
@@ -292,12 +309,23 @@ def load_or_create_compressor(builders, session, input_name, input_res, compress
             sqrt_n = int(round(np.sqrt(N)))
             N_sq = sqrt_n * sqrt_n
 
-            # Vectorized post-processing on CPU
-            feats_reshaped = feats.squeeze(axis=1)[:, :, :N_sq, :].reshape(K * L, sqrt_n, sqrt_n, D)
+            # Vectorized post-processing on CPU with optional layer slicing
+            feats_squeezed = feats.squeeze(axis=1)  # [K, L, N, D]
+            # Use FLAGS here since compressor sampling is outside the builder
+            if FLAGS.vggt_agg_layers < 24:
+                try:
+                    layer_indices = [int(x) for x in FLAGS.vggt_layer_indices.split(',') if x.strip() != '']
+                except Exception:
+                    layer_indices = [3, 10, 16, 22]
+                feats_selected = feats_squeezed[:, layer_indices, :N_sq, :]
+            else:
+                feats_selected = feats_squeezed[:, :, :N_sq, :]
+            L_selected = feats_selected.shape[1]
+            feats_reshaped = feats_selected.reshape(K * L_selected, sqrt_n, sqrt_n, D)
             with tf.device('/CPU:0'):
                 feats_tf = tf.convert_to_tensor(feats_reshaped, dtype=tf.float32)
                 feats_small_tf = tf.image.resize(feats_tf, size=(8, 8), method='bilinear', antialias=True)
-                feats_small_flat = tf.reshape(feats_small_tf, [K, L, 64, D])
+                feats_small_flat = tf.reshape(feats_small_tf, [K, L_selected, 64, D])
                 fused_batch_tf = tf.cast(tf.reduce_mean(feats_small_flat, axis=1), tf.float16)
             fused_batch = fused_batch_tf.numpy()
             per_image_features_64x2048.append(fused_batch)
@@ -386,9 +414,19 @@ def main(_):
     for builder in original_builders:
         logging.info("###### PROCESSING DATASET: %s ######", builder.name)
         try:
+            # Parse layer indices once
+            if FLAGS.vggt_agg_layers < 24:
+                try:
+                    layer_indices = [int(x) for x in FLAGS.vggt_layer_indices.split(',') if x.strip() != '']
+                except Exception:
+                    layer_indices = [3, 10, 16, 22]
+            else:
+                layer_indices = None
+
             new_builder = CompressedVggtDatasetOnnx(
                 original_builder=builder, session=session, input_name=input_name,
-                input_res=input_res, compressor=compressor, data_dir=output_root)
+                input_res=input_res, compressor=compressor, data_dir=output_root,
+                agg_layers=FLAGS.vggt_agg_layers, layer_indices=layer_indices)
             
             # Correct overwrite logic
             dataset_output_dir = os.path.join(output_root, new_builder.name)

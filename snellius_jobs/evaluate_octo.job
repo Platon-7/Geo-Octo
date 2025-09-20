@@ -64,8 +64,8 @@ PY
 
 srun python -m evaluation.scripts.run_libero_eval \
   --model_family octo \
-  --pretrained_checkpoint "/scratch-shared/tmp.cwkV8vOvfY/trained_models/my_octo_vggt_model_offline/octo_finetune_baseline/experiment_20250823_115519_SPATIAL_NO_VGGT" \
+  --pretrained_checkpoint "/scratch-shared/tmp.cwkV8vOvfY/trained_models/my_octo_vggt_model_offline/octo_finetune_baseline/experiment_20250915_165221" \
   --task_suite_name libero_spatial \
-  --checkpoint_step 250000 \
+  --checkpoint_step 200000 \
   --num_trials_per_task 50 \
   --num_open_loop_steps 4

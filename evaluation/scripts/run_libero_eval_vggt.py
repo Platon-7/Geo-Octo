@@ -38,6 +38,7 @@ from libero.libero import benchmark
 import wandb
 
 from evaluation.supporting_files.load_fn import load_and_preprocess_images
+import tensorflow as tf
 
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
@@ -105,6 +106,14 @@ logging.basicConfig(
     handlers=[logging.StreamHandler()],
 )
 logger = logging.getLogger(__name__)
+# Match ONNX expected input dtype
+def _np_dtype_for_session(sess) -> np.dtype:
+    try:
+        t = sess.get_inputs()[0].type  # e.g., 'tensor(float16)' or 'tensor(float)'
+        return np.float16 if 'float16' in t else np.float32
+    except Exception:
+        return np.float32
+
 
 # After logging.basicConfig(...)
 
@@ -195,6 +204,8 @@ class GenerateConfig:
     vggt_output_index: int = 0                       # Fallback output index when name not given
     vggt_raw_tokens: int = 261                       # Expected number of VGGT tokens before compression
     vggt_raw_dim: int = 2048                         # Expected token embedding dimension before compression
+    vggt_agg_layers: int = 24                        # 24 for all layers, <24 to slice subset
+    vggt_layer_indices: str = "3,10,16,22"           # Used when vggt_agg_layers < 24 (0-based indices)
 
     #################################################################################################################
     # Utils
@@ -418,37 +429,60 @@ def compute_compressed_vggt_tokens(image: np.ndarray, vggt_ctx: dict) -> Optiona
     if session is None or input_name is None or compressor is None:
         raise RuntimeError("VGGT context is missing required components (session, input_name, or compressor).")
 
-    # --- Step 2: Preprocess the image using the official helper script ---
-    # The `load_and_preprocess_images` function expects a list of file paths.
-    # We can save our in-memory NumPy array to a temporary file in /tmp/ to use it.
-    # This guarantees the preprocessing is a perfect match.
-    temp_img_path = "/tmp/vggt_online_frame.png"
-    Image.fromarray(image).save(temp_img_path)
-    
-    # This function handles resizing, normalizing, and formatting the image correctly.
-    preprocessed_image_np = load_and_preprocess_images([temp_img_path])
+    # --- Step 2: Preprocess the image mirroring dataset pipeline (in-memory, no temp file) ---
+    preprocessed_image_np = load_and_preprocess_images([image], target_size=cfg.vggt_input_res)
+    # Ensure dtype matches ONNX expectation and expand to 5D [B, 1, C, H, W]
+    exp_dtype = _np_dtype_for_session(session)
+    if preprocessed_image_np.dtype != exp_dtype:
+        preprocessed_image_np = preprocessed_image_np.astype(exp_dtype)
+    preprocessed_image_5d = np.expand_dims(preprocessed_image_np, axis=1)
 
     # --- Step 3: Run ONNX inference ---
     # The output is a list of all output nodes from the ONNX model.
-    outputs = session.run(None, {input_name: preprocessed_image_np})
+    outputs = session.run(["layer_patch_tokens"], {input_name: preprocessed_image_5d})
 
     # --- Step 4: Extract and reshape the raw tokens ---
     # We reuse the logic from your previous helper to robustly find the main output.
-    raw_tokens = _extract_tokens_from_outputs(outputs, cfg) # (L, D) or similar
+    feats = np.asarray(outputs[0])  # [1, 1, 24, N, 2048]
+    # Print incoming image size once
+    # try:
+    #     print(f"[VGGT] Live input image shape: {image.shape}")
+    # except Exception:
+    #     pass
+    if feats.ndim != 5:
+        raise RuntimeError(f"Unexpected layer_patch_tokens rank: {feats.ndim} with shape {feats.shape}")
 
-    # Reshape to the expected (Batch, Num_Tokens, Dim) before compression
-    num_tokens = cfg.vggt_raw_tokens
-    token_dim = cfg.vggt_raw_dim
-    try:
-        tokens_for_compression = raw_tokens.reshape(1, num_tokens, token_dim)
-    except ValueError as e:
-        raise RuntimeError(f"Could not reshape raw VGGT tokens. Expected shape ({num_tokens}, {token_dim}), but got {raw_tokens.shape}. Error: {e}")
+    K, _, L, N, D = feats.shape
+    sqrt_n = int(round(np.sqrt(N)))
+    N_sq = sqrt_n * sqrt_n
+
+    # Squeeze S=1, optionally slice layers, crop to square tokens
+    feats_squeezed = feats.squeeze(axis=1)  # [1, L, N, D]
+    if cfg.vggt_agg_layers < 24:
+        try:
+            layer_indices = [int(x) for x in cfg.vggt_layer_indices.split(',') if x.strip() != '']
+        except Exception:
+            layer_indices = [3, 10, 16, 22]
+        feats_selected = feats_squeezed[:, layer_indices, :N_sq, :]
+    else:
+        feats_selected = feats_squeezed[:, :, :N_sq, :]
+
+    # Log shape prior to bilinear interpolation
+    #print(f"[VGGT] Before bilinear resize (per-image): {feats_selected.shape[1:]}")
+
+    # Resize each layer's spatial tokens to 8x8, then mean across layers
+    feats_reshaped = feats_selected.reshape(K * feats_selected.shape[1], sqrt_n, sqrt_n, D)
+    feats_tf = tf.convert_to_tensor(feats_reshaped, dtype=tf.float32)
+    feats_small_tf = tf.image.resize(feats_tf, size=(8, 8), method='bilinear', antialias=True)
+    feats_small_flat = tf.reshape(feats_small_tf, [K, feats_selected.shape[1], 64, D])
+    fused_batch_tf = tf.cast(tf.reduce_mean(feats_small_flat, axis=1), tf.float16)  # [1,64,2048]
+    fused = fused_batch_tf.numpy()  # [1,64,2048]
 
     # --- Step 5: Compress the tokens ---
-    compressed_tokens = compressor.compress(tokens_for_compression)  # Shape: (1, H, W)
+    compressed_tokens = compressor.compress(fused).astype(np.float16)  # Shape: (1, 64, 512)
     
     # Return the final compressed tokens for a single timestep
-    return compressed_tokens[0] # Shape: (H, W)
+    return compressed_tokens[0] # Shape: (64, 512)
 
 def run_episode(
     cfg: GenerateConfig,
@@ -702,6 +736,14 @@ def eval_libero(cfg: GenerateConfig) -> float:
 
     # Setup logging
     log_file, local_log_filepath, run_id = setup_logging(cfg)
+
+    # NEW! >> Print model and checkpoint info to the log file and console.
+    log_message("\n" + "="*50, log_file)
+    log_message("EVALUATION CONFIGURATION", log_file)
+    log_message(f"  Model Path:      {cfg.pretrained_checkpoint}", log_file)
+    log_message(f"  Checkpoint Step: {cfg.checkpoint_step}", log_file)
+    log_message("="*50 + "\n", log_file)
+    # NEW! >> End of new code block.
 
     # Initialize LIBERO task suite
     benchmark_dict = benchmark.get_benchmark_dict()

@@ -86,7 +86,7 @@ export PYTHONPATH="/gpfs/home4/pkarageorgis/geo_octo:$PYTHONPATH"
 # Build ONNX-compressed datasets
 srun -u python /gpfs/home4/pkarageorgis/geo_octo/octo/scripts/create_vggt_dataset_compressed_onnx.py \
   --input_data_dir=/home/pkarageorgis/geo_octo/libero_datasets \
-  --output_data_dir=/scratch-shared/tmp.cwkV8vOvfY/libero_vggt_onnx_compressed_24 \
+  --output_data_dir=/scratch-shared/tmp.cwkV8vOvfY/libero_vggt_onnx_compressed_4 \
   --vggt_onnx_path=/home/pkarageorgis/geo_octo/vggt-onnx/onnx_fp16/vggt_fp16.onnx \
   --vggt_input_res=518 \
   --vggt_use_cuda=True \
@@ -94,4 +94,6 @@ srun -u python /gpfs/home4/pkarageorgis/geo_octo/octo/scripts/create_vggt_datase
   --target_size=64,512 \
   --compression_samples=2500 \
   --batch_size_eval=16 \
+  --vggt_agg_layers=4 \
+  --vggt_layer_indices=3,10,16,22 \
   --overwrite

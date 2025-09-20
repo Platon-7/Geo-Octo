@@ -10,7 +10,7 @@ def get_config(config_string="full,multimodal"):
     assert task in ["image_conditioned", "language_conditioned", "multimodal"]
     assert mode in ["full", "head_only", "head_mlp_only"]
 
-    UNIFIED_STATS_PATH = "/home/pkarageorgis/geo_octo/libero_datasets/unified_stats/unified_dataset_statistics_libero_spatial_vggt_onnx.json"
+    UNIFIED_STATS_PATH = "/home/pkarageorgis/geo_octo/libero_datasets/unified_stats/unified_dataset_statistics_libero_spatial_vggt_onnx_24.json"
      
     # Fill this in for your own dataset!
 
@@ -61,8 +61,8 @@ def get_config(config_string="full,multimodal"):
         shuffle_buffer_size=10000,
         num_steps=max_steps,
         log_interval=100,
-        eval_interval=100,
-        save_interval=100,
+        eval_interval=1000,
+        save_interval=1000,
         save_dir=placeholder(str),
         seed=42,
         wandb=dict(
@@ -165,24 +165,6 @@ def get_config(config_string="full,multimodal"):
     config["traj_transform_kwargs"] = traj_transform_kwargs
     config["frame_transform_kwargs"] = frame_transform_kwargs
     
-    # config['update_config'] = {
-    #     "model": {
-    #         "observation_tokenizers": {
-    #         "mixed_vision": ModuleSpec.create(
-    #             VisionMixer,
-    #             patch_tokenizer_spec={
-    #             'module': ImageTokenizer,
-    #             'kwargs': {
-    #                 'encoder': ModuleSpec.create(PatchEncoder, patch_size=32, num_features=512),
-    #                 'obs_stack_keys': ("image_primary",),
-    #             }
-    #             },
-    #             vggt_tokenizer_spec={'module': VGGTTokenizer},
-    #         ),
-    #         },
-    #         "repeat_task_tokens": False,
-    #     }
-    # }
     
     config['update_config'] = {
     "model": {
@@ -210,20 +192,28 @@ def get_config(config_string="full,multimodal"):
 }
     
     
-    # VGGT-only choice
-#     config['update_config'] = {
-#         "model": {
-#             "observation_tokenizers": {
-#                 "vggt": ModuleSpec.create(VGGTTokenizer),
-#             },
-#             "repeat_task_tokens": False,
-#         }
-# }
-    
     config['config_delete_keys'] = {
         "model": {"observation_tokenizers": {"image_wrist": True}}
     }
     
+    # VGGT ONLY VERSION
+    config['update_config'] = {
+    "model": {
+        "observation_tokenizers": {
+            # Keep the same key so downstream code keeps working
+            "mixed_vision": ModuleSpec.create(
+                "octo.model.components.tokenizers:VGGTTokenizer"
+            ),
+        },
+        "repeat_task_tokens": False,
+    }
+}
+
+    config['config_delete_keys'] = {
+        "model": {
+            "observation_tokenizers": True  # remove the entire dict from the base config
+        }
+    }
     
 
     
