@@ -38,11 +38,9 @@ flags.DEFINE_integer("ae_epochs", 3, "Autoencoder training epochs (lightweight).
 flags.DEFINE_float("ae_lr", 1e-3, "Autoencoder learning rate.")
 flags.DEFINE_integer("ae_hidden", 2048, "Autoencoder hidden dimension for MLP bottleneck.")
 
-# Build/resume controls
+# Build/resume controls (simple two-mode workflow)
 flags.DEFINE_bool("overwrite", False, "If True, delete existing TFDS output before building.")
 flags.DEFINE_bool("build_dataset", True, "If False, only train/load AE and exit (no TFDS build).")
-flags.DEFINE_integer("skip_episodes", 0, "Skip this many episodes at the start (resume/chunk).")
-flags.DEFINE_integer("max_episodes", -1, "Process up to this many episodes after skipping; -1 means all.")
 
 
 # -------------------------
@@ -222,7 +220,7 @@ def resize_and_stack_per_layer(features_klnd: np.ndarray, sqrt_n: int) -> np.nda
     K, L, N, D = features_klnd.shape
     s = sqrt_n
     x = torch.from_numpy(features_klnd).float()  # [K,L,N,D]
-    x = x.view(K * L, s, s, D).permute(0, 3, 1, 2)  # [K*L, D, s, s]
+    x = x.reshape(K * L, s, s, D).permute(0, 3, 1, 2)  # [K*L, D, s, s]
     x_small = F.interpolate(x, size=(8, 8), mode='bilinear', align_corners=False)  # [K*L, D, 8, 8]
     x_small = x_small.permute(0, 2, 3, 1).contiguous().view(K, L, 64, D)  # [K,L,64,D]
     return x_small.numpy()
@@ -252,11 +250,11 @@ def transpose_list_of_dicts(list_of_dicts):
 def _first_image_from_builder(builder) -> np.ndarray:
     """Safely fetch the first image from the first episode of a TFDS builder.
 
-    TFDS stores 'steps' as a nested IterableDataset; we must iterate it rather than index.
+    Note: `episode['steps']` is an iterable of numpy dicts. Iterate directly; do not wrap again.
     """
     ds = builder.as_dataset(split='train').take(1)
     episode = next(iter(tfds.as_numpy(ds)))
-    first_step = next(iter(tfds.as_numpy(episode['steps'])))
+    first_step = next(iter(episode['steps']))
     return np.asarray(first_step['observation']['image'])
 
 
@@ -295,13 +293,7 @@ class CompressedVggtDatasetTorch(tfds.core.GeneratorBasedBuilder):
         num_episodes = self._original_builder.info.splits[split].num_examples
         batch_size = FLAGS.batch_size_eval
         i = 0
-        processed = 0
         for episode in tfds.as_numpy(ds):
-            if i < FLAGS.skip_episodes:
-                i += 1
-                continue
-            if FLAGS.max_episodes >= 0 and processed >= FLAGS.max_episodes:
-                break
             steps_list_of_dicts = list(episode['steps'])
             if not steps_list_of_dicts:
                 i += 1; continue
@@ -338,7 +330,6 @@ class CompressedVggtDatasetTorch(tfds.core.GeneratorBasedBuilder):
                     steps_list_of_dicts[t]['observation']['vggt_tokens'] = tokens_array[t]
                 yield i, {'steps': steps_list_of_dicts, 'episode_metadata': episode['episode_metadata']}
             i += 1
-            processed += 1
 
 
 # -------------------------
