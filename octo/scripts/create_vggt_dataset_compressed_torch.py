@@ -89,17 +89,33 @@ def preprocess_images_in_memory(images_np: np.ndarray, target_size: int) -> np.n
 # -------------------------
 # Autoencoder compressor
 # -------------------------
+class WeightedLayerFuser(nn.Module):
+    """Learnable weighted fusion across the layer dimension.
+
+    Given tokens of shape [..., L, D], applies softmax-normalized weights over L to produce [..., D].
+    """
+
+    def __init__(self, num_layers: int):
+        super().__init__()
+        self.weights = nn.Parameter(torch.zeros(num_layers))  # start ~uniform after softmax
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        # x: [..., L, D]
+        w = torch.softmax(self.weights, dim=0)  # [L]
+        return (x * w.view(*([1] * (x.ndim - 2)), -1, 1)).sum(dim=-2)
+
+
 class AECompressor(nn.Module):
     """
-    Lightweight MLP autoencoder trained to map per-spatial token vectors of shape (L*D) -> 512, and reconstruct back.
+    Weighted fusion (over L) -> AE compression D(=2048) -> 512.
 
-    We assume the upstream pipeline first resizes per-layer spatial tokens to 8x8 (64 tokens),
-    so compression is applied independently per spatial location. This mirrors PCA's per-token behavior,
-    but with a learned non-linear projection.
+    - fuser: learnable softmax weights over layers
+    - encoder/decoder: per-token autoencoder operating on D-d fused vectors
     """
 
-    def __init__(self, input_dim: int, bottleneck_dim: int = 512, hidden_dim: int = 2048):
+    def __init__(self, num_layers: int, input_dim: int, bottleneck_dim: int = 512, hidden_dim: int = 2048):
         super().__init__()
+        self.fuser = WeightedLayerFuser(num_layers)
         self.encoder = nn.Sequential(
             nn.LayerNorm(input_dim),
             nn.Linear(input_dim, hidden_dim),
@@ -113,15 +129,27 @@ class AECompressor(nn.Module):
             nn.Linear(hidden_dim, input_dim),
         )
 
-    def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
-        z = self.encoder(x)
+    def forward(self, tokens_ld: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """
+        Args:
+            tokens_ld: [B, L, D] token set for B spatial positions
+        Returns:
+            z: [B, 512]
+            recon: [B, D]
+            fused_mean: [B, D] (uniform mean over layers, used as stable target)
+        """
+        fused_weighted = self.fuser(tokens_ld)  # [B,D]
+        fused_mean = tokens_ld.mean(dim=-2)     # [B,D]
+        z = self.encoder(fused_weighted)
         recon = self.decoder(z)
-        return z, recon
+        return z, recon, fused_mean
 
     @torch.no_grad()
-    def compress(self, x: torch.Tensor) -> torch.Tensor:
+    def compress_tokens(self, tokens_ld: torch.Tensor) -> torch.Tensor:
+        """tokens_ld: [B, L, D] -> returns [B, 512]"""
         self.eval()
-        return self.encoder(x)
+        fused_weighted = self.fuser(tokens_ld)
+        return self.encoder(fused_weighted)
 
     def save(self, path: str):
         os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -271,10 +299,11 @@ class CompressedVggtDatasetTorch(tfds.core.GeneratorBasedBuilder):
 
                 # AE compression per spatial location: flatten L*D -> 512, then reshape to [K,64,512]
                 K, L, S64, D = k_l_64_d.shape
-                flat = torch.from_numpy(k_l_64_d).float().view(K * S64, L * D)
+                # Prepare [K*64, L, D]
+                tokens = torch.from_numpy(k_l_64_d).float().view(K * S64, L, D)
                 with torch.no_grad():
-                    z = self._compressor.compress(flat)
-                z = z.view(K, S64, -1).cpu().numpy().astype(np.float16)  # [K,64,512]
+                    z = self._compressor.compress_tokens(tokens)
+                z = z.view(K, S64, -1).cpu().numpy().astype(np.float16)
                 per_image_tokens.append(z)
 
             if per_image_tokens:
@@ -315,13 +344,12 @@ def _sample_tokens_for_ae(builders: List[tfds.core.DatasetBuilder], extractor: T
                 klnd, sqrt_n = extractor.extract_layers(batch)    # [K,L,N,D]
                 k_l_64_d = resize_and_stack_per_layer(klnd, sqrt_n)  # [K,L,64,D]
                 K, L, S64, D = k_l_64_d.shape
-                flat = torch.from_numpy(k_l_64_d).float().view(K * S64, L * D)  # per-spatial token
+                tokens = torch.from_numpy(k_l_64_d).float().view(K * S64, L, D)  # [B,L,D]
 
-                # Yield in chunks of up to remaining
                 idx = 0
-                while idx < flat.shape[0] and remaining > 0:
+                while idx < tokens.shape[0] and remaining > 0:
                     take = min(remaining, 2048)  # avoid very small batches
-                    yield flat[idx: idx + take]
+                    yield tokens[idx: idx + take]
                     idx += take
                     remaining -= take
                     if remaining <= 0:
@@ -330,7 +358,7 @@ def _sample_tokens_for_ae(builders: List[tfds.core.DatasetBuilder], extractor: T
 
 def _fit_autoencoder(builders: List[tfds.core.DatasetBuilder], extractor: TorchVGGTExtractor, target_size: Tuple[int, int], device: torch.device) -> AECompressor:
     target_h, target_w = target_size  # expect (64, 512)
-    # Determine input dim = L * D (after layer selection), by running a tiny probe
+    # Determine L and D by running a tiny probe
     probe_ds = builders[0].as_dataset(split='train').take(1)
     probe = next(iter(tfds.as_numpy(probe_ds)))
     first_image = np.asarray(probe['steps'][0]['observation']['image'])
@@ -338,9 +366,8 @@ def _fit_autoencoder(builders: List[tfds.core.DatasetBuilder], extractor: TorchV
     klnd, sqrt_n = extractor.extract_layers(chw)
     L = klnd.shape[1]
     D = klnd.shape[3]
-    input_dim = L * D
 
-    model = AECompressor(input_dim=input_dim, bottleneck_dim=target_w, hidden_dim=FLAGS.ae_hidden).to(device)
+    model = AECompressor(num_layers=L, input_dim=D, bottleneck_dim=target_w, hidden_dim=FLAGS.ae_hidden).to(device)
     opt = torch.optim.Adam(model.parameters(), lr=FLAGS.ae_lr)
     loss_fn = nn.MSELoss()
 
@@ -352,10 +379,11 @@ def _fit_autoencoder(builders: List[tfds.core.DatasetBuilder], extractor: TorchV
         seen = 0
         running = 0.0
         for batch in batches:
-            batch = batch.to(device)
+            batch = batch.to(device)              # [B,L,D]
             opt.zero_grad(set_to_none=True)
-            z, recon = model(batch)
-            loss = loss_fn(recon, batch)
+            z, recon, fused_mean = model(batch)
+            # Train to reconstruct uniform-mean fusion for stability
+            loss = loss_fn(recon, fused_mean.detach())
             loss.backward()
             opt.step()
             seen += batch.shape[0]
@@ -413,15 +441,14 @@ def main(_):
 
     if compressor is None:
         # Load
-        # Compute input_dim similar to fit (quick probe)
+        # Compute L and D similar to fit (quick probe)
         probe_ds = original_builders[0].as_dataset(split='train').take(1)
         probe = next(iter(tfds.as_numpy(probe_ds)))
         first_image = np.asarray(probe['steps'][0]['observation']['image'])
         chw = preprocess_images_in_memory(np.asarray([first_image]), FLAGS.vggt_input_res)
         klnd, _ = extractor.extract_layers(chw)
         L = klnd.shape[1]; D = klnd.shape[3]
-        input_dim = L * D
-        compressor = AECompressor(input_dim=input_dim, bottleneck_dim=target_size[1], hidden_dim=FLAGS.ae_hidden)
+        compressor = AECompressor(num_layers=L, input_dim=D, bottleneck_dim=target_size[1], hidden_dim=FLAGS.ae_hidden)
         compressor.load(ae_path, map_location='cpu')
         compressor = compressor.to(device).eval()
         logging.info("Loaded AE compressor from %s", ae_path)
