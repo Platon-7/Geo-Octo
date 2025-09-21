@@ -174,16 +174,16 @@ def main(_):
     config = config.to_dict()
 
     # Inject VisionMixer concat_mode from CLI flag into ModuleSpec kwargs <- ADD THIS ONLY IF YOU WANT TO USE THE VISION ENCODER
-    # try:
-    #     mv = config["model"]["observation_tokenizers"].get("mixed_vision")
-    #     if isinstance(mv, dict):
-    #         mv_kwargs = mv.get("kwargs", {})
-    #         mv_kwargs["concat_mode"] = FLAGS.vggt_concat_mode
-    #         mv["kwargs"] = mv_kwargs
-    #         config["model"]["observation_tokenizers"]["mixed_vision"] = mv
-    #         logging.info("Set VisionMixer.concat_mode to %s via CLI", FLAGS.vggt_concat_mode)
-    # except Exception as _e:
-    #     logging.warning("Could not set VisionMixer.concat_mode: %s", _e)
+    try:
+        mv = config["model"]["observation_tokenizers"].get("mixed_vision")
+        if isinstance(mv, dict):
+            mv_kwargs = mv.get("kwargs", {})
+            mv_kwargs["concat_mode"] = FLAGS.vggt_concat_mode
+            mv["kwargs"] = mv_kwargs
+            config["model"]["observation_tokenizers"]["mixed_vision"] = mv
+            logging.info("Set VisionMixer.concat_mode to %s via CLI", FLAGS.vggt_concat_mode)
+    except Exception as _e:
+        logging.warning("Could not set VisionMixer.concat_mode: %s", _e)
 
 
     #########

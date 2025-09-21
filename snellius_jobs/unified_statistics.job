@@ -18,7 +18,7 @@ source activate octo
 cd octo
 
 BASE_DATA_DIR=/scratch-shared/tmp.cwkV8vOvfY/libero_datasets
-VGGT_DATA_DIR=/scratch-shared/tmp.cwkV8vOvfY/libero_vggt_onnx_compressed_4
+VGGT_DATA_DIR=/scratch-shared/tmp.cwkV8vOvfY/libero_vggt_onnx_compressed_torch_ae
 OUT_DIR=/home/pkarageorgis/geo_octo/libero_datasets/unified_stats
 
 # No-VGGT variants
@@ -49,9 +49,9 @@ OUT_DIR=/home/pkarageorgis/geo_octo/libero_datasets/unified_stats
 # VGGT variants (adjust names if your on-disk dirs differ)
 srun -u python scripts/create_unified_statistics.py \
   --base-data-dir $VGGT_DATA_DIR \
-  --dataset-names libero_spatial_vggt_compressed_onnx \
+  --dataset-names libero_spatial_vggt_compressed_torch \
   --output-dir $OUT_DIR \
-  --output-name unified_dataset_statistics_libero_spatial_vggt_onnx_4.json
+  --output-name unified_dataset_statistics_libero_spatial_vggt_compressed_torch.json
 
 # srun -u python scripts/create_unified_statistics.py \
 #   --base-data-dir $VGGT_DATA_DIR \

@@ -5,7 +5,9 @@ import numpy as np
 from absl import app, flags, logging
 import tensorflow as tf
 import tensorflow_datasets as tfds
-import tqdm
+from tqdm.auto import tqdm
+import sys
+import math
 
 import torch
 import torch.nn as nn
@@ -225,6 +227,7 @@ class TorchVGGTExtractor:
 
 _logged_resized_shape = False
 def resize_and_stack_per_layer(features_klnd: np.ndarray, sqrt_n: int) -> np.ndarray:
+    global _logged_resized_shape
     K, L, N, D = features_klnd.shape
     s = sqrt_n
     x = torch.from_numpy(features_klnd).float()          # [K,L,N,D], may be non‑contiguous
@@ -341,64 +344,159 @@ class CompressedVggtDatasetTorch(tfds.core.GeneratorBasedBuilder):
             i += 1
 
 
-def _sample_tokens_for_ae(builders: List[tfds.core.DatasetBuilder], extractor: TorchVGGTExtractor, num_tokens: int, batch_size: int) -> Iterable[torch.Tensor]:
+def _sample_tokens_for_ae(
+    builders: List[tfds.core.DatasetBuilder],
+    extractor: TorchVGGTExtractor,
+    num_tokens: int,
+    batch_size: int,
+    builder_splits: Optional[List[str]] = None,   # e.g., ['train']; None => prefer 'train' if present
+    shuffle_buffer_size: int = 8192,
+    yield_batch_size: int = 1024,
+    per_builder_token_cap: Optional[int] = None,  # balance per DATASET (builder)
+) -> Iterable[torch.Tensor]:
     """
-    Collects tokens from ALL datasets, then yields random, unbiased mini-batches for AE fitting.
+    Stream tokens across builders (datasets), balancing roughly per builder.
+    Uses a bounded shuffle buffer and yields batches as soon as available.
     """
-    collected_token_batches = []
-    logging.info("Starting collection of tokens from all datasets for AE training...")
+    from collections import defaultdict
 
-    # --- Stage 1: Collect all available tokens from ALL builders ---
+    builder_counts = defaultdict(int)
+    total_yielded = 0
+
+    samples_pbar = tqdm(
+        total=num_tokens,
+        desc="Collecting AE samples",
+        dynamic_ncols=True,
+        leave=False,
+        file=sys.stdout,
+        disable=False,
+    )
+    logging.info("Sampling across %d datasets; per-dataset cap=%s",
+                 len(builders), str(per_builder_token_cap))
+
     for builder in builders:
-        logging.info(f"Collecting from builder: {builder.name}")
-        ds = builder.as_dataset(split='train')
-        # Iterate over episodes, processing images in batches for efficiency
-        for episode in tqdm(tfds.as_numpy(ds), desc=f"Processing {builder.name}"):
-            steps = list(episode['steps'])
-            if not steps:
+        builder_yielded = 0
+        buffer_tensor: Optional[torch.Tensor] = None  # reset buffer per dataset
+
+        available_splits = list(builder.info.splits.keys()) or ["train"]
+        # Prefer 'train' if present; else fall back to all available
+        target_splits = (
+            builder_splits
+            if builder_splits is not None
+            else (["train"] if "train" in available_splits else available_splits)
+        )
+
+        for split in target_splits:
+            if split not in available_splits:
                 continue
-            obs = [s['observation'] for s in steps]
-            if 'image' not in obs[0]:
-                continue
-            
-            images_np = np.stack([o['image'] for o in obs], axis=0)
-            if images_np.size == 0:
-                continue
-            
-            chw_images = preprocess_images_in_memory(images_np, FLAGS.vggt_input_res)
+            if (per_builder_token_cap is not None and builder_yielded >= per_builder_token_cap) or total_yielded >= num_tokens:
+                break
 
-            # Process the episode's images in manageable batches
-            for j in range(0, chw_images.shape[0], batch_size):
-                batch = chw_images[j:j + batch_size]
-                klnd, sqrt_n = extractor.extract_layers(batch)
-                k_l_64_d = resize_and_stack_per_layer(klnd, sqrt_n)
-                K, L, S64, D = k_l_64_d.shape
-                
-                # Reshape and store the tokens. We move to CPU to conserve GPU memory.
-                tokens = torch.from_numpy(k_l_64_d).float().view(K * S64, L, D)
-                collected_token_batches.append(tokens.cpu())
+            ds = builder.as_dataset(split=split)
+            episodes = tfds.as_numpy(ds)
+            episodes_pbar = tqdm(
+                episodes,
+                desc=f"Processing {builder.name}:{split}",
+                dynamic_ncols=True,
+                leave=False,
+                file=sys.stdout,
+                disable=False,
+            )
 
-    if not collected_token_batches:
-        raise ValueError("No tokens were collected from any dataset. Check dataset paths and content.")
+            for episode in episodes_pbar:
+                if (per_builder_token_cap is not None and builder_yielded >= per_builder_token_cap) or total_yielded >= num_tokens:
+                    break
 
-    # --- Stage 2: Combine, shuffle, and yield the final samples ---
-    full_token_tensor = torch.cat(collected_token_batches, dim=0)
-    num_available = full_token_tensor.shape[0]
-    logging.info(f"Successfully collected {num_available} total tokens.")
+                steps = list(episode.get("steps", []))
+                if not steps:
+                    continue
+                obs = [s.get("observation", {}) for s in steps]
+                if not obs or "image" not in obs[0]:
+                    continue
 
-    samples_to_take = min(num_available, num_tokens)
-    if samples_to_take < num_tokens:
-        logging.warning(f"Requested {num_tokens} samples, but only {num_available} were available in the datasets.")
+                images_np = np.stack([o["image"] for o in obs], axis=0)
+                if images_np.size == 0:
+                    continue
 
-    # Generate random indices to create a shuffled, unbiased sample set
-    indices = torch.randperm(num_available)[:samples_to_take]
-    final_samples = full_token_tensor[indices]
+                chw_images = preprocess_images_in_memory(images_np, FLAGS.vggt_input_res)
 
-    # Yield the final samples in appropriately sized batches for training
-    logging.info(f"Yielding {samples_to_take} shuffled samples for training...")
-    yield_batch_size = 1024 # Use a consistent batch size for the training itself
-    for i in range(0, samples_to_take, yield_batch_size):
-        yield final_samples[i:i + yield_batch_size]
+                for j in range(0, chw_images.shape[0], batch_size):
+                    if (per_builder_token_cap is not None and builder_yielded >= per_builder_token_cap) or total_yielded >= num_tokens:
+                        break
+
+                    batch = chw_images[j:j + batch_size]
+                    klnd, sqrt_n = extractor.extract_layers(batch)
+                    k_l_64_d = resize_and_stack_per_layer(klnd, sqrt_n)  # [K,L,64,D]
+                    K, L, S64, D = k_l_64_d.shape
+                    tokens = torch.from_numpy(k_l_64_d).float().view(K * S64, L, D).cpu()
+
+                    # Append to buffer; cap size to keep memory bounded
+                    buffer_tensor = tokens if buffer_tensor is None else torch.cat([buffer_tensor, tokens], dim=0)
+                    if buffer_tensor.shape[0] > shuffle_buffer_size:
+                        perm = torch.randperm(buffer_tensor.shape[0])
+                        buffer_tensor = buffer_tensor[perm[:shuffle_buffer_size]]
+
+                    # Yield respecting global and per-dataset caps
+                    while buffer_tensor is not None and buffer_tensor.shape[0] > 0:
+                        remaining_global = num_tokens - total_yielded
+                        remaining_builder = (per_builder_token_cap - builder_yielded) if per_builder_token_cap is not None else buffer_tensor.shape[0]
+                        n_to_yield = min(yield_batch_size, buffer_tensor.shape[0], remaining_global, remaining_builder)
+                        if n_to_yield <= 0:
+                            break
+
+                        perm = torch.randperm(buffer_tensor.shape[0])
+                        batch_idx = perm[:n_to_yield]
+                        keep_idx = perm[n_to_yield:]
+                        yield_batch = buffer_tensor[batch_idx]
+                        buffer_tensor = buffer_tensor[keep_idx] if keep_idx.numel() > 0 else None
+
+                        yield yield_batch
+                        n = yield_batch.shape[0]
+                        total_yielded += n
+                        builder_yielded += n
+                        builder_counts[builder.name] += n
+                        samples_pbar.update(n)
+
+                        if total_yielded >= num_tokens:
+                            logging.info("Per-dataset token counts this epoch: %s", dict(builder_counts))
+                            episodes_pbar.close()
+                            samples_pbar.close()
+                            return
+                        if per_builder_token_cap is not None and builder_yielded >= per_builder_token_cap:
+                            break
+
+            episodes_pbar.close()
+            logging.info("Dataset %s yielded %d tokens so far", builder.name, builder_yielded)
+            if per_builder_token_cap is not None and builder_yielded >= per_builder_token_cap:
+                break
+
+    logging.info("Per-dataset token counts this epoch: %s", dict(builder_counts))
+    samples_pbar.close()
+
+
+@torch.no_grad()
+def eval_ae(builders, extractor, model, num_tokens=512, batch_size=None):
+    if batch_size is None:
+        batch_size = FLAGS.batch_size_eval  # safe now (resolved at call time)
+    model.eval()
+    loss_fn = nn.MSELoss(reduction="mean")
+    batches = _sample_tokens_for_ae(
+        builders,
+        extractor,
+        num_tokens=num_tokens,
+        batch_size=batch_size,
+        builder_splits=["train"],
+        per_builder_token_cap=math.ceil(num_tokens / max(1, len(builders))),
+        yield_batch_size=256,
+    )
+    total, count = 0.0, 0
+    device = next(model.parameters()).device
+    for batch in batches:
+        batch = batch.to(device)
+        _, recon, fused_mean = model(batch)
+        total += float(loss_fn(recon, fused_mean).cpu().item()) * batch.shape[0]
+        count += batch.shape[0]
+    logging.info("AE eval loss (approx, %d tokens): %.6f", count, total / max(1, count))
 
 
 def _fit_autoencoder(builders: List[tfds.core.DatasetBuilder], extractor: TorchVGGTExtractor, target_size: Tuple[int, int], device: torch.device) -> AECompressor:
@@ -416,25 +514,43 @@ def _fit_autoencoder(builders: List[tfds.core.DatasetBuilder], extractor: TorchV
 
     model.train()
     for epoch in range(FLAGS.ae_epochs):
-        batches = _sample_tokens_for_ae(builders, extractor, FLAGS.compression_samples, FLAGS.batch_size_eval)
+        num_builders = len(builders)
+        tokens_per_builder = math.ceil(FLAGS.compression_samples / max(1, num_builders))
+
+        batches = _sample_tokens_for_ae(
+            builders,
+            extractor,
+            num_tokens=FLAGS.compression_samples,
+            batch_size=FLAGS.batch_size_eval,
+            builder_splits=["train"],          # only train from each dataset
+            per_builder_token_cap=tokens_per_builder,
+            yield_batch_size=256,              # tighter balance than 1024
+        )
         seen = 0
         running = 0.0
+        pbar = tqdm(total=FLAGS.compression_samples,
+                    desc=f"AE train epoch {epoch+1}/{FLAGS.ae_epochs}",
+                    leave=False,
+                    dynamic_ncols=True,
+                    file=sys.stdout,
+                    disable=False)
         for batch in batches:
-            batch = batch.to(device)              # [B,L,D]
+            batch = batch.to(device)
             opt.zero_grad(set_to_none=True)
             z, recon, fused_mean = model(batch)
-            # Train to reconstruct uniform-mean fusion for stability
             loss = loss_fn(recon, fused_mean.detach())
             loss.backward()
             opt.step()
             seen += batch.shape[0]
             running += float(loss.detach().cpu().item()) * batch.shape[0]
+            pbar.update(batch.shape[0])
             if seen >= FLAGS.compression_samples:
                 break
+        pbar.close()
         logging.info("AE epoch %d: loss=%.6f (N=%d)", epoch + 1, running / max(1, seen), seen)
+        
 
     return model
-
 
 # -------------------------
 # Main
@@ -448,13 +564,19 @@ def main(_):
     # Discover builders from input root
     input_root = FLAGS.input_data_dir
     output_root = FLAGS.output_data_dir
-    dataset_names = [d for d in os.listdir(input_root) if os.path.isdir(os.path.join(input_root, d))]
-    if not dataset_names:
-        raise ValueError("No valid datasets found under input_data_dir")
+    # Replace your automatic discovery block with this:
+    dataset_names = ["libero_spatial_no_noops", "libero_goal_no_noops", "libero_object_no_noops", "libero_10_no_noops"]
     original_builders = []
     for name in dataset_names:
-        b = tfds.builder(name, data_dir=input_root)
-        original_builders.append(b)
+        try:
+            b = tfds.builder(name, data_dir=input_root)
+            original_builders.append(b)
+        except Exception as e:
+            logging.warning("Skipping dataset %s: %s", name, e)
+
+    for b in original_builders:
+        logging.info("Detected dataset: %s | splits=%s | data_dir=%s",
+                    b.name, list(b.info.splits.keys()), getattr(b, "data_dir", None))
 
     # Prepare VGGT extractor (24 layers or subset)
     if FLAGS.vggt_agg_layers < 24:
@@ -479,6 +601,7 @@ def main(_):
         
         logging.info("Fitting autoencoder compressor (samples=%d, epochs=%d)...", FLAGS.compression_samples, FLAGS.ae_epochs)
         compressor = _fit_autoencoder(original_builders, extractor, target_size, device)
+        eval_ae(original_builders, extractor, compressor, num_tokens=512)  # or pass batch_size=FLAGS.batch_size_eval
         os.makedirs(os.path.dirname(ae_path), exist_ok=True)
         compressor.cpu().save(ae_path)
         logging.info("Saved AE compressor to %s", ae_path)

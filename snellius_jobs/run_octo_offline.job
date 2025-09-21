@@ -6,7 +6,7 @@
 #SBATCH --gpus=1                 # Request 4 GPUs
 #SBATCH --job-name=Octo_Finetune_Offline
 #SBATCH --ntasks=1
-#SBATCH --time=72:00:00
+#SBATCH --time=40:00:00
 #SBATCH --mem=121000M             # Double the memory (or adjust as needed)
 #SBATCH --output=outfiles/correctly_finetune_offline_octo_%A.out
 
@@ -80,7 +80,7 @@ srun -u python scripts/finetune_vggt.py \
     --config=scripts/configs/config_vggt.py:full,language_conditioned \
     --config.pretrained_path=hf://rail-berkeley/octo-base-1.5 \
     --config.save_dir=/scratch-shared/tmp.cwkV8vOvfY/trained_models/my_octo_vggt_model_offline \
-    --use_vision_encoder=False \
+    --use_vision_encoder=True \
     --vggt_concat_mode="features"
 
 # RESUME CODE
