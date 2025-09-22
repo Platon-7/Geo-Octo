@@ -182,6 +182,10 @@ class GenerateConfig:
     vggt_agg_layers: int = 24                        # 24 for all layers, <24 to slice subset
     vggt_layer_indices: str = "3,10,16,22"           # Used when vggt_agg_layers < 24 (0-based indices)
     vggt_ae_path: Optional[str] = None               # Path to saved AE compressor (.pt)
+    # Backward-compat flags (accepted but unused here)
+    vggt_output_index: int = 0
+    vggt_raw_tokens: int = 64
+    vggt_raw_dim: int = 512
 
     vggt_only_eval: bool = False                     # Used when finetuning removed vision encoder completely
 
