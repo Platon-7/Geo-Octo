@@ -3,11 +3,11 @@
 #SBATCH --gres=gpu:1
 #SBATCH --cpus-per-task=4
 #SBATCH --gpus=1
-#SBATCH --job-name=Evaluate_Octo_VGGT
+#SBATCH --job-name=Evaluate_Octo_VGGT_Torch
 #SBATCH --ntasks=1
 #SBATCH --time=15:00:00
 #SBATCH --mem=122000M
-#SBATCH --output=outfiles/evaluate_octo_vggt_%A.out
+#SBATCH --output=outfiles/evaluate_octo_vggt_torch_%A.out
 
 module purge
 module load 2024
@@ -43,20 +43,16 @@ export PYTHONPATH="/gpfs/home4/pkarageorgis/geo_octo/vggt:/gpfs/home4/pkarageorg
 
 # srun python evaluate_model.py
 
-srun python -m evaluation.scripts.run_libero_eval_vggt \
+srun python -m evaluation.scripts.run_libero_eval_vggt_torch \
   --model_family octo \
-  --pretrained_checkpoint "/scratch-shared/tmp.cwkV8vOvfY/trained_models/my_octo_vggt_model_offline/octo_finetune_vggt/experiment_20250908_173126" \
-  --checkpoint_step 50000 \
+  --pretrained_checkpoint "/scratch-shared/tmp.cwkV8vOvfY/trained_models/my_octo_vggt_model_offline/octo_finetune_vggt/experiment_20250921_173502" \
+  --checkpoint_step 250000 \
   --task_suite_name libero_spatial \
   --num_trials_per_task 50 \
   --num_open_loop_steps 4 \
   --use_vggt_tokens True \
-  --vggt_onnx_path "/home/pkarageorgis/geo_octo/vggt-onnx/onnx_fp16/vggt_fp16.onnx" \
-  --vggt_compressor_path "/home/pkarageorgis/PCA_Compressors/spatial_24_vggt_compressor_pca_64x512.pkl" \
+  --vggt_ae_path "/scratch-shared/tmp.cwkV8vOvfY/libero_vggt_onnx_compressed_torch_ae/vggt_autoencoder_24L_64x512.pt" \
   --vggt_input_res 518 \
-  --vggt_output_index 0 \
-  --vggt_raw_tokens 64 \
-  --vggt_raw_dim 512 \
   --vggt_agg_layers 24 \
   --vggt_only_eval False \
   --vggt_layer_indices=None
