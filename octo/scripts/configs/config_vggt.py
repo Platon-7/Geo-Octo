@@ -6,9 +6,14 @@ from octo.model.components.vit_encoders import PatchEncoder
 
 
 def get_config(config_string="full,multimodal"):
-    mode, task = config_string.split(",")
+    parts = config_string.split(",")
+    if len(parts) < 2:
+        raise ValueError("config_string must be 'mode,task[,variant]' e.g. 'full,language_conditioned,onnx'")
+    mode, task = parts[0], parts[1]
+    variant = parts[2] if len(parts) >= 3 else "onnx"
     assert task in ["image_conditioned", "language_conditioned", "multimodal"]
     assert mode in ["full", "head_only", "head_mlp_only"]
+    assert variant in ["onnx", "torch"], "variant must be one of {'onnx','torch'}"
 
     UNIFIED_STATS_PATH = "/home/pkarageorgis/geo_octo/libero_datasets/unified_stats/unified_dataset_statistics_libero_spatial_vggt_onnx_24.json"
      
@@ -18,9 +23,17 @@ def get_config(config_string="full,multimodal"):
     # first image key should be the third-person view (None if not used)
     # and second image key should be the wrist view (None if not used)
 
+    # Select dataset variant (precomputed ONNX+PCA vs Torch+AE)
+    if variant == "onnx":
+        dataset_name = "libero_spatial_vggt_compressed_onnx"
+        dataset_dir = "/scratch-shared/tmp.cwkV8vOvfY/libero_vggt_onnx_compressed_24"
+    else:  # variant == "torch"
+        dataset_name = "libero_spatial_vggt_compressed_torch"
+        dataset_dir = "/scratch-shared/tmp.cwkV8vOvfY/libero_vggt_onnx_compressed_torch_ae"
+
     FINETUNING_KWARGS = {
-        "name": "libero_spatial_vggt_compressed_onnx",
-        "data_dir": "/scratch-shared/tmp.cwkV8vOvfY/libero_vggt_onnx_compressed_24",
+        "name": dataset_name,
+        "data_dir": dataset_dir,
         "dataset_statistics": UNIFIED_STATS_PATH,
         "image_obs_keys": {"primary": "image_primary"},
         "proprio_obs_key": "proprio",
