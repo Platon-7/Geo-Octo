@@ -10,7 +10,7 @@ def get_config(config_string="full,multimodal"):
     assert task in ["image_conditioned", "language_conditioned", "multimodal"]
     assert mode in ["full", "head_only", "head_mlp_only"]
 
-    UNIFIED_STATS_PATH = "/home/pkarageorgis/geo_octo/libero_datasets/unified_stats/unified_dataset_statistics_libero_spatial_vggt_compressed_torch.json"
+    UNIFIED_STATS_PATH = "/home/pkarageorgis/geo_octo/libero_datasets/unified_stats/unified_dataset_statistics_libero_spatial_vggt_onnx_24.json"
      
     # Fill this in for your own dataset!
 
@@ -19,8 +19,8 @@ def get_config(config_string="full,multimodal"):
     # and second image key should be the wrist view (None if not used)
 
     FINETUNING_KWARGS = {
-        "name": "libero_spatial_vggt_compressed_torch",
-        "data_dir": "/scratch-shared/tmp.cwkV8vOvfY/libero_vggt_onnx_compressed_torch_ae",
+        "name": "libero_spatial_vggt_compressed_onnx",
+        "data_dir": "/scratch-shared/tmp.cwkV8vOvfY/libero_vggt_onnx_compressed_24",
         "dataset_statistics": UNIFIED_STATS_PATH,
         "image_obs_keys": {"primary": "image_primary"},
         "proprio_obs_key": "proprio",
@@ -196,6 +196,13 @@ def get_config(config_string="full,multimodal"):
         "model": {"observation_tokenizers": {"image_wrist": True}}
     }
     
+    config['config_delete_keys'] = {
+        "model": {
+            "observation_tokenizers": True  # remove the entire dict from the base config
+        }
+    }
+    
+
 #     # VGGT ONLY VERSION
 #     config['update_config'] = {
 #     "model": {
@@ -208,13 +215,6 @@ def get_config(config_string="full,multimodal"):
 #         "repeat_task_tokens": False,
 #     }
 # }
-
-    config['config_delete_keys'] = {
-        "model": {
-            "observation_tokenizers": True  # remove the entire dict from the base config
-        }
-    }
-    
 
     
     return ConfigDict(config)
