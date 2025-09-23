@@ -197,7 +197,7 @@ def main(_):
                 vggt_tokenizer_spec={
                     "module": "octo.model.components.tokenizers:VGGTTokenizer",
                 },
-                concat_mode="tokens",
+                concat_mode=FLAGS.vggt_concat_mode,
             )
             config["model"]["observation_tokenizers"] = obs_toks
             # Ensure repeat_task_tokens=True for parity with baseline
