@@ -185,6 +185,29 @@ def main(_):
     except Exception as _e:
         logging.warning("Could not set VisionMixer.concat_mode: %s", _e)
 
+    # Wrap the pretrained 'primary' tokenizer with VisionMixer, inheriting its exact spec (e.g., SmallStem16)
+    try:
+        obs_toks = config["model"].get("observation_tokenizers", {})
+        old_primary = obs_toks.get("primary")
+        if isinstance(old_primary, dict):
+            # Remove any separate mixed_vision entry to avoid double counting
+            obs_toks.pop("mixed_vision", None)
+            # Replace 'primary' with VisionMixer that uses the pretrained primary spec as patch path
+            obs_toks["primary"] = ModuleSpec.create(
+                "octo.model.components.tokenizers:VisionMixer",
+                patch_tokenizer_spec=old_primary,
+                vggt_tokenizer_spec={
+                    "module": "octo.model.components.tokenizers:VGGTTokenizer",
+                },
+                concat_mode="tokens",
+            )
+            config["model"]["observation_tokenizers"] = obs_toks
+            # Ensure repeat_task_tokens=True for parity with baseline
+            config["model"]["repeat_task_tokens"] = True
+            logging.info("Wrapped 'primary' with VisionMixer (tokens-mode), inheriting pretrained encoder spec.")
+    except Exception as _e:
+        logging.warning("Could not wrap primary with VisionMixer: %s", _e)
+
 
     #########
     #
