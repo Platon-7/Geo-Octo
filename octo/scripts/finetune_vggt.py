@@ -190,8 +190,6 @@ def main(_):
         obs_toks = config["model"].get("observation_tokenizers", {})
         old_primary = obs_toks.get("primary")
         if isinstance(old_primary, dict):
-            # Remove any separate mixed_vision entry to avoid double counting
-            obs_toks.pop("mixed_vision", None)
             # Replace 'primary' with VisionMixer that uses the pretrained primary spec as patch path
             obs_toks["primary"] = ModuleSpec.create(
                 "octo.model.components.tokenizers:VisionMixer",
