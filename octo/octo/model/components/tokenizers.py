@@ -540,6 +540,24 @@ class VisionMixer(nn.Module):
         concat_mode = concat_mode_env if concat_mode_env else (self.concat_mode or "tokens")
 
         if concat_mode == "features":
+            # Ensure equal number of tokens before concatenating along features
+            n_patch = patch_tokens.tokens.shape[-2]
+            n_vggt = projected_vggt_tokens.shape[-2]
+            if n_patch != n_vggt:
+                target_n = max(n_patch, n_vggt)
+                def _repeat_to(x, n):
+                    r = target_n // n
+                    if target_n % n == 0 and r > 1:
+                        return jnp.repeat(x, r, axis=-2)
+                    # Fallback: tile then slice to target length
+                    reps = (1,) * (x.ndim - 2) + (int(jnp.ceil(target_n / n)), 1)
+                    x_tiled = jnp.tile(x, reps)
+                    return x_tiled[..., :target_n, :]
+                if n_patch != target_n:
+                    patch_tokens = TokenGroup(tokens=_repeat_to(patch_tokens.tokens, n_patch), mask=_repeat_to(patch_tokens.mask, n_patch))
+                if n_vggt != target_n:
+                    vggt_tokens = TokenGroup(tokens=_repeat_to(projected_vggt_tokens, n_vggt), mask=_repeat_to(vggt_tokens.mask, n_vggt))
+                    projected_vggt_tokens = vggt_tokens.tokens
             # Concatenate along feature/channel axis (last axis)
             mixed_tokens = jnp.concatenate([patch_tokens.tokens, projected_vggt_tokens], axis=-1)
             mixed_mask = jnp.logical_or(patch_tokens.mask.astype(bool), vggt_tokens.mask.astype(bool))
