@@ -467,22 +467,24 @@ class VisionMixer(nn.Module):
     concat_mode: str = "tokens"  # 'tokens' or 'features'; can be overridden via env VGGT_CONCAT_MODE
 
     def setup(self):
-        """Initializes the sub-tokenizers from their string-based specifications."""
+        """Initializes the sub-tokenizers from their specifications.
 
-        # 1. Create a ModuleSpec object from the dictionary spec that uses strings.
-        patch_spec_obj = ModuleSpec.create(
-            self.patch_tokenizer_spec['module'],
-            **self.patch_tokenizer_spec.get('kwargs', {})
-        )
-        # 2. Use the framework's instantiate helper to create the module.
-        self.patch_tokenizer = ModuleSpec.instantiate(patch_spec_obj)()
-        
-        # Do the same for the VGGT tokenizer.
-        vggt_spec_obj = ModuleSpec.create(
-            self.vggt_tokenizer_spec['module'],
-            **self.vggt_tokenizer_spec.get('kwargs', {})
-        )
-        self.vggt_tokenizer = ModuleSpec.instantiate(vggt_spec_obj)()
+        Supports either a full ModuleSpec dict ({module,name,args,kwargs}) or a
+        lightweight dict with {module: import_string, kwargs: {...}}.
+        """
+
+        def _instantiate_from_either(spec_like):
+            # If this already looks like a ModuleSpec (has 'name'), instantiate directly
+            if isinstance(spec_like, dict) and set(spec_like.keys()) == {"module", "name", "args", "kwargs"}:
+                return ModuleSpec.instantiate(spec_like)()
+            # Else expect {module: fully.qualified:Class, kwargs: {...}}
+            if isinstance(spec_like, dict) and "module" in spec_like:
+                created = ModuleSpec.create(spec_like["module"], **spec_like.get("kwargs", {}))
+                return ModuleSpec.instantiate(created)()
+            raise ValueError(f"Unsupported spec format for tokenizer: {spec_like}")
+
+        self.patch_tokenizer = _instantiate_from_either(self.patch_tokenizer_spec)
+        self.vggt_tokenizer = _instantiate_from_either(self.vggt_tokenizer_spec)
         
         # Previously we projected VGGT features to match patch dim; no longer needed with (64,512) inputs
         # Kept no projection layer to avoid unnecessary params
