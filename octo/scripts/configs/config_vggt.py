@@ -169,7 +169,8 @@ def get_config(config_string="full,multimodal"):
     config['update_config'] = {
     "model": {
         "observation_tokenizers": {
-            "mixed_vision": ModuleSpec.create(
+            # Replace the baseline primary with VisionMixer under the same key
+            "primary": ModuleSpec.create(
                 "octo.model.components.tokenizers:VisionMixer",
                 patch_tokenizer_spec={
                     "module": "octo.model.components.tokenizers:ImageTokenizer",
@@ -189,18 +190,14 @@ def get_config(config_string="full,multimodal"):
             ),
         },
         "repeat_task_tokens": True,
+        # Match baseline paramization: disable per-group normalization adapters
+        "use_input_normalization": False,
     }
 }
     
     
     config['config_delete_keys'] = {
         "model": {"observation_tokenizers": {"image_wrist": True}}
-    }
-    
-    config['config_delete_keys'] = {
-        "model": {
-            "observation_tokenizers": True  # remove the entire dict from the base config
-        }
     }
     
 
