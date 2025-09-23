@@ -176,7 +176,7 @@ def get_config(config_string="full,multimodal"):
                     "kwargs": {
                         "encoder": ModuleSpec.create(
                             "octo.model.components.vit_encoders:PatchEncoder",
-                            patch_size=16,
+                            patch_size=32,
                             num_features=512,
                         ),
                         "obs_stack_keys": ("image_primary",),
