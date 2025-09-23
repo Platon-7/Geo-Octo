@@ -15,6 +15,7 @@ import wandb
 import sys
 import jaxlib
 from jaxlib import version as jv
+import numpy as np
 
 from octo.data.dataset import make_single_dataset
 from octo.model.octo_model import OctoModel
@@ -261,6 +262,32 @@ def main(_):
             if "image_primary" in batch["observation"]:
                 # Assumes the goal is the first image in the window_size sequence
                 batch["task"]["image_primary"] = batch["observation"]["image_primary"][:, 0]
+
+        # --- TEMP: Expand VGGT tokens to 256 for features-mode compatibility ---
+        try:
+            if FLAGS.vggt_concat_mode == "features":
+                obs_v = batch.get("observation", {})
+                vggt = obs_v.get("vggt_tokens")
+                if vggt is not None:
+                    arr = np.asarray(vggt)
+                    # Normalize to (B, T, N, C)
+                    if arr.ndim == 5:  # (B,T,H,W,C)
+                        b, t, h, w, c = arr.shape
+                        arr = arr.reshape(b, t, h * w, c)
+                    elif arr.ndim == 4:  # (B,T,N,C)
+                        b, t, n, c = arr.shape
+                    else:
+                        arr = None
+                    if arr is not None:
+                        n = arr.shape[2]
+                        if n < 256 and 256 % n == 0:
+                            arr = np.repeat(arr, 256 // n, axis=2)
+                        elif n == 64:
+                            arr = np.repeat(arr, 4, axis=2)
+                        # Assign back as (B,T,N,C)
+                        obs_v["vggt_tokens"] = arr
+        except Exception:
+            pass
 
         return batch
 
