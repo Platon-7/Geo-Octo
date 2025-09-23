@@ -144,6 +144,7 @@ def main():
     task_suite = benchmark_dict[args.task_suite]()
     task = task_suite.get_task(0)
     env, task_description = get_libero_env(task, "octo", 256)
+    print(f"Task suite: {args.task_suite} | task_id=0 | description: {task_description}")
     obs = env.get_observation()
     # Use the first rendered image as input
     img = obs["image"] if "image" in obs else obs.get("base_image") or obs.get("front_image")
@@ -160,9 +161,19 @@ def main():
     outputs1 = model1.run_transformer(obs1, tasks1, obs1["timestep_pad_mask"], train=False)
     outputs2 = model2.run_transformer(obs2, tasks2, obs2["timestep_pad_mask"], train=False)
 
-    # Take observation tokens group
-    tok1 = outputs1["obs"].tokens  # (1,T,N,D)
-    tok2 = outputs2["obs"].tokens
+    # Debug: list observation groups and shapes to understand N
+    obs_groups1 = {k: v.tokens.shape for k, v in outputs1.items() if k.startswith("obs_")}
+    obs_groups2 = {k: v.tokens.shape for k, v in outputs2.items() if k.startswith("obs_")}
+    print("obs groups (model1):", obs_groups1)
+    print("obs groups (model2):", obs_groups2)
+
+    # Prefer the mixed_vision group (64 tokens) if present; else fall back to concatenated obs
+    tok_group1 = outputs1.get("obs_mixed_vision", outputs1["obs"]).tokens  # (1,T,N,D)
+    tok_group2 = outputs2.get("obs_mixed_vision", outputs2["obs"]).tokens
+    print("N per model (tokens at t0):", int(tok_group1.shape[2]), int(tok_group2.shape[2]))
+
+    tok1 = tok_group1
+    tok2 = tok_group2
 
     sim1, center1 = _tokens_to_similarity(tok1)
     sim2, center2 = _tokens_to_similarity(tok2)
