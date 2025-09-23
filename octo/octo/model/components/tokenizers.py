@@ -473,12 +473,24 @@ class VisionMixer(nn.Module):
         lightweight dict with {module: import_string, kwargs: {...}}.
         """
 
+        from collections.abc import Mapping
+
+        def _to_py(obj):
+            # Recursively convert FrozenDict/ConfigDict-like mappings to plain dict
+            if isinstance(obj, Mapping):
+                return {k: _to_py(v) for k, v in obj.items()}
+            if isinstance(obj, (list, tuple)):
+                t = type(obj)
+                return t(_to_py(x) for x in obj)
+            return obj
+
         def _instantiate_from_either(spec_like):
-            # If this already looks like a ModuleSpec (has 'name'), instantiate directly
-            if isinstance(spec_like, dict) and set(spec_like.keys()) == {"module", "name", "args", "kwargs"}:
+            spec_like = _to_py(spec_like)
+            # If this already looks like a ModuleSpec (has exact keys), instantiate directly
+            if isinstance(spec_like, Mapping) and set(spec_like.keys()) == {"module", "name", "args", "kwargs"}:
                 return ModuleSpec.instantiate(spec_like)()
             # Else expect {module: fully.qualified:Class, kwargs: {...}}
-            if isinstance(spec_like, dict) and "module" in spec_like:
+            if isinstance(spec_like, Mapping) and "module" in spec_like:
                 created = ModuleSpec.create(spec_like["module"], **spec_like.get("kwargs", {}))
                 return ModuleSpec.instantiate(created)()
             raise ValueError(f"Unsupported spec format for tokenizer: {spec_like}")
