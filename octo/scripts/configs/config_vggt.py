@@ -176,7 +176,7 @@ def get_config(config_string="full,multimodal"):
                     "kwargs": {
                         "encoder": ModuleSpec.create(
                             "octo.model.components.vit_encoders:PatchEncoder",
-                            patch_size=32,
+                            patch_size=16,
                             num_features=512,
                         ),
                         "obs_stack_keys": ("image_primary",),
@@ -185,9 +185,10 @@ def get_config(config_string="full,multimodal"):
                 vggt_tokenizer_spec={
                     "module": "octo.model.components.tokenizers:VGGTTokenizer",
                 },
+                concat_mode="features",
             ),
         },
-        "repeat_task_tokens": False,
+        "repeat_task_tokens": True,
     }
 }
     

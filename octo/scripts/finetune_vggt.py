@@ -67,7 +67,7 @@ flags.DEFINE_string("dump_train_images_dir", "./train_image_dumps", "Directory t
 flags.DEFINE_bool("use_vision_encoder", True, "If True then use Octo's vision encoder, else discard it.")
 flags.DEFINE_enum(
     "vggt_concat_mode",
-    "tokens",
+    "features",
     ["tokens", "features"],
     "How to combine VGGT tokens with patch tokens: 'tokens' (concat along token axis) or 'features' (concat along feature axis).",
 )
