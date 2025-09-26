@@ -496,8 +496,9 @@ class VisionMixer(nn.Module):
     ) -> TokenGroup:
         # Try image/patch tokens; tokenizer may return None if images are absent.
         patch_tokens = self.patch_tokenizer(observations, tasks, train=train)
-
+        
         # If VGGT tokens exist, call the VGGTTokenizer
+        vggt_tokens = None
         if "vggt_tokens" in observations:
             vggt_tokens = self.vggt_tokenizer(observations, tasks, train=train)
             
