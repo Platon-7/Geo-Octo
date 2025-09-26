@@ -464,9 +464,10 @@ def standardize_libero_vggt(traj: dict) -> dict:
     else:
         new_observation['proprio'] = proprio
 
-    # 3. Conditionally copy the VGGT tokens if they exist
+    # 3. Conditionally copy the VGGT tokens if they exist (can be disabled via env)
     if 'vggt_tokens' in traj['observation']:
-        new_observation['vggt_tokens'] = traj['observation']['vggt_tokens']
+        if os.environ.get("DISABLE_VGGT_TOKENS", "0") != "1":
+            new_observation['vggt_tokens'] = traj['observation']['vggt_tokens']
     
     # 4. Replace the old observation dict with our new, clean one
     traj['observation'] = new_observation

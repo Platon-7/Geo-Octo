@@ -217,6 +217,13 @@ def main(_):
 
         # Toggle behavior based on flag: keep images (vision encoder) or VGGT-only
         obs = batch.get("observation", {})
+        # Optional hard disable of VGGT tokens via env for timing A/B
+        import os as _os
+        if _os.environ.get("DISABLE_VGGT_TOKENS", "0") == "1" and "vggt_tokens" in obs:
+            obs.pop("vggt_tokens", None)
+            pad = obs.get("pad_mask_dict")
+            if pad is not None:
+                pad.pop("vggt_tokens", None)
         if not FLAGS.use_vision_encoder:
             # VGGT-only: drop image observations and their pad masks
             for k in list(obs.keys()):
