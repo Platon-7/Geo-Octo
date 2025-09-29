@@ -1265,3 +1265,160 @@ Success: False
 
 Task: pick up the black bowl on the cookie box and place it on the plate
 Starting episode 29...
+Saved rollout MP4 at path /scratch-shared/tmp.cwkV8vOvfY/libero_eval_results/libero_spatial_eval/rollouts/libero_eval--episode=179--success=False--task=pick_up_the_black_bowl_on_the_cookie_box_and_place.mp4
+Success: False
+# episodes completed so far: 179
+# successes: 19 (10.6%)
+
+Task: pick up the black bowl on the cookie box and place it on the plate
+Starting episode 30...
+Saved rollout MP4 at path /scratch-shared/tmp.cwkV8vOvfY/libero_eval_results/libero_spatial_eval/rollouts/libero_eval--episode=180--success=False--task=pick_up_the_black_bowl_on_the_cookie_box_and_place.mp4
+Success: False
+# episodes completed so far: 180
+# successes: 19 (10.6%)
+
+Task: pick up the black bowl on the cookie box and place it on the plate
+Starting episode 31...
+Saved rollout MP4 at path /scratch-shared/tmp.cwkV8vOvfY/libero_eval_results/libero_spatial_eval/rollouts/libero_eval--episode=181--success=False--task=pick_up_the_black_bowl_on_the_cookie_box_and_place.mp4
+Success: False
+# episodes completed so far: 181
+# successes: 19 (10.5%)
+
+Task: pick up the black bowl on the cookie box and place it on the plate
+Starting episode 32...
+Saved rollout MP4 at path /scratch-shared/tmp.cwkV8vOvfY/libero_eval_results/libero_spatial_eval/rollouts/libero_eval--episode=182--success=False--task=pick_up_the_black_bowl_on_the_cookie_box_and_place.mp4
+Success: False
+# episodes completed so far: 182
+# successes: 19 (10.4%)
+
+Task: pick up the black bowl on the cookie box and place it on the plate
+Starting episode 33...
+Saved rollout MP4 at path /scratch-shared/tmp.cwkV8vOvfY/libero_eval_results/libero_spatial_eval/rollouts/libero_eval--episode=183--success=False--task=pick_up_the_black_bowl_on_the_cookie_box_and_place.mp4
+Success: False
+# episodes completed so far: 183
+# successes: 19 (10.4%)
+
+Task: pick up the black bowl on the cookie box and place it on the plate
+Starting episode 34...
+Saved rollout MP4 at path /scratch-shared/tmp.cwkV8vOvfY/libero_eval_results/libero_spatial_eval/rollouts/libero_eval--episode=184--success=False--task=pick_up_the_black_bowl_on_the_cookie_box_and_place.mp4
+Success: False
+# episodes completed so far: 184
+# successes: 19 (10.3%)
+
+Task: pick up the black bowl on the cookie box and place it on the plate
+Starting episode 35...
+Saved rollout MP4 at path /scratch-shared/tmp.cwkV8vOvfY/libero_eval_results/libero_spatial_eval/rollouts/libero_eval--episode=185--success=False--task=pick_up_the_black_bowl_on_the_cookie_box_and_place.mp4
+Success: False
+# episodes completed so far: 185
+# successes: 19 (10.3%)
+
+Task: pick up the black bowl on the cookie box and place it on the plate
+Starting episode 36...
+Saved rollout MP4 at path /scratch-shared/tmp.cwkV8vOvfY/libero_eval_results/libero_spatial_eval/rollouts/libero_eval--episode=186--success=False--task=pick_up_the_black_bowl_on_the_cookie_box_and_place.mp4
+Success: False
+# episodes completed so far: 186
+# successes: 19 (10.2%)
+
+Task: pick up the black bowl on the cookie box and place it on the plate
+Starting episode 37...
+Saved rollout MP4 at path /scratch-shared/tmp.cwkV8vOvfY/libero_eval_results/libero_spatial_eval/rollouts/libero_eval--episode=187--success=False--task=pick_up_the_black_bowl_on_the_cookie_box_and_place.mp4
+Success: False
+# episodes completed so far: 187
+# successes: 19 (10.2%)
+
+Task: pick up the black bowl on the cookie box and place it on the plate
+Starting episode 38...
+Saved rollout MP4 at path /scratch-shared/tmp.cwkV8vOvfY/libero_eval_results/libero_spatial_eval/rollouts/libero_eval--episode=188--success=False--task=pick_up_the_black_bowl_on_the_cookie_box_and_place.mp4
+Success: False
+# episodes completed so far: 188
+# successes: 19 (10.1%)
+
+Task: pick up the black bowl on the cookie box and place it on the plate
+Starting episode 39...
+Saved rollout MP4 at path /scratch-shared/tmp.cwkV8vOvfY/libero_eval_results/libero_spatial_eval/rollouts/libero_eval--episode=189--success=True--task=pick_up_the_black_bowl_on_the_cookie_box_and_place.mp4
+Success: True
+# episodes completed so far: 189
+# successes: 20 (10.6%)
+
+Task: pick up the black bowl on the cookie box and place it on the plate
+Starting episode 40...
+Saved rollout MP4 at path /scratch-shared/tmp.cwkV8vOvfY/libero_eval_results/libero_spatial_eval/rollouts/libero_eval--episode=190--success=False--task=pick_up_the_black_bowl_on_the_cookie_box_and_place.mp4
+Success: False
+# episodes completed so far: 190
+# successes: 20 (10.5%)
+
+Task: pick up the black bowl on the cookie box and place it on the plate
+Starting episode 41...
+Saved rollout MP4 at path /scratch-shared/tmp.cwkV8vOvfY/libero_eval_results/libero_spatial_eval/rollouts/libero_eval--episode=191--success=False--task=pick_up_the_black_bowl_on_the_cookie_box_and_place.mp4
+Success: False
+# episodes completed so far: 191
+# successes: 20 (10.5%)
+
+Task: pick up the black bowl on the cookie box and place it on the plate
+Starting episode 42...
+Saved rollout MP4 at path /scratch-shared/tmp.cwkV8vOvfY/libero_eval_results/libero_spatial_eval/rollouts/libero_eval--episode=192--success=False--task=pick_up_the_black_bowl_on_the_cookie_box_and_place.mp4
+Success: False
+# episodes completed so far: 192
+# successes: 20 (10.4%)
+
+Task: pick up the black bowl on the cookie box and place it on the plate
+Starting episode 43...
+Saved rollout MP4 at path /scratch-shared/tmp.cwkV8vOvfY/libero_eval_results/libero_spatial_eval/rollouts/libero_eval--episode=193--success=False--task=pick_up_the_black_bowl_on_the_cookie_box_and_place.mp4
+Success: False
+# episodes completed so far: 193
+# successes: 20 (10.4%)
+
+Task: pick up the black bowl on the cookie box and place it on the plate
+Starting episode 44...
+Saved rollout MP4 at path /scratch-shared/tmp.cwkV8vOvfY/libero_eval_results/libero_spatial_eval/rollouts/libero_eval--episode=194--success=True--task=pick_up_the_black_bowl_on_the_cookie_box_and_place.mp4
+Success: True
+# episodes completed so far: 194
+# successes: 21 (10.8%)
+
+Task: pick up the black bowl on the cookie box and place it on the plate
+Starting episode 45...
+Saved rollout MP4 at path /scratch-shared/tmp.cwkV8vOvfY/libero_eval_results/libero_spatial_eval/rollouts/libero_eval--episode=195--success=False--task=pick_up_the_black_bowl_on_the_cookie_box_and_place.mp4
+Success: False
+# episodes completed so far: 195
+# successes: 21 (10.8%)
+
+Task: pick up the black bowl on the cookie box and place it on the plate
+Starting episode 46...
+Saved rollout MP4 at path /scratch-shared/tmp.cwkV8vOvfY/libero_eval_results/libero_spatial_eval/rollouts/libero_eval--episode=196--success=False--task=pick_up_the_black_bowl_on_the_cookie_box_and_place.mp4
+Success: False
+# episodes completed so far: 196
+# successes: 21 (10.7%)
+
+Task: pick up the black bowl on the cookie box and place it on the plate
+Starting episode 47...
+Saved rollout MP4 at path /scratch-shared/tmp.cwkV8vOvfY/libero_eval_results/libero_spatial_eval/rollouts/libero_eval--episode=197--success=False--task=pick_up_the_black_bowl_on_the_cookie_box_and_place.mp4
+Success: False
+# episodes completed so far: 197
+# successes: 21 (10.7%)
+
+Task: pick up the black bowl on the cookie box and place it on the plate
+Starting episode 48...
+Saved rollout MP4 at path /scratch-shared/tmp.cwkV8vOvfY/libero_eval_results/libero_spatial_eval/rollouts/libero_eval--episode=198--success=False--task=pick_up_the_black_bowl_on_the_cookie_box_and_place.mp4
+Success: False
+# episodes completed so far: 198
+# successes: 21 (10.6%)
+
+Task: pick up the black bowl on the cookie box and place it on the plate
+Starting episode 49...
+Saved rollout MP4 at path /scratch-shared/tmp.cwkV8vOvfY/libero_eval_results/libero_spatial_eval/rollouts/libero_eval--episode=199--success=False--task=pick_up_the_black_bowl_on_the_cookie_box_and_place.mp4
+Success: False
+# episodes completed so far: 199
+# successes: 21 (10.6%)
+
+Task: pick up the black bowl on the cookie box and place it on the plate
+Starting episode 50...
+Saved rollout MP4 at path /scratch-shared/tmp.cwkV8vOvfY/libero_eval_results/libero_spatial_eval/rollouts/libero_eval--episode=200--success=False--task=pick_up_the_black_bowl_on_the_cookie_box_and_place.mp4
+Success: False
+# episodes completed so far: 200
+# successes: 21 (10.5%)
+Current task success rate: 0.1
+Current total success rate: 0.105
+Using default initial states
+
+Task: pick up the black bowl in the top drawer of the wooden cabinet and place it on the plate
+Starting episode 1...

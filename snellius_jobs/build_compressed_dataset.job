@@ -108,7 +108,7 @@ srun -u python /gpfs/home4/pkarageorgis/geo_octo/octo/scripts/create_vggt_datase
   --ae_epochs=3 \
   --ae_lr=1e-3 \
   --ae_hidden=2048 \
-  --target_size=64,512 \
+  --target_size=256,512 \
   --compression_samples=2500 \
   --batch_size_eval=16 \
   --vggt_agg_layers=24 \

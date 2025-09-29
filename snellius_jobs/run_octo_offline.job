@@ -6,7 +6,7 @@
 #SBATCH --gpus=1                 # Request 4 GPUs
 #SBATCH --job-name=Octo_Finetune_Offline
 #SBATCH --ntasks=1
-#SBATCH --time=40:00:00
+#SBATCH --time=30:00:00
 #SBATCH --mem=121000M             # Double the memory (or adjust as needed)
 #SBATCH --output=outfiles/correctly_finetune_offline_octo_%A.out
 
@@ -75,6 +75,8 @@ print("jaxlib path:", jaxlib.__file__)
 print("devices:", jax.devices())
 print("==========================")
 PY
+
+export DISABLE_VGGT_TOKENS=0 # Set to 1 to disable VGGT tokens during training (debugging purposes)
 
 srun -u python scripts/finetune_vggt.py \
     --config=scripts/configs/config_vggt.py:full,language_conditioned \

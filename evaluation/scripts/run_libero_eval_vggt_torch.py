@@ -15,7 +15,7 @@ except ImportError:
 warnings.filterwarnings("ignore", category=DeprecationWarning, module="transformers")
 
 # 1. Load the statistics
-stats_path = "/home/pkarageorgis/geo_octo/libero_datasets/unified_stats/unified_dataset_statistics_libero_spatial_vggt.json"
+stats_path = "/home/pkarageorgis/geo_octo/libero_datasets/unified_stats/unified_dataset_statistics_libero_spatial_vggt_compressed_torch.json"
 with open(stats_path, 'r') as f:
     dataset_statistics = json.load(f)
 
@@ -351,6 +351,7 @@ class AECompressor(nn.Module):
             nn.GELU(),
             nn.Linear(hidden_dim, input_dim),
         )
+        self.output_norm = nn.LayerNorm(bottleneck_dim)
 
     @torch.no_grad()
     def compress_tokens(self, tokens_ld: torch.Tensor) -> torch.Tensor:
@@ -358,7 +359,9 @@ class AECompressor(nn.Module):
         device = next(self.parameters()).device
         tokens_ld = tokens_ld.to(device)
         fused = self.fuser(tokens_ld)
-        return self.encoder(fused)
+        z = self.encoder(fused)
+        z = self.output_norm(z)
+        return z
 
 
 class TorchVGGTExtractor:
@@ -393,8 +396,9 @@ def resize_and_stack_per_layer(features_klnd: np.ndarray, sqrt_n: int) -> np.nda
     s = sqrt_n
     x = torch.from_numpy(features_klnd).float()
     x = x.reshape(K * L, s, s, D).permute(0, 3, 1, 2)
-    x_small = F.interpolate(x, size=(8, 8), mode='bilinear', align_corners=False)
-    x_small = x_small.permute(0, 2, 3, 1).contiguous().view(K, L, 64, D)
+    target_side = 16  # for 256 tokens
+    x_small = F.interpolate(x, size=(target_side, target_side), mode='bilinear', align_corners=False)
+    x_small = x_small.permute(0, 2, 3, 1).contiguous().view(K, L, target_side * target_side, D)
     return x_small.numpy()
 
 
@@ -421,12 +425,12 @@ def compute_compressed_vggt_tokens_torch(image: np.ndarray, vggt_ctx: dict) -> O
     # Preprocess to CHW float32 in [0,1]
     pre = load_and_preprocess_images([image], target_size=cfg.vggt_input_res)
     klnd, sqrt_n = extractor.extract_layers(pre)               # [K,L,N,D]
-    k_l_64_d = resize_and_stack_per_layer(klnd, sqrt_n)        # [K,L,64,D]
-    K, L, S64, D = k_l_64_d.shape
-    tokens = torch.from_numpy(k_l_64_d).float().view(K * S64, L, D).to(device)
+    k_l_256_d = resize_and_stack_per_layer(klnd, sqrt_n)        # [K,L,256,D]
+    K, L, S256, D = k_l_256_d.shape
+    tokens = torch.from_numpy(k_l_256_d).float().view(K * S256, L, D).to(device)
     with torch.no_grad():
-        z = compressor.compress_tokens(tokens)                  # [K*64,512]
-    z = z.view(K, S64, -1).detach().cpu().numpy().astype(np.float16)  # [K,64,512]
+        z = compressor.compress_tokens(tokens)                  # [K*256,512]
+    z = z.view(K, S256, -1).detach().cpu().numpy().astype(np.float16)  # [K,256,512]
     return z[0]
 
 

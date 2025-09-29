@@ -132,6 +132,7 @@ class AECompressor(nn.Module):
             nn.GELU(),
             nn.Linear(hidden_dim, input_dim),
         )
+        self.output_norm = nn.LayerNorm(bottleneck_dim)
 
     def forward(self, tokens_ld: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """
@@ -151,17 +152,19 @@ class AECompressor(nn.Module):
             self._logged_encoder_input_shape = True
             
         z = self.encoder(fused_weighted)
+        z = self.output_norm(z)
         recon = self.decoder(z)
         return z, recon, fused_mean
 
     @torch.no_grad()
     def compress_tokens(self, tokens_ld: torch.Tensor) -> torch.Tensor:
-        # tokens_ld: [B, L, D]
         self.eval()
         device = self.fuser.weights.device
         tokens_ld = tokens_ld.to(device)
         fused_weighted = self.fuser(tokens_ld)
-        return self.encoder(fused_weighted)
+        z = self.encoder(fused_weighted)
+        z = self.output_norm(z)
+        return z
 
     def save(self, path: str):
         os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -230,14 +233,20 @@ def resize_and_stack_per_layer(features_klnd: np.ndarray, sqrt_n: int) -> np.nda
     global _logged_resized_shape
     K, L, N, D = features_klnd.shape
     s = sqrt_n
-    x = torch.from_numpy(features_klnd).float()          # [K,L,N,D], may be non‑contiguous
-    x = x.reshape(K * L, s, s, D).permute(0, 3, 1, 2)    # not .view(...)
-    x_small = F.interpolate(x, size=(8, 8), mode='bilinear', align_corners=False)
-    x_small = x_small.permute(0, 2, 3, 1).contiguous().view(K, L, 64, D)
-    
-    # Add logging here
+    x = torch.from_numpy(features_klnd).float()          # [K,L,N,D]
+    x = x.reshape(K * L, s, s, D).permute(0, 3, 1, 2)
+
+    # Use target_size to determine spatial grid (e.g., 64 -> 8x8, 256 -> 16x16)
+    target_h, _ = _parse_target_size(FLAGS.target_size)
+    target_side = int(np.sqrt(target_h))
+    # print(f"INTERPOLATION_DEBUG: Resizing spatial dimensions from {s}x{s} (N={N}) "
+    #       f"to {target_side}x{target_side} (N={target_h}).")
+
+    x_small = F.interpolate(x, size=(target_side, target_side), mode='bilinear', align_corners=False)
+    x_small = x_small.permute(0, 2, 3, 1).contiguous().view(K, L, target_side * target_side, D)
+
     if not _logged_resized_shape:
-        logging.info(f"VERIFY 2: Feature shape after spatial resize is {x_small.shape} -> (Batch, Layers, 64, Feat_Dim)")
+        logging.info(f"VERIFY 2: Feature shape after spatial resize is {x_small.shape} -> (Batch, Layers, N, Feat_Dim)")
         _logged_resized_shape = True
     return x_small.numpy()
 

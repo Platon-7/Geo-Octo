@@ -1,0 +1,718 @@
+
+==================================================
+EVALUATION CONFIGURATION
+  Model Path:      /scratch-shared/tmp.cwkV8vOvfY/trained_models/my_octo_vggt_model_offline/octo_finetune_vggt/experiment_20250926_160239
+  Checkpoint Step: 50000
+==================================================
+
+Task suite: libero_spatial
+Using default initial states
+
+Task: pick up the black bowl between the plate and the ramekin and place it on the plate
+Starting episode 1...
+Saved rollout MP4 at path /scratch-shared/tmp.cwkV8vOvfY/libero_eval_results/libero_spatial_eval/rollouts/libero_eval--episode=1--success=False--task=pick_up_the_black_bowl_between_the_plate_and_the_r.mp4
+Success: False
+# episodes completed so far: 1
+# successes: 0 (0.0%)
+
+Task: pick up the black bowl between the plate and the ramekin and place it on the plate
+Starting episode 2...
+Saved rollout MP4 at path /scratch-shared/tmp.cwkV8vOvfY/libero_eval_results/libero_spatial_eval/rollouts/libero_eval--episode=2--success=False--task=pick_up_the_black_bowl_between_the_plate_and_the_r.mp4
+Success: False
+# episodes completed so far: 2
+# successes: 0 (0.0%)
+
+Task: pick up the black bowl between the plate and the ramekin and place it on the plate
+Starting episode 3...
+Saved rollout MP4 at path /scratch-shared/tmp.cwkV8vOvfY/libero_eval_results/libero_spatial_eval/rollouts/libero_eval--episode=3--success=False--task=pick_up_the_black_bowl_between_the_plate_and_the_r.mp4
+Success: False
+# episodes completed so far: 3
+# successes: 0 (0.0%)
+
+Task: pick up the black bowl between the plate and the ramekin and place it on the plate
+Starting episode 4...
+Saved rollout MP4 at path /scratch-shared/tmp.cwkV8vOvfY/libero_eval_results/libero_spatial_eval/rollouts/libero_eval--episode=4--success=False--task=pick_up_the_black_bowl_between_the_plate_and_the_r.mp4
+Success: False
+# episodes completed so far: 4
+# successes: 0 (0.0%)
+
+Task: pick up the black bowl between the plate and the ramekin and place it on the plate
+Starting episode 5...
+Saved rollout MP4 at path /scratch-shared/tmp.cwkV8vOvfY/libero_eval_results/libero_spatial_eval/rollouts/libero_eval--episode=5--success=False--task=pick_up_the_black_bowl_between_the_plate_and_the_r.mp4
+Success: False
+# episodes completed so far: 5
+# successes: 0 (0.0%)
+
+Task: pick up the black bowl between the plate and the ramekin and place it on the plate
+Starting episode 6...
+Saved rollout MP4 at path /scratch-shared/tmp.cwkV8vOvfY/libero_eval_results/libero_spatial_eval/rollouts/libero_eval--episode=6--success=False--task=pick_up_the_black_bowl_between_the_plate_and_the_r.mp4
+Success: False
+# episodes completed so far: 6
+# successes: 0 (0.0%)
+
+Task: pick up the black bowl between the plate and the ramekin and place it on the plate
+Starting episode 7...
+Saved rollout MP4 at path /scratch-shared/tmp.cwkV8vOvfY/libero_eval_results/libero_spatial_eval/rollouts/libero_eval--episode=7--success=False--task=pick_up_the_black_bowl_between_the_plate_and_the_r.mp4
+Success: False
+# episodes completed so far: 7
+# successes: 0 (0.0%)
+
+Task: pick up the black bowl between the plate and the ramekin and place it on the plate
+Starting episode 8...
+Saved rollout MP4 at path /scratch-shared/tmp.cwkV8vOvfY/libero_eval_results/libero_spatial_eval/rollouts/libero_eval--episode=8--success=False--task=pick_up_the_black_bowl_between_the_plate_and_the_r.mp4
+Success: False
+# episodes completed so far: 8
+# successes: 0 (0.0%)
+
+Task: pick up the black bowl between the plate and the ramekin and place it on the plate
+Starting episode 9...
+Saved rollout MP4 at path /scratch-shared/tmp.cwkV8vOvfY/libero_eval_results/libero_spatial_eval/rollouts/libero_eval--episode=9--success=False--task=pick_up_the_black_bowl_between_the_plate_and_the_r.mp4
+Success: False
+# episodes completed so far: 9
+# successes: 0 (0.0%)
+
+Task: pick up the black bowl between the plate and the ramekin and place it on the plate
+Starting episode 10...
+Saved rollout MP4 at path /scratch-shared/tmp.cwkV8vOvfY/libero_eval_results/libero_spatial_eval/rollouts/libero_eval--episode=10--success=False--task=pick_up_the_black_bowl_between_the_plate_and_the_r.mp4
+Success: False
+# episodes completed so far: 10
+# successes: 0 (0.0%)
+
+Task: pick up the black bowl between the plate and the ramekin and place it on the plate
+Starting episode 11...
+Saved rollout MP4 at path /scratch-shared/tmp.cwkV8vOvfY/libero_eval_results/libero_spatial_eval/rollouts/libero_eval--episode=11--success=False--task=pick_up_the_black_bowl_between_the_plate_and_the_r.mp4
+Success: False
+# episodes completed so far: 11
+# successes: 0 (0.0%)
+
+Task: pick up the black bowl between the plate and the ramekin and place it on the plate
+Starting episode 12...
+Saved rollout MP4 at path /scratch-shared/tmp.cwkV8vOvfY/libero_eval_results/libero_spatial_eval/rollouts/libero_eval--episode=12--success=False--task=pick_up_the_black_bowl_between_the_plate_and_the_r.mp4
+Success: False
+# episodes completed so far: 12
+# successes: 0 (0.0%)
+
+Task: pick up the black bowl between the plate and the ramekin and place it on the plate
+Starting episode 13...
+Saved rollout MP4 at path /scratch-shared/tmp.cwkV8vOvfY/libero_eval_results/libero_spatial_eval/rollouts/libero_eval--episode=13--success=False--task=pick_up_the_black_bowl_between_the_plate_and_the_r.mp4
+Success: False
+# episodes completed so far: 13
+# successes: 0 (0.0%)
+
+Task: pick up the black bowl between the plate and the ramekin and place it on the plate
+Starting episode 14...
+Saved rollout MP4 at path /scratch-shared/tmp.cwkV8vOvfY/libero_eval_results/libero_spatial_eval/rollouts/libero_eval--episode=14--success=False--task=pick_up_the_black_bowl_between_the_plate_and_the_r.mp4
+Success: False
+# episodes completed so far: 14
+# successes: 0 (0.0%)
+
+Task: pick up the black bowl between the plate and the ramekin and place it on the plate
+Starting episode 15...
+Saved rollout MP4 at path /scratch-shared/tmp.cwkV8vOvfY/libero_eval_results/libero_spatial_eval/rollouts/libero_eval--episode=15--success=False--task=pick_up_the_black_bowl_between_the_plate_and_the_r.mp4
+Success: False
+# episodes completed so far: 15
+# successes: 0 (0.0%)
+
+Task: pick up the black bowl between the plate and the ramekin and place it on the plate
+Starting episode 16...
+Saved rollout MP4 at path /scratch-shared/tmp.cwkV8vOvfY/libero_eval_results/libero_spatial_eval/rollouts/libero_eval--episode=16--success=False--task=pick_up_the_black_bowl_between_the_plate_and_the_r.mp4
+Success: False
+# episodes completed so far: 16
+# successes: 0 (0.0%)
+
+Task: pick up the black bowl between the plate and the ramekin and place it on the plate
+Starting episode 17...
+Saved rollout MP4 at path /scratch-shared/tmp.cwkV8vOvfY/libero_eval_results/libero_spatial_eval/rollouts/libero_eval--episode=17--success=False--task=pick_up_the_black_bowl_between_the_plate_and_the_r.mp4
+Success: False
+# episodes completed so far: 17
+# successes: 0 (0.0%)
+
+Task: pick up the black bowl between the plate and the ramekin and place it on the plate
+Starting episode 18...
+Saved rollout MP4 at path /scratch-shared/tmp.cwkV8vOvfY/libero_eval_results/libero_spatial_eval/rollouts/libero_eval--episode=18--success=False--task=pick_up_the_black_bowl_between_the_plate_and_the_r.mp4
+Success: False
+# episodes completed so far: 18
+# successes: 0 (0.0%)
+
+Task: pick up the black bowl between the plate and the ramekin and place it on the plate
+Starting episode 19...
+Saved rollout MP4 at path /scratch-shared/tmp.cwkV8vOvfY/libero_eval_results/libero_spatial_eval/rollouts/libero_eval--episode=19--success=False--task=pick_up_the_black_bowl_between_the_plate_and_the_r.mp4
+Success: False
+# episodes completed so far: 19
+# successes: 0 (0.0%)
+
+Task: pick up the black bowl between the plate and the ramekin and place it on the plate
+Starting episode 20...
+Saved rollout MP4 at path /scratch-shared/tmp.cwkV8vOvfY/libero_eval_results/libero_spatial_eval/rollouts/libero_eval--episode=20--success=False--task=pick_up_the_black_bowl_between_the_plate_and_the_r.mp4
+Success: False
+# episodes completed so far: 20
+# successes: 0 (0.0%)
+
+Task: pick up the black bowl between the plate and the ramekin and place it on the plate
+Starting episode 21...
+Saved rollout MP4 at path /scratch-shared/tmp.cwkV8vOvfY/libero_eval_results/libero_spatial_eval/rollouts/libero_eval--episode=21--success=False--task=pick_up_the_black_bowl_between_the_plate_and_the_r.mp4
+Success: False
+# episodes completed so far: 21
+# successes: 0 (0.0%)
+
+Task: pick up the black bowl between the plate and the ramekin and place it on the plate
+Starting episode 22...
+Saved rollout MP4 at path /scratch-shared/tmp.cwkV8vOvfY/libero_eval_results/libero_spatial_eval/rollouts/libero_eval--episode=22--success=False--task=pick_up_the_black_bowl_between_the_plate_and_the_r.mp4
+Success: False
+# episodes completed so far: 22
+# successes: 0 (0.0%)
+
+Task: pick up the black bowl between the plate and the ramekin and place it on the plate
+Starting episode 23...
+Saved rollout MP4 at path /scratch-shared/tmp.cwkV8vOvfY/libero_eval_results/libero_spatial_eval/rollouts/libero_eval--episode=23--success=False--task=pick_up_the_black_bowl_between_the_plate_and_the_r.mp4
+Success: False
+# episodes completed so far: 23
+# successes: 0 (0.0%)
+
+Task: pick up the black bowl between the plate and the ramekin and place it on the plate
+Starting episode 24...
+Saved rollout MP4 at path /scratch-shared/tmp.cwkV8vOvfY/libero_eval_results/libero_spatial_eval/rollouts/libero_eval--episode=24--success=False--task=pick_up_the_black_bowl_between_the_plate_and_the_r.mp4
+Success: False
+# episodes completed so far: 24
+# successes: 0 (0.0%)
+
+Task: pick up the black bowl between the plate and the ramekin and place it on the plate
+Starting episode 25...
+Saved rollout MP4 at path /scratch-shared/tmp.cwkV8vOvfY/libero_eval_results/libero_spatial_eval/rollouts/libero_eval--episode=25--success=False--task=pick_up_the_black_bowl_between_the_plate_and_the_r.mp4
+Success: False
+# episodes completed so far: 25
+# successes: 0 (0.0%)
+
+Task: pick up the black bowl between the plate and the ramekin and place it on the plate
+Starting episode 26...
+Saved rollout MP4 at path /scratch-shared/tmp.cwkV8vOvfY/libero_eval_results/libero_spatial_eval/rollouts/libero_eval--episode=26--success=False--task=pick_up_the_black_bowl_between_the_plate_and_the_r.mp4
+Success: False
+# episodes completed so far: 26
+# successes: 0 (0.0%)
+
+Task: pick up the black bowl between the plate and the ramekin and place it on the plate
+Starting episode 27...
+Saved rollout MP4 at path /scratch-shared/tmp.cwkV8vOvfY/libero_eval_results/libero_spatial_eval/rollouts/libero_eval--episode=27--success=False--task=pick_up_the_black_bowl_between_the_plate_and_the_r.mp4
+Success: False
+# episodes completed so far: 27
+# successes: 0 (0.0%)
+
+Task: pick up the black bowl between the plate and the ramekin and place it on the plate
+Starting episode 28...
+Saved rollout MP4 at path /scratch-shared/tmp.cwkV8vOvfY/libero_eval_results/libero_spatial_eval/rollouts/libero_eval--episode=28--success=False--task=pick_up_the_black_bowl_between_the_plate_and_the_r.mp4
+Success: False
+# episodes completed so far: 28
+# successes: 0 (0.0%)
+
+Task: pick up the black bowl between the plate and the ramekin and place it on the plate
+Starting episode 29...
+Saved rollout MP4 at path /scratch-shared/tmp.cwkV8vOvfY/libero_eval_results/libero_spatial_eval/rollouts/libero_eval--episode=29--success=False--task=pick_up_the_black_bowl_between_the_plate_and_the_r.mp4
+Success: False
+# episodes completed so far: 29
+# successes: 0 (0.0%)
+
+Task: pick up the black bowl between the plate and the ramekin and place it on the plate
+Starting episode 30...
+Saved rollout MP4 at path /scratch-shared/tmp.cwkV8vOvfY/libero_eval_results/libero_spatial_eval/rollouts/libero_eval--episode=30--success=False--task=pick_up_the_black_bowl_between_the_plate_and_the_r.mp4
+Success: False
+# episodes completed so far: 30
+# successes: 0 (0.0%)
+
+Task: pick up the black bowl between the plate and the ramekin and place it on the plate
+Starting episode 31...
+Saved rollout MP4 at path /scratch-shared/tmp.cwkV8vOvfY/libero_eval_results/libero_spatial_eval/rollouts/libero_eval--episode=31--success=False--task=pick_up_the_black_bowl_between_the_plate_and_the_r.mp4
+Success: False
+# episodes completed so far: 31
+# successes: 0 (0.0%)
+
+Task: pick up the black bowl between the plate and the ramekin and place it on the plate
+Starting episode 32...
+Saved rollout MP4 at path /scratch-shared/tmp.cwkV8vOvfY/libero_eval_results/libero_spatial_eval/rollouts/libero_eval--episode=32--success=False--task=pick_up_the_black_bowl_between_the_plate_and_the_r.mp4
+Success: False
+# episodes completed so far: 32
+# successes: 0 (0.0%)
+
+Task: pick up the black bowl between the plate and the ramekin and place it on the plate
+Starting episode 33...
+Saved rollout MP4 at path /scratch-shared/tmp.cwkV8vOvfY/libero_eval_results/libero_spatial_eval/rollouts/libero_eval--episode=33--success=False--task=pick_up_the_black_bowl_between_the_plate_and_the_r.mp4
+Success: False
+# episodes completed so far: 33
+# successes: 0 (0.0%)
+
+Task: pick up the black bowl between the plate and the ramekin and place it on the plate
+Starting episode 34...
+Saved rollout MP4 at path /scratch-shared/tmp.cwkV8vOvfY/libero_eval_results/libero_spatial_eval/rollouts/libero_eval--episode=34--success=False--task=pick_up_the_black_bowl_between_the_plate_and_the_r.mp4
+Success: False
+# episodes completed so far: 34
+# successes: 0 (0.0%)
+
+Task: pick up the black bowl between the plate and the ramekin and place it on the plate
+Starting episode 35...
+Saved rollout MP4 at path /scratch-shared/tmp.cwkV8vOvfY/libero_eval_results/libero_spatial_eval/rollouts/libero_eval--episode=35--success=False--task=pick_up_the_black_bowl_between_the_plate_and_the_r.mp4
+Success: False
+# episodes completed so far: 35
+# successes: 0 (0.0%)
+
+Task: pick up the black bowl between the plate and the ramekin and place it on the plate
+Starting episode 36...
+Saved rollout MP4 at path /scratch-shared/tmp.cwkV8vOvfY/libero_eval_results/libero_spatial_eval/rollouts/libero_eval--episode=36--success=False--task=pick_up_the_black_bowl_between_the_plate_and_the_r.mp4
+Success: False
+# episodes completed so far: 36
+# successes: 0 (0.0%)
+
+Task: pick up the black bowl between the plate and the ramekin and place it on the plate
+Starting episode 37...
+Saved rollout MP4 at path /scratch-shared/tmp.cwkV8vOvfY/libero_eval_results/libero_spatial_eval/rollouts/libero_eval--episode=37--success=False--task=pick_up_the_black_bowl_between_the_plate_and_the_r.mp4
+Success: False
+# episodes completed so far: 37
+# successes: 0 (0.0%)
+
+Task: pick up the black bowl between the plate and the ramekin and place it on the plate
+Starting episode 38...
+Saved rollout MP4 at path /scratch-shared/tmp.cwkV8vOvfY/libero_eval_results/libero_spatial_eval/rollouts/libero_eval--episode=38--success=False--task=pick_up_the_black_bowl_between_the_plate_and_the_r.mp4
+Success: False
+# episodes completed so far: 38
+# successes: 0 (0.0%)
+
+Task: pick up the black bowl between the plate and the ramekin and place it on the plate
+Starting episode 39...
+Saved rollout MP4 at path /scratch-shared/tmp.cwkV8vOvfY/libero_eval_results/libero_spatial_eval/rollouts/libero_eval--episode=39--success=False--task=pick_up_the_black_bowl_between_the_plate_and_the_r.mp4
+Success: False
+# episodes completed so far: 39
+# successes: 0 (0.0%)
+
+Task: pick up the black bowl between the plate and the ramekin and place it on the plate
+Starting episode 40...
+Saved rollout MP4 at path /scratch-shared/tmp.cwkV8vOvfY/libero_eval_results/libero_spatial_eval/rollouts/libero_eval--episode=40--success=False--task=pick_up_the_black_bowl_between_the_plate_and_the_r.mp4
+Success: False
+# episodes completed so far: 40
+# successes: 0 (0.0%)
+
+Task: pick up the black bowl between the plate and the ramekin and place it on the plate
+Starting episode 41...
+Saved rollout MP4 at path /scratch-shared/tmp.cwkV8vOvfY/libero_eval_results/libero_spatial_eval/rollouts/libero_eval--episode=41--success=False--task=pick_up_the_black_bowl_between_the_plate_and_the_r.mp4
+Success: False
+# episodes completed so far: 41
+# successes: 0 (0.0%)
+
+Task: pick up the black bowl between the plate and the ramekin and place it on the plate
+Starting episode 42...
+Saved rollout MP4 at path /scratch-shared/tmp.cwkV8vOvfY/libero_eval_results/libero_spatial_eval/rollouts/libero_eval--episode=42--success=False--task=pick_up_the_black_bowl_between_the_plate_and_the_r.mp4
+Success: False
+# episodes completed so far: 42
+# successes: 0 (0.0%)
+
+Task: pick up the black bowl between the plate and the ramekin and place it on the plate
+Starting episode 43...
+Saved rollout MP4 at path /scratch-shared/tmp.cwkV8vOvfY/libero_eval_results/libero_spatial_eval/rollouts/libero_eval--episode=43--success=False--task=pick_up_the_black_bowl_between_the_plate_and_the_r.mp4
+Success: False
+# episodes completed so far: 43
+# successes: 0 (0.0%)
+
+Task: pick up the black bowl between the plate and the ramekin and place it on the plate
+Starting episode 44...
+Saved rollout MP4 at path /scratch-shared/tmp.cwkV8vOvfY/libero_eval_results/libero_spatial_eval/rollouts/libero_eval--episode=44--success=False--task=pick_up_the_black_bowl_between_the_plate_and_the_r.mp4
+Success: False
+# episodes completed so far: 44
+# successes: 0 (0.0%)
+
+Task: pick up the black bowl between the plate and the ramekin and place it on the plate
+Starting episode 45...
+Saved rollout MP4 at path /scratch-shared/tmp.cwkV8vOvfY/libero_eval_results/libero_spatial_eval/rollouts/libero_eval--episode=45--success=False--task=pick_up_the_black_bowl_between_the_plate_and_the_r.mp4
+Success: False
+# episodes completed so far: 45
+# successes: 0 (0.0%)
+
+Task: pick up the black bowl between the plate and the ramekin and place it on the plate
+Starting episode 46...
+Saved rollout MP4 at path /scratch-shared/tmp.cwkV8vOvfY/libero_eval_results/libero_spatial_eval/rollouts/libero_eval--episode=46--success=False--task=pick_up_the_black_bowl_between_the_plate_and_the_r.mp4
+Success: False
+# episodes completed so far: 46
+# successes: 0 (0.0%)
+
+Task: pick up the black bowl between the plate and the ramekin and place it on the plate
+Starting episode 47...
+Saved rollout MP4 at path /scratch-shared/tmp.cwkV8vOvfY/libero_eval_results/libero_spatial_eval/rollouts/libero_eval--episode=47--success=False--task=pick_up_the_black_bowl_between_the_plate_and_the_r.mp4
+Success: False
+# episodes completed so far: 47
+# successes: 0 (0.0%)
+
+Task: pick up the black bowl between the plate and the ramekin and place it on the plate
+Starting episode 48...
+Saved rollout MP4 at path /scratch-shared/tmp.cwkV8vOvfY/libero_eval_results/libero_spatial_eval/rollouts/libero_eval--episode=48--success=False--task=pick_up_the_black_bowl_between_the_plate_and_the_r.mp4
+Success: False
+# episodes completed so far: 48
+# successes: 0 (0.0%)
+
+Task: pick up the black bowl between the plate and the ramekin and place it on the plate
+Starting episode 49...
+Saved rollout MP4 at path /scratch-shared/tmp.cwkV8vOvfY/libero_eval_results/libero_spatial_eval/rollouts/libero_eval--episode=49--success=False--task=pick_up_the_black_bowl_between_the_plate_and_the_r.mp4
+Success: False
+# episodes completed so far: 49
+# successes: 0 (0.0%)
+
+Task: pick up the black bowl between the plate and the ramekin and place it on the plate
+Starting episode 50...
+Saved rollout MP4 at path /scratch-shared/tmp.cwkV8vOvfY/libero_eval_results/libero_spatial_eval/rollouts/libero_eval--episode=50--success=False--task=pick_up_the_black_bowl_between_the_plate_and_the_r.mp4
+Success: False
+# episodes completed so far: 50
+# successes: 0 (0.0%)
+Current task success rate: 0.0
+Current total success rate: 0.0
+Using default initial states
+
+Task: pick up the black bowl next to the ramekin and place it on the plate
+Starting episode 1...
+Saved rollout MP4 at path /scratch-shared/tmp.cwkV8vOvfY/libero_eval_results/libero_spatial_eval/rollouts/libero_eval--episode=51--success=False--task=pick_up_the_black_bowl_next_to_the_ramekin_and_pla.mp4
+Success: False
+# episodes completed so far: 51
+# successes: 0 (0.0%)
+
+Task: pick up the black bowl next to the ramekin and place it on the plate
+Starting episode 2...
+Saved rollout MP4 at path /scratch-shared/tmp.cwkV8vOvfY/libero_eval_results/libero_spatial_eval/rollouts/libero_eval--episode=52--success=False--task=pick_up_the_black_bowl_next_to_the_ramekin_and_pla.mp4
+Success: False
+# episodes completed so far: 52
+# successes: 0 (0.0%)
+
+Task: pick up the black bowl next to the ramekin and place it on the plate
+Starting episode 3...
+Saved rollout MP4 at path /scratch-shared/tmp.cwkV8vOvfY/libero_eval_results/libero_spatial_eval/rollouts/libero_eval--episode=53--success=False--task=pick_up_the_black_bowl_next_to_the_ramekin_and_pla.mp4
+Success: False
+# episodes completed so far: 53
+# successes: 0 (0.0%)
+
+Task: pick up the black bowl next to the ramekin and place it on the plate
+Starting episode 4...
+Saved rollout MP4 at path /scratch-shared/tmp.cwkV8vOvfY/libero_eval_results/libero_spatial_eval/rollouts/libero_eval--episode=54--success=False--task=pick_up_the_black_bowl_next_to_the_ramekin_and_pla.mp4
+Success: False
+# episodes completed so far: 54
+# successes: 0 (0.0%)
+
+Task: pick up the black bowl next to the ramekin and place it on the plate
+Starting episode 5...
+Saved rollout MP4 at path /scratch-shared/tmp.cwkV8vOvfY/libero_eval_results/libero_spatial_eval/rollouts/libero_eval--episode=55--success=False--task=pick_up_the_black_bowl_next_to_the_ramekin_and_pla.mp4
+Success: False
+# episodes completed so far: 55
+# successes: 0 (0.0%)
+
+Task: pick up the black bowl next to the ramekin and place it on the plate
+Starting episode 6...
+Saved rollout MP4 at path /scratch-shared/tmp.cwkV8vOvfY/libero_eval_results/libero_spatial_eval/rollouts/libero_eval--episode=56--success=False--task=pick_up_the_black_bowl_next_to_the_ramekin_and_pla.mp4
+Success: False
+# episodes completed so far: 56
+# successes: 0 (0.0%)
+
+Task: pick up the black bowl next to the ramekin and place it on the plate
+Starting episode 7...
+Saved rollout MP4 at path /scratch-shared/tmp.cwkV8vOvfY/libero_eval_results/libero_spatial_eval/rollouts/libero_eval--episode=57--success=False--task=pick_up_the_black_bowl_next_to_the_ramekin_and_pla.mp4
+Success: False
+# episodes completed so far: 57
+# successes: 0 (0.0%)
+
+Task: pick up the black bowl next to the ramekin and place it on the plate
+Starting episode 8...
+Saved rollout MP4 at path /scratch-shared/tmp.cwkV8vOvfY/libero_eval_results/libero_spatial_eval/rollouts/libero_eval--episode=58--success=False--task=pick_up_the_black_bowl_next_to_the_ramekin_and_pla.mp4
+Success: False
+# episodes completed so far: 58
+# successes: 0 (0.0%)
+
+Task: pick up the black bowl next to the ramekin and place it on the plate
+Starting episode 9...
+Saved rollout MP4 at path /scratch-shared/tmp.cwkV8vOvfY/libero_eval_results/libero_spatial_eval/rollouts/libero_eval--episode=59--success=False--task=pick_up_the_black_bowl_next_to_the_ramekin_and_pla.mp4
+Success: False
+# episodes completed so far: 59
+# successes: 0 (0.0%)
+
+Task: pick up the black bowl next to the ramekin and place it on the plate
+Starting episode 10...
+Saved rollout MP4 at path /scratch-shared/tmp.cwkV8vOvfY/libero_eval_results/libero_spatial_eval/rollouts/libero_eval--episode=60--success=False--task=pick_up_the_black_bowl_next_to_the_ramekin_and_pla.mp4
+Success: False
+# episodes completed so far: 60
+# successes: 0 (0.0%)
+
+Task: pick up the black bowl next to the ramekin and place it on the plate
+Starting episode 11...
+Saved rollout MP4 at path /scratch-shared/tmp.cwkV8vOvfY/libero_eval_results/libero_spatial_eval/rollouts/libero_eval--episode=61--success=False--task=pick_up_the_black_bowl_next_to_the_ramekin_and_pla.mp4
+Success: False
+# episodes completed so far: 61
+# successes: 0 (0.0%)
+
+Task: pick up the black bowl next to the ramekin and place it on the plate
+Starting episode 12...
+Saved rollout MP4 at path /scratch-shared/tmp.cwkV8vOvfY/libero_eval_results/libero_spatial_eval/rollouts/libero_eval--episode=62--success=False--task=pick_up_the_black_bowl_next_to_the_ramekin_and_pla.mp4
+Success: False
+# episodes completed so far: 62
+# successes: 0 (0.0%)
+
+Task: pick up the black bowl next to the ramekin and place it on the plate
+Starting episode 13...
+Saved rollout MP4 at path /scratch-shared/tmp.cwkV8vOvfY/libero_eval_results/libero_spatial_eval/rollouts/libero_eval--episode=63--success=False--task=pick_up_the_black_bowl_next_to_the_ramekin_and_pla.mp4
+Success: False
+# episodes completed so far: 63
+# successes: 0 (0.0%)
+
+Task: pick up the black bowl next to the ramekin and place it on the plate
+Starting episode 14...
+Saved rollout MP4 at path /scratch-shared/tmp.cwkV8vOvfY/libero_eval_results/libero_spatial_eval/rollouts/libero_eval--episode=64--success=False--task=pick_up_the_black_bowl_next_to_the_ramekin_and_pla.mp4
+Success: False
+# episodes completed so far: 64
+# successes: 0 (0.0%)
+
+Task: pick up the black bowl next to the ramekin and place it on the plate
+Starting episode 15...
+Saved rollout MP4 at path /scratch-shared/tmp.cwkV8vOvfY/libero_eval_results/libero_spatial_eval/rollouts/libero_eval--episode=65--success=False--task=pick_up_the_black_bowl_next_to_the_ramekin_and_pla.mp4
+Success: False
+# episodes completed so far: 65
+# successes: 0 (0.0%)
+
+Task: pick up the black bowl next to the ramekin and place it on the plate
+Starting episode 16...
+Saved rollout MP4 at path /scratch-shared/tmp.cwkV8vOvfY/libero_eval_results/libero_spatial_eval/rollouts/libero_eval--episode=66--success=False--task=pick_up_the_black_bowl_next_to_the_ramekin_and_pla.mp4
+Success: False
+# episodes completed so far: 66
+# successes: 0 (0.0%)
+
+Task: pick up the black bowl next to the ramekin and place it on the plate
+Starting episode 17...
+Saved rollout MP4 at path /scratch-shared/tmp.cwkV8vOvfY/libero_eval_results/libero_spatial_eval/rollouts/libero_eval--episode=67--success=False--task=pick_up_the_black_bowl_next_to_the_ramekin_and_pla.mp4
+Success: False
+# episodes completed so far: 67
+# successes: 0 (0.0%)
+
+Task: pick up the black bowl next to the ramekin and place it on the plate
+Starting episode 18...
+Saved rollout MP4 at path /scratch-shared/tmp.cwkV8vOvfY/libero_eval_results/libero_spatial_eval/rollouts/libero_eval--episode=68--success=False--task=pick_up_the_black_bowl_next_to_the_ramekin_and_pla.mp4
+Success: False
+# episodes completed so far: 68
+# successes: 0 (0.0%)
+
+Task: pick up the black bowl next to the ramekin and place it on the plate
+Starting episode 19...
+Saved rollout MP4 at path /scratch-shared/tmp.cwkV8vOvfY/libero_eval_results/libero_spatial_eval/rollouts/libero_eval--episode=69--success=False--task=pick_up_the_black_bowl_next_to_the_ramekin_and_pla.mp4
+Success: False
+# episodes completed so far: 69
+# successes: 0 (0.0%)
+
+Task: pick up the black bowl next to the ramekin and place it on the plate
+Starting episode 20...
+Saved rollout MP4 at path /scratch-shared/tmp.cwkV8vOvfY/libero_eval_results/libero_spatial_eval/rollouts/libero_eval--episode=70--success=False--task=pick_up_the_black_bowl_next_to_the_ramekin_and_pla.mp4
+Success: False
+# episodes completed so far: 70
+# successes: 0 (0.0%)
+
+Task: pick up the black bowl next to the ramekin and place it on the plate
+Starting episode 21...
+Saved rollout MP4 at path /scratch-shared/tmp.cwkV8vOvfY/libero_eval_results/libero_spatial_eval/rollouts/libero_eval--episode=71--success=False--task=pick_up_the_black_bowl_next_to_the_ramekin_and_pla.mp4
+Success: False
+# episodes completed so far: 71
+# successes: 0 (0.0%)
+
+Task: pick up the black bowl next to the ramekin and place it on the plate
+Starting episode 22...
+Saved rollout MP4 at path /scratch-shared/tmp.cwkV8vOvfY/libero_eval_results/libero_spatial_eval/rollouts/libero_eval--episode=72--success=False--task=pick_up_the_black_bowl_next_to_the_ramekin_and_pla.mp4
+Success: False
+# episodes completed so far: 72
+# successes: 0 (0.0%)
+
+Task: pick up the black bowl next to the ramekin and place it on the plate
+Starting episode 23...
+Saved rollout MP4 at path /scratch-shared/tmp.cwkV8vOvfY/libero_eval_results/libero_spatial_eval/rollouts/libero_eval--episode=73--success=False--task=pick_up_the_black_bowl_next_to_the_ramekin_and_pla.mp4
+Success: False
+# episodes completed so far: 73
+# successes: 0 (0.0%)
+
+Task: pick up the black bowl next to the ramekin and place it on the plate
+Starting episode 24...
+Saved rollout MP4 at path /scratch-shared/tmp.cwkV8vOvfY/libero_eval_results/libero_spatial_eval/rollouts/libero_eval--episode=74--success=False--task=pick_up_the_black_bowl_next_to_the_ramekin_and_pla.mp4
+Success: False
+# episodes completed so far: 74
+# successes: 0 (0.0%)
+
+Task: pick up the black bowl next to the ramekin and place it on the plate
+Starting episode 25...
+Saved rollout MP4 at path /scratch-shared/tmp.cwkV8vOvfY/libero_eval_results/libero_spatial_eval/rollouts/libero_eval--episode=75--success=False--task=pick_up_the_black_bowl_next_to_the_ramekin_and_pla.mp4
+Success: False
+# episodes completed so far: 75
+# successes: 0 (0.0%)
+
+Task: pick up the black bowl next to the ramekin and place it on the plate
+Starting episode 26...
+Saved rollout MP4 at path /scratch-shared/tmp.cwkV8vOvfY/libero_eval_results/libero_spatial_eval/rollouts/libero_eval--episode=76--success=False--task=pick_up_the_black_bowl_next_to_the_ramekin_and_pla.mp4
+Success: False
+# episodes completed so far: 76
+# successes: 0 (0.0%)
+
+Task: pick up the black bowl next to the ramekin and place it on the plate
+Starting episode 27...
+Saved rollout MP4 at path /scratch-shared/tmp.cwkV8vOvfY/libero_eval_results/libero_spatial_eval/rollouts/libero_eval--episode=77--success=False--task=pick_up_the_black_bowl_next_to_the_ramekin_and_pla.mp4
+Success: False
+# episodes completed so far: 77
+# successes: 0 (0.0%)
+
+Task: pick up the black bowl next to the ramekin and place it on the plate
+Starting episode 28...
+Saved rollout MP4 at path /scratch-shared/tmp.cwkV8vOvfY/libero_eval_results/libero_spatial_eval/rollouts/libero_eval--episode=78--success=False--task=pick_up_the_black_bowl_next_to_the_ramekin_and_pla.mp4
+Success: False
+# episodes completed so far: 78
+# successes: 0 (0.0%)
+
+Task: pick up the black bowl next to the ramekin and place it on the plate
+Starting episode 29...
+Saved rollout MP4 at path /scratch-shared/tmp.cwkV8vOvfY/libero_eval_results/libero_spatial_eval/rollouts/libero_eval--episode=79--success=False--task=pick_up_the_black_bowl_next_to_the_ramekin_and_pla.mp4
+Success: False
+# episodes completed so far: 79
+# successes: 0 (0.0%)
+
+Task: pick up the black bowl next to the ramekin and place it on the plate
+Starting episode 30...
+Saved rollout MP4 at path /scratch-shared/tmp.cwkV8vOvfY/libero_eval_results/libero_spatial_eval/rollouts/libero_eval--episode=80--success=False--task=pick_up_the_black_bowl_next_to_the_ramekin_and_pla.mp4
+Success: False
+# episodes completed so far: 80
+# successes: 0 (0.0%)
+
+Task: pick up the black bowl next to the ramekin and place it on the plate
+Starting episode 31...
+Saved rollout MP4 at path /scratch-shared/tmp.cwkV8vOvfY/libero_eval_results/libero_spatial_eval/rollouts/libero_eval--episode=81--success=False--task=pick_up_the_black_bowl_next_to_the_ramekin_and_pla.mp4
+Success: False
+# episodes completed so far: 81
+# successes: 0 (0.0%)
+
+Task: pick up the black bowl next to the ramekin and place it on the plate
+Starting episode 32...
+Saved rollout MP4 at path /scratch-shared/tmp.cwkV8vOvfY/libero_eval_results/libero_spatial_eval/rollouts/libero_eval--episode=82--success=False--task=pick_up_the_black_bowl_next_to_the_ramekin_and_pla.mp4
+Success: False
+# episodes completed so far: 82
+# successes: 0 (0.0%)
+
+Task: pick up the black bowl next to the ramekin and place it on the plate
+Starting episode 33...
+Saved rollout MP4 at path /scratch-shared/tmp.cwkV8vOvfY/libero_eval_results/libero_spatial_eval/rollouts/libero_eval--episode=83--success=False--task=pick_up_the_black_bowl_next_to_the_ramekin_and_pla.mp4
+Success: False
+# episodes completed so far: 83
+# successes: 0 (0.0%)
+
+Task: pick up the black bowl next to the ramekin and place it on the plate
+Starting episode 34...
+Saved rollout MP4 at path /scratch-shared/tmp.cwkV8vOvfY/libero_eval_results/libero_spatial_eval/rollouts/libero_eval--episode=84--success=False--task=pick_up_the_black_bowl_next_to_the_ramekin_and_pla.mp4
+Success: False
+# episodes completed so far: 84
+# successes: 0 (0.0%)
+
+Task: pick up the black bowl next to the ramekin and place it on the plate
+Starting episode 35...
+Saved rollout MP4 at path /scratch-shared/tmp.cwkV8vOvfY/libero_eval_results/libero_spatial_eval/rollouts/libero_eval--episode=85--success=False--task=pick_up_the_black_bowl_next_to_the_ramekin_and_pla.mp4
+Success: False
+# episodes completed so far: 85
+# successes: 0 (0.0%)
+
+Task: pick up the black bowl next to the ramekin and place it on the plate
+Starting episode 36...
+Saved rollout MP4 at path /scratch-shared/tmp.cwkV8vOvfY/libero_eval_results/libero_spatial_eval/rollouts/libero_eval--episode=86--success=False--task=pick_up_the_black_bowl_next_to_the_ramekin_and_pla.mp4
+Success: False
+# episodes completed so far: 86
+# successes: 0 (0.0%)
+
+Task: pick up the black bowl next to the ramekin and place it on the plate
+Starting episode 37...
+Saved rollout MP4 at path /scratch-shared/tmp.cwkV8vOvfY/libero_eval_results/libero_spatial_eval/rollouts/libero_eval--episode=87--success=False--task=pick_up_the_black_bowl_next_to_the_ramekin_and_pla.mp4
+Success: False
+# episodes completed so far: 87
+# successes: 0 (0.0%)
+
+Task: pick up the black bowl next to the ramekin and place it on the plate
+Starting episode 38...
+Saved rollout MP4 at path /scratch-shared/tmp.cwkV8vOvfY/libero_eval_results/libero_spatial_eval/rollouts/libero_eval--episode=88--success=False--task=pick_up_the_black_bowl_next_to_the_ramekin_and_pla.mp4
+Success: False
+# episodes completed so far: 88
+# successes: 0 (0.0%)
+
+Task: pick up the black bowl next to the ramekin and place it on the plate
+Starting episode 39...
+Saved rollout MP4 at path /scratch-shared/tmp.cwkV8vOvfY/libero_eval_results/libero_spatial_eval/rollouts/libero_eval--episode=89--success=False--task=pick_up_the_black_bowl_next_to_the_ramekin_and_pla.mp4
+Success: False
+# episodes completed so far: 89
+# successes: 0 (0.0%)
+
+Task: pick up the black bowl next to the ramekin and place it on the plate
+Starting episode 40...
+Saved rollout MP4 at path /scratch-shared/tmp.cwkV8vOvfY/libero_eval_results/libero_spatial_eval/rollouts/libero_eval--episode=90--success=False--task=pick_up_the_black_bowl_next_to_the_ramekin_and_pla.mp4
+Success: False
+# episodes completed so far: 90
+# successes: 0 (0.0%)
+
+Task: pick up the black bowl next to the ramekin and place it on the plate
+Starting episode 41...
+Saved rollout MP4 at path /scratch-shared/tmp.cwkV8vOvfY/libero_eval_results/libero_spatial_eval/rollouts/libero_eval--episode=91--success=False--task=pick_up_the_black_bowl_next_to_the_ramekin_and_pla.mp4
+Success: False
+# episodes completed so far: 91
+# successes: 0 (0.0%)
+
+Task: pick up the black bowl next to the ramekin and place it on the plate
+Starting episode 42...
+Saved rollout MP4 at path /scratch-shared/tmp.cwkV8vOvfY/libero_eval_results/libero_spatial_eval/rollouts/libero_eval--episode=92--success=False--task=pick_up_the_black_bowl_next_to_the_ramekin_and_pla.mp4
+Success: False
+# episodes completed so far: 92
+# successes: 0 (0.0%)
+
+Task: pick up the black bowl next to the ramekin and place it on the plate
+Starting episode 43...
+Saved rollout MP4 at path /scratch-shared/tmp.cwkV8vOvfY/libero_eval_results/libero_spatial_eval/rollouts/libero_eval--episode=93--success=False--task=pick_up_the_black_bowl_next_to_the_ramekin_and_pla.mp4
+Success: False
+# episodes completed so far: 93
+# successes: 0 (0.0%)
+
+Task: pick up the black bowl next to the ramekin and place it on the plate
+Starting episode 44...
+Saved rollout MP4 at path /scratch-shared/tmp.cwkV8vOvfY/libero_eval_results/libero_spatial_eval/rollouts/libero_eval--episode=94--success=False--task=pick_up_the_black_bowl_next_to_the_ramekin_and_pla.mp4
+Success: False
+# episodes completed so far: 94
+# successes: 0 (0.0%)
+
+Task: pick up the black bowl next to the ramekin and place it on the plate
+Starting episode 45...
+Saved rollout MP4 at path /scratch-shared/tmp.cwkV8vOvfY/libero_eval_results/libero_spatial_eval/rollouts/libero_eval--episode=95--success=False--task=pick_up_the_black_bowl_next_to_the_ramekin_and_pla.mp4
+Success: False
+# episodes completed so far: 95
+# successes: 0 (0.0%)
+
+Task: pick up the black bowl next to the ramekin and place it on the plate
+Starting episode 46...
+Saved rollout MP4 at path /scratch-shared/tmp.cwkV8vOvfY/libero_eval_results/libero_spatial_eval/rollouts/libero_eval--episode=96--success=False--task=pick_up_the_black_bowl_next_to_the_ramekin_and_pla.mp4
+Success: False
+# episodes completed so far: 96
+# successes: 0 (0.0%)
+
+Task: pick up the black bowl next to the ramekin and place it on the plate
+Starting episode 47...
+Saved rollout MP4 at path /scratch-shared/tmp.cwkV8vOvfY/libero_eval_results/libero_spatial_eval/rollouts/libero_eval--episode=97--success=False--task=pick_up_the_black_bowl_next_to_the_ramekin_and_pla.mp4
+Success: False
+# episodes completed so far: 97
+# successes: 0 (0.0%)
+
+Task: pick up the black bowl next to the ramekin and place it on the plate
+Starting episode 48...
+Saved rollout MP4 at path /scratch-shared/tmp.cwkV8vOvfY/libero_eval_results/libero_spatial_eval/rollouts/libero_eval--episode=98--success=False--task=pick_up_the_black_bowl_next_to_the_ramekin_and_pla.mp4
+Success: False
+# episodes completed so far: 98
+# successes: 0 (0.0%)
+
+Task: pick up the black bowl next to the ramekin and place it on the plate
+Starting episode 49...
+Saved rollout MP4 at path /scratch-shared/tmp.cwkV8vOvfY/libero_eval_results/libero_spatial_eval/rollouts/libero_eval--episode=99--success=False--task=pick_up_the_black_bowl_next_to_the_ramekin_and_pla.mp4
+Success: False
+# episodes completed so far: 99
+# successes: 0 (0.0%)
+
+Task: pick up the black bowl next to the ramekin and place it on the plate
+Starting episode 50...
+Saved rollout MP4 at path /scratch-shared/tmp.cwkV8vOvfY/libero_eval_results/libero_spatial_eval/rollouts/libero_eval--episode=100--success=False--task=pick_up_the_black_bowl_next_to_the_ramekin_and_pla.mp4
+Success: False
+# episodes completed so far: 100
+# successes: 0 (0.0%)
+Current task success rate: 0.0
+Current total success rate: 0.0
+Using default initial states
+
+Task: pick up the black bowl from table center and place it on the plate
+Starting episode 1...

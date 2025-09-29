@@ -172,18 +172,45 @@ def main(_):
     config = ConfigDict(flax.traverse_util.unflatten_dict(flat_config))
     config.update(FLAGS.config.get("update_config", ConfigDict()))
     config = config.to_dict()
+    
+    # --- DEBUG: check tokenizer spec parity ---
+    primary_spec = config["model"]["observation_tokenizers"]["primary"]
+    print("PRIMARY SPEC:", primary_spec)
+    print("repeat_task_tokens:", config["model"].get("repeat_task_tokens"))
 
     # Inject VisionMixer concat_mode from CLI flag into ModuleSpec kwargs <- ADD THIS ONLY IF YOU WANT TO USE THE VISION ENCODER
+    # try:
+    #     mv = config["model"]["observation_tokenizers"].get("mixed_vision")
+    #     if isinstance(mv, dict):
+    #         mv_kwargs = mv.get("kwargs", {})
+    #         mv_kwargs["concat_mode"] = FLAGS.vggt_concat_mode
+    #         mv["kwargs"] = mv_kwargs
+    #         config["model"]["observation_tokenizers"]["mixed_vision"] = mv
+    #         logging.info("Set VisionMixer.concat_mode to %s via CLI", FLAGS.vggt_concat_mode)
+    # except Exception as _e:
+    #     logging.warning("Could not set VisionMixer.concat_mode: %s", _e)
+        
+        
+    # Wrap the pretrained 'primary' tokenizer with VisionMixer, inheriting its exact spec (e.g., SmallStem16)
     try:
-        mv = config["model"]["observation_tokenizers"].get("mixed_vision")
-        if isinstance(mv, dict):
-            mv_kwargs = mv.get("kwargs", {})
-            mv_kwargs["concat_mode"] = FLAGS.vggt_concat_mode
-            mv["kwargs"] = mv_kwargs
-            config["model"]["observation_tokenizers"]["mixed_vision"] = mv
-            logging.info("Set VisionMixer.concat_mode to %s via CLI", FLAGS.vggt_concat_mode)
+        obs_toks = config["model"].get("observation_tokenizers", {})
+        old_primary = obs_toks.get("primary")
+        if isinstance(old_primary, dict):
+            # Replace 'primary' with VisionMixer that uses the pretrained primary spec as patch path
+            obs_toks["primary"] = ModuleSpec.create(
+                "octo.model.components.tokenizers:VisionMixer",
+                patch_tokenizer_spec=old_primary,
+                vggt_tokenizer_spec={
+                    "module": "octo.model.components.tokenizers:VGGTTokenizer",
+                },
+                concat_mode=FLAGS.vggt_concat_mode,
+            )
+            config["model"]["observation_tokenizers"] = obs_toks
+            # Ensure repeat_task_tokens=True for parity with baseline
+            config["model"]["repeat_task_tokens"] = True
+            logging.info("Wrapped 'primary' with VisionMixer, inheriting pretrained encoder spec.")
     except Exception as _e:
-        logging.warning("Could not set VisionMixer.concat_mode: %s", _e)
+        logging.warning("Could not wrap primary with VisionMixer: %s", _e)
 
 
     #########
@@ -217,6 +244,15 @@ def main(_):
 
         # Toggle behavior based on flag: keep images (vision encoder) or VGGT-only
         obs = batch.get("observation", {})
+
+        import os as _os
+        if _os.environ.get("DISABLE_VGGT_TOKENS", "0") == "1" and "vggt_tokens" in obs:
+            obs.pop("vggt_tokens", None)
+            pad = obs.get("pad_mask_dict")
+            if pad is not None and "vggt_tokens" in pad:
+                pad.pop("vggt_tokens", None)
+
+
         if not FLAGS.use_vision_encoder:
             # VGGT-only: drop image observations and their pad masks
             for k in list(obs.keys()):
@@ -258,6 +294,8 @@ def main(_):
     )
     train_data_iter = map(process_batch, train_data_iter)
     example_batch = next(train_data_iter)
+
+    print("example_batch observation keys:", list(example_batch["observation"].keys()))
 
     # ---- DIAGNOSTIC: Inspect example_batch shapes and detect non-sliceable leaves ----
     def _print_leaf_info(key_path, x):
@@ -313,6 +351,37 @@ def main(_):
     )
     merged_params = merge_params(model.params, pretrained_model.params)
     model = model.replace(params=merged_params)
+
+    def _count_params(tree):
+        return sum(int(jax.numpy.size(x)) for x in jax.tree_leaves(tree))
+
+    def _sub(tree, path):
+        t = tree
+        for k in path.split("."):
+            if not k:
+                continue
+            t = t.get(k, {})
+        return t
+
+    print("PARAM COUNTS:")
+    print("  TOTAL:", _count_params(model.params))
+    print("  octo_transformer:", _count_params(_sub(model.params, "octo_transformer")))
+    print("  obs_primary subtree:", _count_params(_sub(model.params, "octo_transformer.observation_tokenizers_primary")))
+    print("  obs_primary_projection:", _count_params(_sub(model.params, "octo_transformer.obs_primary_projection")))
+    print("  task_tokenizers:", _count_params(_sub(model.params, "octo_transformer.task_tokenizers")))
+    print("  heads.action:", _count_params(_sub(model.params, "heads.action")))
+
+    # One forward pass to list observation token groups and shapes
+    bound = model.module.bind({"params": model.params})
+    outs = bound.octo_transformer(
+        example_batch["observation"],
+        example_batch["task"],
+        example_batch["observation"]["timestep_pad_mask"],
+        train=False,
+        verbose=False,
+    )
+    print("obs groups:", {k: v.tokens.shape for k, v in outs.items() if k.startswith("obs_")})
+
     del pretrained_model
 
     #########
@@ -619,7 +688,7 @@ def main(_):
             save_callback(train_state, i + 1)
             
         # Early stop at 150k steps while keeping cosine schedule at 250k
-        # if (i + 1) >= 150000:
+        # if (i + 1) >= 200000:
         #     logging.info(
         #         "Early stopping at step %d (target 150000). Cosine scheduler remains configured for %d steps.",
         #         i + 1,

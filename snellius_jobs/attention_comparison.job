@@ -3,11 +3,11 @@
 #SBATCH --gres=gpu:1
 #SBATCH --cpus-per-task=4
 #SBATCH --gpus=1
-#SBATCH --job-name=Evaluate_Octo_VGGT_Torch
+#SBATCH --job-name=Attention_Comparison
 #SBATCH --ntasks=1
 #SBATCH --time=15:00:00
 #SBATCH --mem=122000M
-#SBATCH --output=outfiles/evaluate_octo_vggt_torch_%A.out
+#SBATCH --output=outfiles/Attention_Comparison_%A.out
 
 module purge
 module load 2024
@@ -20,6 +20,7 @@ export WANDB_PROJECT="Geo_Octo"
 
 
 source activate octo-libero-eval
+
 
 export CUDA_NVCC_BIN=$(python -c "import os,inspect,nvidia.cuda_nvcc as nvcc; print(os.path.join(os.path.dirname(inspect.getfile(nvcc)),'bin'))")
 export NVRTC_LIB_DIR=$(python -c "import os,inspect,nvidia.cuda_nvrtc as nvrtc; print(os.path.join(os.path.dirname(inspect.getfile(nvrtc)),'lib'))")
@@ -41,18 +42,11 @@ PY
 
 export PYTHONPATH="/gpfs/home4/pkarageorgis/geo_octo/vggt:/gpfs/home4/pkarageorgis/geo_octo/LIBERO:/gpfs/home4/pkarageorgis/geo_octo/octo:$PYTHONPATH"
 
-# srun python evaluate_model.py
-
-srun python -m evaluation.scripts.run_libero_eval_vggt_torch \
-  --model_family octo \
-  --pretrained_checkpoint "/scratch-shared/tmp.cwkV8vOvfY/trained_models/my_octo_vggt_model_offline/octo_finetune_vggt/experiment_20250926_155807" \
-  --checkpoint_step 50000 \
-  --task_suite_name libero_spatial \
-  --num_trials_per_task 50 \
-  --num_open_loop_steps 4 \
-  --use_vggt_tokens True \
-  --vggt_ae_path "/home/pkarageorgis/AE_Compressor/vggt_autoencoder_24L_256x512.pt" \
+python -m evaluation.scripts.attention_comparison \
+  --model_path1 /scratch-shared/tmp.cwkV8vOvfY/trained_models/my_octo_vggt_model_offline/octo_finetune_baseline/experiment_20250911_143104 \
+  --model_path2 /scratch-shared/tmp.cwkV8vOvfY/trained_models/my_octo_vggt_model_offline/octo_finetune_vggt/experiment_20250926_155807 \
+  --vggt_ae_path /home/pkarageorgis/AE_Compressor/vggt_autoencoder_24L_256x512.pt \
   --vggt_input_res 518 \
-  --vggt_agg_layers 24 \
-  --vggt_only_eval False \
-  --vggt_layer_indices=None
+  --use_cuda \
+  --task_suite libero_spatial \
+  --output ./experiments/logs/compare_attention.png

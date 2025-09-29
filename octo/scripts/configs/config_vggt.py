@@ -10,8 +10,8 @@ def get_config(config_string="full,multimodal"):
     assert task in ["image_conditioned", "language_conditioned", "multimodal"]
     assert mode in ["full", "head_only", "head_mlp_only"]
 
-    UNIFIED_STATS_PATH = "/home/pkarageorgis/geo_octo/libero_datasets/unified_stats/unified_dataset_statistics_libero_spatial_vggt_onnx_24.json"
-     
+    UNIFIED_STATS_PATH = "/home/pkarageorgis/geo_octo/libero_datasets/unified_stats/unified_dataset_statistics_libero_spatial_vggt_compressed_24_torch_ae.json"
+
     # Fill this in for your own dataset!
 
     # There should be two image keys
@@ -19,8 +19,8 @@ def get_config(config_string="full,multimodal"):
     # and second image key should be the wrist view (None if not used)
 
     FINETUNING_KWARGS = {
-        "name": "libero_spatial_vggt_compressed_onnx",
-        "data_dir": "/scratch-shared/tmp.cwkV8vOvfY/libero_vggt_onnx_compressed_24",
+        "name": "libero_spatial_vggt_compressed_torch",
+        "data_dir": "/scratch-shared/tmp.cwkV8vOvfY/libero_vggt_onnx_compressed_torch_ae",
         "dataset_statistics": UNIFIED_STATS_PATH,
         "image_obs_keys": {"primary": "image_primary"},
         "proprio_obs_key": "proprio",
@@ -50,7 +50,7 @@ def get_config(config_string="full,multimodal"):
     else:
         raise ValueError("Invalid mode")
 
-    max_steps = FieldReference(250000)
+    max_steps = FieldReference(200000)
     window_size = FieldReference(default=1)
 
     config = dict(
@@ -166,41 +166,41 @@ def get_config(config_string="full,multimodal"):
     config["frame_transform_kwargs"] = frame_transform_kwargs
     
     
-    config['update_config'] = {
-    "model": {
-        "observation_tokenizers": {
-            "mixed_vision": ModuleSpec.create(
-                "octo.model.components.tokenizers:VisionMixer",
-                patch_tokenizer_spec={
-                    "module": "octo.model.components.tokenizers:ImageTokenizer",
-                    "kwargs": {
-                        "encoder": ModuleSpec.create(
-                            "octo.model.components.vit_encoders:PatchEncoder",
-                            patch_size=32,
-                            num_features=512,
-                        ),
-                        "obs_stack_keys": ("image_primary",),
-                    },
-                },
-                vggt_tokenizer_spec={
-                    "module": "octo.model.components.tokenizers:VGGTTokenizer",
-                },
-            ),
-        },
-        "repeat_task_tokens": False,
-    }
-}
+#     config['update_config'] = {
+#     "model": {
+#         "observation_tokenizers": {
+#             "mixed_vision": ModuleSpec.create(
+#                 "octo.model.components.tokenizers:VisionMixer",
+#                 patch_tokenizer_spec={
+#                     "module": "octo.model.components.tokenizers:ImageTokenizer",
+#                     "kwargs": {
+#                         "encoder": ModuleSpec.create(
+#                             "octo.model.components.vit_encoders:PatchEncoder",
+#                             patch_size=32,
+#                             num_features=512,
+#                         ),
+#                         "obs_stack_keys": ("image_primary",),
+#                     },
+#                 },
+#                 vggt_tokenizer_spec={
+#                     "module": "octo.model.components.tokenizers:VGGTTokenizer",
+#                 },
+#             ),
+#         },
+#         "repeat_task_tokens": True,
+#     }
+# }
     
     
     config['config_delete_keys'] = {
-        "model": {"observation_tokenizers": {"image_wrist": True}}
+        "model": {"observation_tokenizers": {"wrist": True}}
     }
     
-    config['config_delete_keys'] = {
-        "model": {
-            "observation_tokenizers": True  # remove the entire dict from the base config
-        }
-    }
+    # config['config_delete_keys'] = {
+    #     "model": {
+    #         "observation_tokenizers": True  # remove the entire dict from the base config
+    #     }
+    # }
     
 
 #     # VGGT ONLY VERSION

@@ -466,7 +466,9 @@ def standardize_libero_vggt(traj: dict) -> dict:
 
     # 3. Conditionally copy the VGGT tokens if they exist
     if 'vggt_tokens' in traj['observation']:
-        new_observation['vggt_tokens'] = traj['observation']['vggt_tokens']
+        #new_observation['vggt_tokens'] = traj['observation']['vggt_tokens']
+        if os.environ.get("DISABLE_VGGT_TOKENS", "0") != "1":
+            new_observation['vggt_tokens'] = traj['observation']['vggt_tokens']
     
     # 4. Replace the old observation dict with our new, clean one
     traj['observation'] = new_observation
@@ -480,10 +482,10 @@ def standardize_libero_vggt(traj: dict) -> dict:
             vggt_shape = traj['observation']['vggt_tokens'].shape
             print(f"  -> SUCCESS: 'vggt_tokens' are present with shape: {vggt_shape}")
             try:
-                if len(vggt_shape) >= 2 and tuple(vggt_shape[-2:]) == (64, 512):
-                    print("     OK: vggt_tokens last two dims are (64, 512) as expected.")
+                if len(vggt_shape) >= 2 and tuple(vggt_shape[-2:]) == (256, 512):
+                    print("     OK: vggt_tokens last two dims are (256, 512) as expected.")
                 else:
-                    print("     WARNING: expected last two dims (64, 512) got", vggt_shape[-2:])
+                    print("     WARNING: expected last two dims (256, 512) got", vggt_shape[-2:])
             except Exception:
                 pass
         else:
