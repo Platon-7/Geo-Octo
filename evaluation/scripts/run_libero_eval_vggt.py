@@ -369,8 +369,11 @@ def process_action(action, model_family, action_mean=None, action_std=None):
         action = invert_gripper_action(action)
         return action
     elif model_family == "octo":
-        # Octo actions are already un-normalized internally via model.sample_actions
-        return np.asarray(action, dtype=np.float32)
+        # Octo actions are already un-normalized internally; map gripper from [0,1] -> [-1,1] and invert.
+        a = np.asarray(action, dtype=np.float32)
+        a = normalize_gripper_action(a, binarize=True)
+        a = invert_gripper_action(a)
+        return a
     else:
         return np.clip(np.asarray(action, dtype=np.float32), -1.0, 1.0)
 
