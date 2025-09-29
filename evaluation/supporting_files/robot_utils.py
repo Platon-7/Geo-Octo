@@ -297,8 +297,13 @@ def get_action(
         # Construct task from text without touching its representation
         task = model.create_tasks(texts=[task_label])
 
-        # Sample action
-        action = model.sample_actions(observation, task, rng=jax.random.PRNGKey(0))
+        # Sample action with internal un-normalization (uses checkpoint stats + mask)
+        action = model.sample_actions(
+            observation,
+            task,
+            unnormalization_statistics=model.dataset_statistics["action"],
+            rng=jax.random.PRNGKey(0),
+        )
 
         # Convert to numpy and normalize output to a list of 7D steps
         arr = np.array(action)

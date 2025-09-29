@@ -312,13 +312,10 @@ def process_action(action, model_family, action_mean=None, action_std=None):
     if model_family == "openvla":
         action = normalize_gripper_action(action, binarize=True)
         action = invert_gripper_action(action)
+        return action
     elif model_family == "octo":
-        if action_mean is None or action_std is None:
-            raise ValueError("Action statistics (mean, std) must be provided for Octo model evaluation!")
-        action_mean = action_mean[:action.shape[-1]]
-        action_std = action_std[:action.shape[-1]]
-        unnormalized_action = (action * action_std) + action_mean
-        return unnormalized_action
+        # Octo actions are already un-normalized internally via model.sample_actions
+        return np.asarray(action, dtype=np.float32)
     else:
         return np.clip(np.asarray(action, dtype=np.float32), -1.0, 1.0)
 
