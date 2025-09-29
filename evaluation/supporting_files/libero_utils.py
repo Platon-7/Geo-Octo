@@ -47,11 +47,19 @@ def get_libero_wrist_image(obs):
 
 
 def save_rollout_video(rollout_images, idx, success, task_description, log_file=None):
-    """Saves an MP4 replay of an episode."""
-    rollout_dir = f"./rollouts/{DATE}"
+    """Saves an MP4 replay of an episode.
+
+    Destination directory:
+      - If environment variable `LIBERO_ROLLOUT_DIR` is set, videos are saved under
+        `$LIBERO_ROLLOUT_DIR/<DATE>/`.
+      - Otherwise, videos are saved under `./rollouts/<DATE>/`.
+    """
+    base_dir = os.environ.get("LIBERO_ROLLOUT_DIR", "./rollouts")
+    rollout_dir = os.path.join(base_dir, DATE)
     os.makedirs(rollout_dir, exist_ok=True)
     processed_task_description = task_description.lower().replace(" ", "_").replace("\n", "_").replace(".", "_")[:50]
-    mp4_path = f"/scratch-shared/tmp.cwkV8vOvfY/libero_eval_results/libero_spatial_eval/rollouts/libero_eval--episode={idx}--success={success}--task={processed_task_description}.mp4"
+    filename = f"libero_eval--episode={idx}--success={success}--task={processed_task_description}.mp4"
+    mp4_path = os.path.join(rollout_dir, filename)
     video_writer = imageio.get_writer(mp4_path, fps=30)
     for img in rollout_images:
         video_writer.append_data(img)
