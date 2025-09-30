@@ -12,6 +12,9 @@ import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
 
 # Reuse the official VGGT implementation shipped in this repo
 from vggt.models.vggt import VGGT
@@ -42,6 +45,9 @@ flags.DEFINE_float("ae_lr", 1e-3, "Autoencoder learning rate.")
 flags.DEFINE_integer("ae_hidden", 2048, "Autoencoder hidden dimension for MLP bottleneck.")
 flags.DEFINE_bool("overwrite", False, "If True, force-retrains the autoencoder and overwrites any existing output dataset.")
 flags.DEFINE_bool("use_weighted_layer_fusion", True, "If True, learn softmax layer weights; if False, use uniform mean across layers.")
+flags.DEFINE_bool("pointmap_viz_enable", True, "If True, generate a few VGGT pointmap visualizations before writing the dataset.")
+flags.DEFINE_integer("pointmap_viz_count", 8, "Number of images to visualize with VGGT pointmap head before writing dataset.")
+flags.DEFINE_string("pointmap_viz_dir", None, "Directory to save pointmap visualizations (defaults under output_data_dir/pointmap_viz).")
 
 
 # -------------------------
@@ -257,6 +263,82 @@ def resize_and_stack_per_layer(features_klnd: np.ndarray, sqrt_n: int) -> np.nda
         logging.info(f"VERIFY 2: Feature shape after spatial resize is {x_small.shape} -> (Batch, Layers, N, Feat_Dim)")
         _logged_resized_shape = True
     return x_small.numpy()
+
+
+def _iter_images_from_builders(builders: List[tfds.core.DatasetBuilder]):
+    """Yield raw RGB images [H,W,3] from the provided builders (train split only)."""
+    for builder in builders:
+        try:
+            ds = builder.as_dataset(split='train')
+        except Exception:
+            continue
+        for episode in tfds.as_numpy(ds):
+            steps = list(episode.get('steps', []))
+            if not steps:
+                continue
+            for step in steps:
+                obs = step.get('observation', {})
+                if 'image' in obs:
+                    img = obs['image']
+                elif 'image_primary' in obs:
+                    img = obs['image_primary']
+                else:
+                    continue
+                if img is None:
+                    continue
+                yield np.asarray(img)
+
+
+@torch.no_grad()
+def visualize_pointmaps(builders: List[tfds.core.DatasetBuilder], extractor: TorchVGGTExtractor, max_images: int, out_dir: str, input_res: int):
+    os.makedirs(out_dir, exist_ok=True)
+    device = extractor.device
+    saved = 0
+    for img in _iter_images_from_builders(builders):
+        try:
+            chw = preprocess_images_in_memory(np.asarray([img]), input_res)  # [1,3,H,W]
+            x = torch.from_numpy(chw).to(device)
+            x = x.unsqueeze(1)  # [1,1,3,H,W]
+            preds = extractor.model(x)
+
+            # Prefer point head confidence; fallback to depth or its conf
+            conf = None
+            if isinstance(preds, dict) and 'world_points_conf' in preds:
+                conf = preds['world_points_conf'][0, 0].detach().cpu().numpy()
+            elif 'depth' in preds:
+                depth = preds['depth'][0, 0, ..., 0].detach().cpu().numpy()
+                # normalize depth to [0,1]
+                mn, mx = float(np.nanmin(depth)), float(np.nanmax(depth))
+                conf = (depth - mn) / max(1e-6, (mx - mn))
+            elif 'depth_conf' in preds:
+                conf = preds['depth_conf'][0, 0].detach().cpu().numpy()
+            else:
+                # As last resort, visualize norm of world_points if available
+                if 'world_points' in preds:
+                    pts = preds['world_points'][0, 0].detach().cpu().numpy()  # [H,W,3]
+                    conf = np.linalg.norm(pts, axis=-1)
+                    mn, mx = float(np.nanmin(conf)), float(np.nanmax(conf))
+                    conf = (conf - mn) / max(1e-6, (mx - mn))
+                else:
+                    continue
+
+            fig, axs = plt.subplots(1, 2, figsize=(10, 5))
+            axs[0].imshow(img)
+            axs[0].set_title('Original')
+            axs[0].axis('off')
+            im = axs[1].imshow(conf, cmap='viridis')
+            axs[1].set_title('VGGT pointmap/conf')
+            axs[1].axis('off')
+            fig.colorbar(im, ax=axs[1], fraction=0.046, pad=0.04)
+            out_path = os.path.join(out_dir, f'pointmap_{saved:03d}.png')
+            fig.savefig(out_path, bbox_inches='tight')
+            plt.close(fig)
+            saved += 1
+            if saved >= max_images:
+                break
+        except Exception as _e:
+            continue
+    logging.info("Saved %d pointmap visualizations to %s", saved, out_dir)
 
 
 # -------------------------
@@ -610,6 +692,14 @@ def main(_):
     else:
         layer_indices = None
     extractor = TorchVGGTExtractor(device, FLAGS.vggt_input_res, FLAGS.vggt_agg_layers, layer_indices)
+
+    # Optional: pre-build visual sanity via pointmap head
+    if FLAGS.pointmap_viz_enable:
+        viz_dir = FLAGS.pointmap_viz_dir or os.path.join(output_root, "pointmap_viz")
+        try:
+            visualize_pointmaps(original_builders, extractor, max_images=int(FLAGS.pointmap_viz_count), out_dir=viz_dir, input_res=FLAGS.vggt_input_res)
+        except Exception as e:
+            logging.warning("Pointmap visualization failed: %s", e)
 
     # Prepare / train AE compressor
     target_size = _parse_target_size(FLAGS.target_size)
