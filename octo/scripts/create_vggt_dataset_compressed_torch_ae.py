@@ -41,6 +41,7 @@ flags.DEFINE_integer("ae_epochs", 3, "Autoencoder training epochs (lightweight).
 flags.DEFINE_float("ae_lr", 1e-3, "Autoencoder learning rate.")
 flags.DEFINE_integer("ae_hidden", 2048, "Autoencoder hidden dimension for MLP bottleneck.")
 flags.DEFINE_bool("overwrite", False, "If True, force-retrains the autoencoder and overwrites any existing output dataset.")
+flags.DEFINE_bool("use_weighted_layer_fusion", True, "If True, learn softmax layer weights; if False, use uniform mean across layers.")
 
 
 # -------------------------
@@ -117,8 +118,9 @@ class AECompressor(nn.Module):
     - encoder/decoder: per-token autoencoder operating on D-d fused vectors
     """
 
-    def __init__(self, num_layers: int, input_dim: int, bottleneck_dim: int = 512, hidden_dim: int = 2048):
+    def __init__(self, num_layers: int, input_dim: int, bottleneck_dim: int = 512, hidden_dim: int = 2048, use_weighted_layer_fusion: bool = True):
         super().__init__()
+        self.use_weighted_layer_fusion = bool(use_weighted_layer_fusion)
         self.fuser = WeightedLayerFuser(num_layers)
         self.encoder = nn.Sequential(
             nn.LayerNorm(input_dim),
@@ -143,8 +145,11 @@ class AECompressor(nn.Module):
             recon: [B, D]
             fused_mean: [B, D] (uniform mean over layers, used as stable target)
         """
-        fused_weighted = self.fuser(tokens_ld)  # [B,D]
-        fused_mean = tokens_ld.mean(dim=-2)     # [B,D]
+        if self.use_weighted_layer_fusion:
+            fused_weighted = self.fuser(tokens_ld)
+        else:
+            fused_weighted = tokens_ld.mean(dim=-2)
+        fused_mean = tokens_ld.mean(dim=-2)
         
         # Add logging here, only during training and only once
         if self.training and not hasattr(self, '_logged_encoder_input_shape'):
@@ -161,7 +166,10 @@ class AECompressor(nn.Module):
         self.eval()
         device = self.fuser.weights.device
         tokens_ld = tokens_ld.to(device)
-        fused_weighted = self.fuser(tokens_ld)
+        if self.use_weighted_layer_fusion:
+            fused_weighted = self.fuser(tokens_ld)
+        else:
+            fused_weighted = tokens_ld.mean(dim=-2)
         z = self.encoder(fused_weighted)
         z = self.output_norm(z)
         return z
@@ -517,7 +525,13 @@ def _fit_autoencoder(builders: List[tfds.core.DatasetBuilder], extractor: TorchV
     L = klnd.shape[1]
     D = klnd.shape[3]
 
-    model = AECompressor(num_layers=L, input_dim=D, bottleneck_dim=target_w, hidden_dim=FLAGS.ae_hidden).to(device)
+    model = AECompressor(
+        num_layers=L,
+        input_dim=D,
+        bottleneck_dim=target_w,
+        hidden_dim=FLAGS.ae_hidden,
+        use_weighted_layer_fusion=FLAGS.use_weighted_layer_fusion,
+    ).to(device)
     opt = torch.optim.Adam(model.parameters(), lr=FLAGS.ae_lr)
     loss_fn = nn.MSELoss()
 
@@ -628,7 +642,13 @@ def main(_):
         chw = preprocess_images_in_memory(np.asarray([first_image]), FLAGS.vggt_input_res)
         klnd, _ = extractor.extract_layers(chw)
         L = klnd.shape[1]; D = klnd.shape[3]
-        compressor = AECompressor(num_layers=L, input_dim=D, bottleneck_dim=target_size[1], hidden_dim=FLAGS.ae_hidden)
+        compressor = AECompressor(
+            num_layers=L,
+            input_dim=D,
+            bottleneck_dim=target_size[1],
+            hidden_dim=FLAGS.ae_hidden,
+            use_weighted_layer_fusion=FLAGS.use_weighted_layer_fusion,
+        )
         compressor.load(ae_path, map_location='cpu')
         compressor = compressor.to(device).eval()
         logging.info("Loaded AE compressor from %s", ae_path)
