@@ -48,6 +48,9 @@ flags.DEFINE_bool("use_weighted_layer_fusion", True, "If True, learn softmax lay
 flags.DEFINE_bool("pointmap_viz_enable", True, "If True, generate a few VGGT pointmap visualizations before writing the dataset.")
 flags.DEFINE_integer("pointmap_viz_count", 8, "Number of images to visualize with VGGT pointmap head before writing dataset.")
 flags.DEFINE_string("pointmap_viz_dir", None, "Directory to save pointmap visualizations (defaults under output_data_dir/pointmap_viz).")
+flags.DEFINE_bool("ae_verification_enable", True, "If True, run a visual AE verification before creating the dataset.")
+flags.DEFINE_integer("ae_verification_count", 4, "Number of images to use for the AE verification.")
+flags.DEFINE_string("ae_verification_dir", None, "Directory to save AE verification plots (defaults under output_data_dir/ae_verification).")
 
 
 # -------------------------
@@ -339,6 +342,81 @@ def visualize_pointmaps(builders: List[tfds.core.DatasetBuilder], extractor: Tor
         except Exception as _e:
             continue
     logging.info("Saved %d pointmap visualizations to %s", saved, out_dir)
+
+
+@torch.no_grad()
+def verify_autoencoder_reconstruction(
+    builders: List[tfds.core.DatasetBuilder],
+    extractor: TorchVGGTExtractor,
+    compressor: AECompressor,
+    num_samples: int,
+    output_dir: str,
+    device: torch.device,
+):
+    """
+    Visual and numerical check of the AE reconstruction vs. the intended target (uniform mean across layers).
+    """
+    from itertools import islice
+    from sklearn.metrics.pairwise import cosine_similarity
+    import torch.nn.functional as F
+
+    logging.info("--- Starting Autoencoder Verification Step ---")
+    os.makedirs(output_dir, exist_ok=True)
+
+    image_iterator = _iter_images_from_builders(builders)
+    metrics_path = os.path.join(output_dir, "metrics.txt")
+    with open(metrics_path, "w") as f:
+        f.write("idx\tMSE\tmean_cos\n")
+
+    for i, original_image_np in enumerate(islice(image_iterator, num_samples)):
+        try:
+            # 1) Extract tokens and build ground-truth fused (uniform mean over layers)
+            chw_image = preprocess_images_in_memory(np.asarray([original_image_np]), FLAGS.vggt_input_res)
+            klnd, sqrt_n = extractor.extract_layers(chw_image)  # [1,L,N,D]
+            k_l_t_d = resize_and_stack_per_layer(klnd, sqrt_n)  # [1,L,T,D]
+            K, L, T, D = k_l_t_d.shape
+            gt_fused = torch.from_numpy(k_l_t_d).float().to(device).mean(dim=1)  # [1,T,D]
+
+            # 2) Compression and reconstruction
+            tokens_to_compress = torch.from_numpy(k_l_t_d).float().view(K * T, L, D).to(device)
+            z = compressor.compress_tokens(tokens_to_compress)  # [T,512]
+            recon = compressor.decoder(z).view(K, T, D)  # [1,T,D]
+
+            # 3) Metrics: MSE and cosine
+            mse_loss = float(F.mse_loss(recon, gt_fused).detach().cpu().item())
+            gt_np = gt_fused.squeeze(0).detach().cpu().numpy()
+            recon_np = recon.squeeze(0).detach().cpu().numpy()
+            # mean cosine across tokens
+            eps = 1e-8
+            a = gt_np / (np.linalg.norm(gt_np, axis=1, keepdims=True) + eps)
+            b = recon_np / (np.linalg.norm(recon_np, axis=1, keepdims=True) + eps)
+            mean_cos = float((a * b).sum(axis=1).mean())
+
+            with open(metrics_path, "a") as f:
+                f.write(f"{i}\t{mse_loss:.6f}\t{mean_cos:.6f}\n")
+
+            # 4) Visualization: original + similarity maps
+            gt_sim = cosine_similarity(gt_np)
+            recon_sim = cosine_similarity(recon_np)
+
+            fig, axs = plt.subplots(1, 3, figsize=(18, 6))
+            axs[0].imshow(original_image_np)
+            axs[0].set_title("Original Image")
+            axs[0].axis('off')
+            im1 = axs[1].imshow(gt_sim)
+            axs[1].set_title("GT Similarity (mean over layers)")
+            fig.colorbar(im1, ax=axs[1], fraction=0.046, pad=0.04)
+            im2 = axs[2].imshow(recon_sim)
+            axs[2].set_title(f"Recon Similarity (MSE: {mse_loss:.4f}, cos: {mean_cos:.5f})")
+            fig.colorbar(im2, ax=axs[2], fraction=0.046, pad=0.04)
+            out_path = os.path.join(output_dir, f"ae_verification_{i:02d}.png")
+            fig.savefig(out_path, bbox_inches='tight')
+            plt.close(fig)
+            logging.info("Saved AE verification plot to %s", out_path)
+        except Exception as e:
+            logging.error("Failed to verify AE on sample %d: %s", i, e, exc_info=True)
+
+    logging.info("--- Autoencoder Verification Finished ---")
 
 
 # -------------------------
@@ -742,6 +820,21 @@ def main(_):
         compressor.load(ae_path, map_location='cpu')
         compressor = compressor.to(device).eval()
         logging.info("Loaded AE compressor from %s", ae_path)
+
+    # AE verification (optional) before writing any datasets
+    if FLAGS.ae_verification_enable:
+        verification_dir = FLAGS.ae_verification_dir or os.path.join(output_root, "ae_verification")
+        try:
+            verify_autoencoder_reconstruction(
+                builders=original_builders,
+                extractor=extractor,
+                compressor=compressor,
+                num_samples=int(FLAGS.ae_verification_count),
+                output_dir=verification_dir,
+                device=device,
+            )
+        except Exception as e:
+            logging.warning("AE verification failed: %s", e)
 
     # Build each compressed dataset
     for builder in original_builders:
