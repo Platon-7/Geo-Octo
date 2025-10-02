@@ -15,6 +15,9 @@ import wandb
 import sys
 import jaxlib
 from jaxlib import version as jv
+from flax.core import unfreeze, freeze
+from flax.traverse_util import flatten_dict
+import jax.numpy as jnp
 
 from octo.data.dataset import make_single_dataset
 from octo.model.octo_model import OctoModel
@@ -295,6 +298,11 @@ def main(_):
     train_data_iter = map(process_batch, train_data_iter)
     example_batch = next(train_data_iter)
 
+    obs = example_batch.get("observation", {})
+    img = obs.get("image_primary")
+    if img is not None:
+        print("[finetune] image_primary shape:", getattr(img, "shape", None), "dtype:", getattr(img, "dtype", None))
+
     print("example_batch observation keys:", list(example_batch["observation"].keys()))
 
     # ---- DIAGNOSTIC: Inspect example_batch shapes and detect non-sliceable leaves ----
@@ -349,8 +357,116 @@ def main(_):
         rng=init_rng,
         dataset_statistics=dataset.dataset_statistics,
     )
-    merged_params = merge_params(model.params, pretrained_model.params)
-    model = model.replace(params=merged_params)
+    #merged_params = merge_params(model.params, pretrained_model.params)
+    #model = model.replace(params=merged_params)
+
+
+    print("\n" + "="*80)
+    print("PERFORMING MANUAL WEIGHT INJECTION FOR VISION TOKENIZER (SHAPE-SAFE)")
+
+    params_new = unfreeze(model.params)
+    params_pre = unfreeze(pretrained_model.params)
+
+    def get_(d, path):
+        for k in path:
+            if k not in d: return None
+            d = d[k]
+        return d
+
+    def set_(d, path, value):
+        for k in path[:-1]:
+            d = d.setdefault(k, {})
+        d[path[-1]] = value
+
+    flat_pre = flatten_dict(params_pre)
+    flat_new_before = flatten_dict(params_new)
+
+    # 1) Shape-safe copy: pretrained SmallStem16_0 -> new patch_tokenizer.SmallStem16_0
+    src_prefix = ("octo_transformer", "observation_tokenizers_primary", "SmallStem16_0")
+    dst_prefix = ("octo_transformer", "observation_tokenizers_primary", "patch_tokenizer", "SmallStem16_0")
+
+    num_copied = 0
+    for k, v in flat_pre.items():
+        if len(k) >= len(src_prefix) and k[:len(src_prefix)] == src_prefix:
+            tail = k[len(src_prefix):]
+            dst_key = dst_prefix + tail
+            if dst_key in flat_new_before and flat_new_before[dst_key].shape == v.shape:
+                set_(params_new, dst_key, v)
+                num_copied += 1
+    print(f"---> Copied {num_copied} SmallStem16 leaves into patch_tokenizer")
+
+    # 2) Remap top-level obs projection and positional embedding (old -> new)
+    remaps = [
+        (("octo_transformer", "obs_image_primary_pos_embedding"),
+        ("octo_transformer", "obs_primary_pos_embedding")),
+        (("octo_transformer", "obs_image_primary_projection", "kernel"),
+        ("octo_transformer", "obs_primary_projection", "kernel")),
+        (("octo_transformer", "obs_image_primary_projection", "bias"),
+        ("octo_transformer", "obs_primary_projection", "bias")),
+    ]
+    for src, dst in remaps:
+        src_val = get_(params_pre, src)
+        dst_val = get_(params_new, dst)
+        if src_val is not None and dst_val is not None and src_val.shape == dst_val.shape:
+            set_(params_new, dst, src_val)
+            print(f"---> Remapped {'.'.join(src)} -> {'.'.join(dst)}")
+
+    # 3) Merge the rest normally (transformer, heads, etc.)
+    final_merged_params = merge_params(freeze(params_new), pretrained_model.params)
+    model = model.replace(params=final_merged_params)
+    print("Manual weight injection complete.")
+    print("="*80 + "\n")
+
+    # =========================
+    # Verification (recompute flats from UPDATED model)
+    # =========================
+    flat_final = flatten_dict(unfreeze(model.params))
+
+    def obs_tok_roots(flat):
+        return sorted({k[1] for k in flat if len(k)>=2 and k[0]=='octo_transformer' and k[1].startswith('observation_tokenizers_')})
+
+    print("NEW obs tokenizer roots:", obs_tok_roots(flat_final))
+    print("PRE obs tokenizer roots:", obs_tok_roots(flat_pre))
+
+    ROOT = "observation_tokenizers_primary"
+    new_obs = {k:v for k,v in flat_final.items() if len(k)>=2 and k[0]=='octo_transformer' and k[1]==ROOT}
+
+    loaded = [k for k in new_obs if k in flat_pre and flat_pre[k].shape == new_obs[k].shape]
+    missing = [k for k in new_obs if k not in flat_pre]
+    mismatch = [k for k in new_obs if k in flat_pre and flat_pre[k].shape != new_obs[k].shape]
+    print(f"obs subtree: {ROOT}")
+    print(f"loaded: {len(loaded)}  missing: {len(missing)}  mismatch: {len(mismatch)}")
+
+    # Show key examples that matter most
+    for k in sorted(new_obs.keys()):
+        n = ".".join(k)
+        if any(s in n for s in ["SmallStem16_0", "embedding", "pos_embedding", "projection"]):
+            tag = "LOADED" if k in loaded else ("MISMATCH" if k in mismatch else "MISSING")
+            pre_shape = (flat_pre[k].shape if k in flat_pre else None)
+            print(tag, n, new_obs[k].shape, pre_shape)
+
+    # =========================
+    # Norm diffs (1000% certainty)
+    # Compare final params vs pretrained sources for all mapped leaves
+    # =========================
+    diffs = []
+    # SmallStem16 subtree diffs
+    for k_pre, v_pre in flat_pre.items():
+        if len(k_pre) >= len(src_prefix) and k_pre[:len(src_prefix)] == src_prefix:
+            tail = k_pre[len(src_prefix):]
+            dst_key = dst_prefix + tail
+            if dst_key in flat_final and flat_final[dst_key].shape == v_pre.shape:
+                d = jnp.linalg.norm(flat_final[dst_key] - v_pre)
+                diffs.append((".".join(dst_key), float(d)))
+
+    print(f"\nCompared {len(diffs)} SmallStem16 leaves; max diff = {max([d for _, d in diffs]) if diffs else 'N/A'}")
+    # Pos/proj diffs
+    for src, dst in remaps:
+        src_val = get_(params_pre, src)
+        dst_val = get_(unfreeze(model.params), dst)
+        if src_val is not None and dst_val is not None and src_val.shape == dst_val.shape:
+            d = jnp.linalg.norm(dst_val - src_val)
+            print(f"Diff for {'.'.join(dst)} vs {'.'.join(src)}: {float(d)}")
 
     def _count_params(tree):
         return sum(int(jax.numpy.size(x)) for x in jax.tree_leaves(tree))
@@ -362,6 +478,59 @@ def main(_):
                 continue
             t = t.get(k, {})
         return t
+
+    # Try pos/proj remap using obs_primary_* as source (with shape guard)
+    def try_copy(src, dst, label):
+        sv = get_(params_pre, src)
+        dv = get_(unfreeze(model.params), dst)
+        if sv is None:
+            print(f"[SRC MISSING] {label}: {'.'.join(src)}"); return
+        if dv is None:
+            print(f"[DST MISSING] {label}: {'.'.join(dst)}"); return
+        if sv.shape != dv.shape:
+            print(f"[SHAPE MISMATCH] {label}: src {sv.shape} vs dst {dv.shape}"); return
+        set_(params_new, dst, sv)
+        print(f"[COPIED] {label}: {'.'.join(src)} -> {'.'.join(dst)}")
+
+    # Use obs_primary_* as source
+    try_copy(("octo_transformer","obs_primary_pos_embedding"),
+            ("octo_transformer","obs_primary_pos_embedding"),
+            "pos_embedding")
+
+    try_copy(("octo_transformer","obs_primary_projection","kernel"),
+            ("octo_transformer","obs_primary_projection","kernel"),
+            "projection.kernel")
+
+    try_copy(("octo_transformer","obs_primary_projection","bias"),
+            ("octo_transformer","obs_primary_projection","bias"),
+            "projection.bias")
+
+    def diff_of(dst, src, label):
+        dv = get_(unfreeze(model.params), dst)
+        sv = get_(params_pre, src)
+        if dv is None:
+            print(f"[DST MISSING] {label}: {'.'.join(dst)}")
+            return
+        if sv is None:
+            print(f"[SRC MISSING] {label}: {'.'.join(src)}")
+            return
+        if dv.shape != sv.shape:
+            print(f"[SHAPE MISMATCH] {label}: {dv.shape} vs {sv.shape}")
+            return
+        print(f"[DIFF] {label}: {float(jnp.linalg.norm(dv - sv))}")
+
+    diff_of(("octo_transformer","obs_primary_pos_embedding"),
+            ("octo_transformer","obs_primary_pos_embedding"),
+            "pos_embedding")
+
+    diff_of(("octo_transformer","obs_primary_projection","bias"),
+            ("octo_transformer","obs_primary_projection","bias"),
+            "projection.bias")
+
+    # This one is expected to SHAPE MISMATCH (dst grew due to VGGT)
+    diff_of(("octo_transformer","obs_primary_projection","kernel"),
+            ("octo_transformer","obs_primary_projection","kernel"),
+            "projection.kernel")
 
     print("PARAM COUNTS:")
     print("  TOTAL:", _count_params(model.params))
@@ -688,17 +857,17 @@ def main(_):
             save_callback(train_state, i + 1)
             
         # Early stop at 150k steps while keeping cosine schedule at 250k
-        # if (i + 1) >= 200000:
-        #     logging.info(
-        #         "Early stopping at step %d (target 150000). Cosine scheduler remains configured for %d steps.",
-        #         i + 1,
-        #         int(FLAGS.config.num_steps),
-        #     )
-        #     # Save a final checkpoint if not saved this step
-        #     if (i + 1) % FLAGS.config.save_interval != 0 and save_dir is not None:
-        #         logging.info("Saving final checkpoint before early stop...")
-        #         save_callback(train_state, i + 1)
-        #     break
+        if (i + 1) >= 100000:
+            logging.info(
+                "Early stopping at step %d (target 150000). Cosine scheduler remains configured for %d steps.",
+                i + 1,
+                int(FLAGS.config.num_steps),
+            )
+            # Save a final checkpoint if not saved this step
+            if (i + 1) % FLAGS.config.save_interval != 0 and save_dir is not None:
+                logging.info("Saving final checkpoint before early stop...")
+                save_callback(train_state, i + 1)
+            break
 
 
 if __name__ == "__main__":

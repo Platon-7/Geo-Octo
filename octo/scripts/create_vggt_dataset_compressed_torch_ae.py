@@ -12,6 +12,9 @@ import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
 
 # Reuse the official VGGT implementation shipped in this repo
 from vggt.models.vggt import VGGT
@@ -41,6 +44,13 @@ flags.DEFINE_integer("ae_epochs", 3, "Autoencoder training epochs (lightweight).
 flags.DEFINE_float("ae_lr", 1e-3, "Autoencoder learning rate.")
 flags.DEFINE_integer("ae_hidden", 2048, "Autoencoder hidden dimension for MLP bottleneck.")
 flags.DEFINE_bool("overwrite", False, "If True, force-retrains the autoencoder and overwrites any existing output dataset.")
+flags.DEFINE_bool("use_weighted_layer_fusion", True, "If True, learn softmax layer weights; if False, use uniform mean across layers.")
+flags.DEFINE_bool("pointmap_viz_enable", True, "If True, generate a few VGGT pointmap visualizations before writing the dataset.")
+flags.DEFINE_integer("pointmap_viz_count", 8, "Number of images to visualize with VGGT pointmap head before writing dataset.")
+flags.DEFINE_string("pointmap_viz_dir", None, "Directory to save pointmap visualizations (defaults under output_data_dir/pointmap_viz).")
+flags.DEFINE_bool("ae_verification_enable", True, "If True, run a visual AE verification before creating the dataset.")
+flags.DEFINE_integer("ae_verification_count", 4, "Number of images to use for the AE verification.")
+flags.DEFINE_string("ae_verification_dir", None, "Directory to save AE verification plots (defaults under output_data_dir/ae_verification).")
 
 
 # -------------------------
@@ -117,8 +127,9 @@ class AECompressor(nn.Module):
     - encoder/decoder: per-token autoencoder operating on D-d fused vectors
     """
 
-    def __init__(self, num_layers: int, input_dim: int, bottleneck_dim: int = 512, hidden_dim: int = 2048):
+    def __init__(self, num_layers: int, input_dim: int, bottleneck_dim: int = 512, hidden_dim: int = 2048, use_weighted_layer_fusion: bool = True):
         super().__init__()
+        self.use_weighted_layer_fusion = bool(use_weighted_layer_fusion)
         self.fuser = WeightedLayerFuser(num_layers)
         self.encoder = nn.Sequential(
             nn.LayerNorm(input_dim),
@@ -135,33 +146,34 @@ class AECompressor(nn.Module):
         self.output_norm = nn.LayerNorm(bottleneck_dim)
 
     def forward(self, tokens_ld: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        """
-        Args:
-            tokens_ld: [B, L, D] token set for B spatial positions
-        Returns:
-            z: [B, 512]
-            recon: [B, D]
-            fused_mean: [B, D] (uniform mean over layers, used as stable target)
-        """
-        fused_weighted = self.fuser(tokens_ld)  # [B,D]
-        fused_mean = tokens_ld.mean(dim=-2)     # [B,D]
+        # Determine the input to the encoder
+        if self.use_weighted_layer_fusion:
+            encoder_input = self.fuser(tokens_ld)
+        else:
+            encoder_input = tokens_ld.mean(dim=-2)
         
+        # The reconstruction target is ALWAYS the encoder's input
+        reconstruction_target = encoder_input
+
         # Add logging here, only during training and only once
         if self.training and not hasattr(self, '_logged_encoder_input_shape'):
-            logging.info(f"VERIFY 3: Input shape to AE encoder is {fused_weighted.shape} -> (Batch_of_Tokens, Fused_Feat_Dim)")
+            logging.info(f"VERIFY 3: Input shape to AE encoder s {encoder_input.shape} -> (Batch_of_Tokens, Fused_Feat_Dim)")
             self._logged_encoder_input_shape = True
-            
-        z = self.encoder(fused_weighted)
+
+        z = self.encoder(encoder_input)
         z = self.output_norm(z)
         recon = self.decoder(z)
-        return z, recon, fused_mean
+        return z, recon, reconstruction_target # <-- FIX: returns the correct target
 
     @torch.no_grad()
     def compress_tokens(self, tokens_ld: torch.Tensor) -> torch.Tensor:
         self.eval()
         device = self.fuser.weights.device
         tokens_ld = tokens_ld.to(device)
-        fused_weighted = self.fuser(tokens_ld)
+        if self.use_weighted_layer_fusion:
+            fused_weighted = self.fuser(tokens_ld)
+        else:
+            fused_weighted = tokens_ld.mean(dim=-2)
         z = self.encoder(fused_weighted)
         z = self.output_norm(z)
         return z
@@ -249,6 +261,163 @@ def resize_and_stack_per_layer(features_klnd: np.ndarray, sqrt_n: int) -> np.nda
         logging.info(f"VERIFY 2: Feature shape after spatial resize is {x_small.shape} -> (Batch, Layers, N, Feat_Dim)")
         _logged_resized_shape = True
     return x_small.numpy()
+
+
+def _iter_images_from_builders(builders: List[tfds.core.DatasetBuilder]):
+    """Yield raw RGB images [H,W,3] from the provided builders (train split only)."""
+    for builder in builders:
+        try:
+            ds = builder.as_dataset(split='train')
+        except Exception:
+            continue
+        for episode in tfds.as_numpy(ds):
+            steps = list(episode.get('steps', []))
+            if not steps:
+                continue
+            for step in steps:
+                obs = step.get('observation', {})
+                if 'image' in obs:
+                    img = obs['image']
+                elif 'image_primary' in obs:
+                    img = obs['image_primary']
+                else:
+                    continue
+                if img is None:
+                    continue
+                yield np.asarray(img)
+
+
+@torch.no_grad()
+def visualize_pointmaps(builders: List[tfds.core.DatasetBuilder], extractor: TorchVGGTExtractor, max_images: int, out_dir: str, input_res: int):
+    os.makedirs(out_dir, exist_ok=True)
+    device = extractor.device
+    saved = 0
+    for img in _iter_images_from_builders(builders):
+        try:
+            chw = preprocess_images_in_memory(np.asarray([img]), input_res)  # [1,3,H,W]
+            x = torch.from_numpy(chw).to(device)
+            x = x.unsqueeze(1)  # [1,1,3,H,W]
+            preds = extractor.model(x)
+
+            # Prefer point head confidence; fallback to depth or its conf
+            conf = None
+            if isinstance(preds, dict) and 'world_points_conf' in preds:
+                conf = preds['world_points_conf'][0, 0].detach().cpu().numpy()
+            elif 'depth' in preds:
+                depth = preds['depth'][0, 0, ..., 0].detach().cpu().numpy()
+                # normalize depth to [0,1]
+                mn, mx = float(np.nanmin(depth)), float(np.nanmax(depth))
+                conf = (depth - mn) / max(1e-6, (mx - mn))
+            elif 'depth_conf' in preds:
+                conf = preds['depth_conf'][0, 0].detach().cpu().numpy()
+            else:
+                # As last resort, visualize norm of world_points if available
+                if 'world_points' in preds:
+                    pts = preds['world_points'][0, 0].detach().cpu().numpy()  # [H,W,3]
+                    conf = np.linalg.norm(pts, axis=-1)
+                    mn, mx = float(np.nanmin(conf)), float(np.nanmax(conf))
+                    conf = (conf - mn) / max(1e-6, (mx - mn))
+                else:
+                    continue
+
+            fig, axs = plt.subplots(1, 2, figsize=(10, 5))
+            axs[0].imshow(img)
+            axs[0].set_title('Original')
+            axs[0].axis('off')
+            im = axs[1].imshow(conf, cmap='viridis')
+            axs[1].set_title('VGGT pointmap/conf')
+            axs[1].axis('off')
+            fig.colorbar(im, ax=axs[1], fraction=0.046, pad=0.04)
+            out_path = os.path.join(out_dir, f'pointmap_{saved:03d}.png')
+            fig.savefig(out_path, bbox_inches='tight')
+            plt.close(fig)
+            saved += 1
+            if saved >= max_images:
+                break
+        except Exception as _e:
+            continue
+    logging.info("Saved %d pointmap visualizations to %s", saved, out_dir)
+
+
+@torch.no_grad()
+def verify_autoencoder_reconstruction(
+    builders: List[tfds.core.DatasetBuilder],
+    extractor: TorchVGGTExtractor,
+    compressor: AECompressor,
+    num_samples: int,
+    output_dir: str,
+    device: torch.device,
+):
+    """
+    Visual and numerical check of the AE reconstruction vs. the intended target (uniform mean across layers).
+    """
+    from itertools import islice
+    from sklearn.metrics.pairwise import cosine_similarity
+    import torch.nn.functional as F
+
+    logging.info("--- Starting Autoencoder Verification Step ---")
+    os.makedirs(output_dir, exist_ok=True)
+
+    image_iterator = _iter_images_from_builders(builders)
+    metrics_path = os.path.join(output_dir, "metrics.txt")
+    with open(metrics_path, "w") as f:
+        f.write("idx\tMSE\tmean_cos\n")
+
+    for i, original_image_np in enumerate(islice(image_iterator, num_samples)):
+        try:
+            # 1) Extract tokens
+            chw_image = preprocess_images_in_memory(np.asarray([original_image_np]), FLAGS.vggt_input_res)
+            klnd, sqrt_n = extractor.extract_layers(chw_image)      # [1, L, N, D]
+            k_l_t_d = resize_and_stack_per_layer(klnd, sqrt_n)      # [1, L, T, D]
+            K, L, T, D = k_l_t_d.shape
+
+            # Convert to torch and keep the same ordering used in training/compression
+            device = next(compressor.parameters()).device
+            k_l_t_d_torch = torch.from_numpy(k_l_t_d).float().to(device)   # define this
+            tokens_ld = k_l_t_d_torch.view(K * T, L, D)                    # NO permute
+
+            # tokens_ld: [K*T, L, D] float32 on the AE device
+            with torch.no_grad():
+                compressor.eval()
+                z, recon, gt = compressor(tokens_ld)   # AE forward defines the exact training target
+            recon = recon.view(K, T, D)
+            gt    = gt.view(K, T, D)
+
+            mse_loss = float(F.mse_loss(recon, gt).cpu().item())
+
+            # cosine per token
+            gt_np = gt.squeeze(0).cpu().numpy()
+            recon_np = recon.squeeze(0).cpu().numpy()
+            eps = 1e-8
+            a = gt_np / (np.linalg.norm(gt_np, axis=1, keepdims=True) + eps)
+            b = recon_np / (np.linalg.norm(recon_np, axis=1, keepdims=True) + eps)
+            mean_cos = float((a * b).sum(axis=1).mean())
+
+            with open(metrics_path, "a") as f:
+                f.write(f"{i}\t{mse_loss:.6f}\t{mean_cos:.6f}\n")
+
+            # 4) Visualization: original + similarity maps
+            gt_sim = cosine_similarity(gt_np)
+            recon_sim = cosine_similarity(recon_np)
+
+            fig, axs = plt.subplots(1, 3, figsize=(18, 6))
+            axs[0].imshow(original_image_np)
+            axs[0].set_title("Original Image")
+            axs[0].axis('off')
+            im1 = axs[1].imshow(gt_sim)
+            axs[1].set_title("GT Similarity (mean over layers)")
+            fig.colorbar(im1, ax=axs[1], fraction=0.046, pad=0.04)
+            im2 = axs[2].imshow(recon_sim)
+            axs[2].set_title(f"Recon Similarity (MSE: {mse_loss:.4f}, cos: {mean_cos:.5f})")
+            fig.colorbar(im2, ax=axs[2], fraction=0.046, pad=0.04)
+            out_path = os.path.join(output_dir, f"ae_verification_{i:02d}.png")
+            fig.savefig(out_path, bbox_inches='tight')
+            plt.close(fig)
+            logging.info("Saved AE verification plot to %s", out_path)
+        except Exception as e:
+            logging.error("Failed to verify AE on sample %d: %s", i, e, exc_info=True)
+
+    logging.info("--- Autoencoder Verification Finished ---")
 
 
 # -------------------------
@@ -517,7 +686,13 @@ def _fit_autoencoder(builders: List[tfds.core.DatasetBuilder], extractor: TorchV
     L = klnd.shape[1]
     D = klnd.shape[3]
 
-    model = AECompressor(num_layers=L, input_dim=D, bottleneck_dim=target_w, hidden_dim=FLAGS.ae_hidden).to(device)
+    model = AECompressor(
+        num_layers=L,
+        input_dim=D,
+        bottleneck_dim=target_w,
+        hidden_dim=FLAGS.ae_hidden,
+        use_weighted_layer_fusion=FLAGS.use_weighted_layer_fusion,
+    ).to(device)
     opt = torch.optim.Adam(model.parameters(), lr=FLAGS.ae_lr)
     loss_fn = nn.MSELoss()
 
@@ -546,8 +721,8 @@ def _fit_autoencoder(builders: List[tfds.core.DatasetBuilder], extractor: TorchV
         for batch in batches:
             batch = batch.to(device)
             opt.zero_grad(set_to_none=True)
-            z, recon, fused_mean = model(batch)
-            loss = loss_fn(recon, fused_mean.detach())
+            z, recon, reconstruction_target = model(batch)
+            loss = loss_fn(recon, reconstruction_target.detach()) # <-- FIX: uses the correct target
             loss.backward()
             opt.step()
             seen += batch.shape[0]
@@ -597,6 +772,14 @@ def main(_):
         layer_indices = None
     extractor = TorchVGGTExtractor(device, FLAGS.vggt_input_res, FLAGS.vggt_agg_layers, layer_indices)
 
+    # Optional: pre-build visual sanity via pointmap head
+    if FLAGS.pointmap_viz_enable:
+        viz_dir = FLAGS.pointmap_viz_dir or os.path.join(output_root, "pointmap_viz")
+        try:
+            visualize_pointmaps(original_builders, extractor, max_images=int(FLAGS.pointmap_viz_count), out_dir=viz_dir, input_res=FLAGS.vggt_input_res)
+        except Exception as e:
+            logging.warning("Pointmap visualization failed: %s", e)
+
     # Prepare / train AE compressor
     target_size = _parse_target_size(FLAGS.target_size)
     ae_path = FLAGS.ae_path or os.path.join(output_root, f"vggt_autoencoder_{FLAGS.vggt_agg_layers}L_{target_size[0]}x{target_size[1]}.pt")
@@ -628,10 +811,31 @@ def main(_):
         chw = preprocess_images_in_memory(np.asarray([first_image]), FLAGS.vggt_input_res)
         klnd, _ = extractor.extract_layers(chw)
         L = klnd.shape[1]; D = klnd.shape[3]
-        compressor = AECompressor(num_layers=L, input_dim=D, bottleneck_dim=target_size[1], hidden_dim=FLAGS.ae_hidden)
+        compressor = AECompressor(
+            num_layers=L,
+            input_dim=D,
+            bottleneck_dim=target_size[1],
+            hidden_dim=FLAGS.ae_hidden,
+            use_weighted_layer_fusion=FLAGS.use_weighted_layer_fusion,
+        )
         compressor.load(ae_path, map_location='cpu')
         compressor = compressor.to(device).eval()
         logging.info("Loaded AE compressor from %s", ae_path)
+
+    # AE verification (optional) before writing any datasets
+    if FLAGS.ae_verification_enable:
+        verification_dir = FLAGS.ae_verification_dir or os.path.join(output_root, "ae_verification")
+        try:
+            verify_autoencoder_reconstruction(
+                builders=original_builders,
+                extractor=extractor,
+                compressor=compressor,
+                num_samples=int(FLAGS.ae_verification_count),
+                output_dir=verification_dir,
+                device=device,
+            )
+        except Exception as e:
+            logging.warning("AE verification failed: %s", e)
 
     # Build each compressed dataset
     for builder in original_builders:

@@ -135,28 +135,15 @@ def get_config(config_string="full,multimodal"):
             "random_hue",
         ],
     )
-    wrist_augment_kwargs = dict(
-        random_brightness=[0.1],
-        random_contrast=[0.9, 1.1],
-        random_saturation=[0.9, 1.1],
-        random_hue=[0.05],
-        augment_order=[
-            "random_brightness",
-            "random_contrast",
-            "random_saturation",
-            "random_hue",
-        ],
-    )
+
     frame_transform_kwargs = dict(
         resize_size={
             "primary": (256, 256),  # workspace (3rd person) camera is at 256x256
             "wrist": (128, 128),  # wrist camera is at 128x128
         },
-        image_augment_kwargs=dict(
-            primary=workspace_augment_kwargs,
-            wrist=wrist_augment_kwargs,
-        ),
+        image_augment_kwargs={},
     )
+    
     # If the default data loading speed is too slow, try these:
     config[
         "frame_transform_threads"

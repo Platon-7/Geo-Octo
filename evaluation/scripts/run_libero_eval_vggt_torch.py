@@ -15,7 +15,7 @@ except ImportError:
 warnings.filterwarnings("ignore", category=DeprecationWarning, module="transformers")
 
 # 1. Load the statistics
-stats_path = "/home/pkarageorgis/geo_octo/libero_datasets/unified_stats/unified_dataset_statistics_libero_spatial_vggt_compressed_torch.json"
+stats_path = "/home/pkarageorgis/geo_octo/libero_datasets/unified_stats/unified_dataset_statistics_libero_spatial_vggt_compressed_24_torch_ae.json"
 with open(stats_path, 'r') as f:
     dataset_statistics = json.load(f)
 
@@ -96,6 +96,9 @@ logging.basicConfig(
     handlers=[logging.StreamHandler()],
 )
 logger = logging.getLogger(__name__)
+
+# add at top, near action_mean/std:
+action_mask = np.array(dataset_statistics['action'].get('mask')) if 'mask' in dataset_statistics['action'] else None
 
 
 # Silence noisy libraries
@@ -312,13 +315,16 @@ def process_action(action, model_family, action_mean=None, action_std=None):
     if model_family == "openvla":
         action = normalize_gripper_action(action, binarize=True)
         action = invert_gripper_action(action)
+    # change the octo branch in process_action:
     elif model_family == "octo":
         if action_mean is None or action_std is None:
             raise ValueError("Action statistics (mean, std) must be provided for Octo model evaluation!")
         action_mean = action_mean[:action.shape[-1]]
         action_std = action_std[:action.shape[-1]]
-        unnormalized_action = (action * action_std) + action_mean
-        return unnormalized_action
+        if action_mask is not None:
+            mask = action_mask[:action.shape[-1]]
+            return np.where(mask, (action * action_std) + action_mean, action)
+        return (action * action_std) + action_mean
     else:
         return np.clip(np.asarray(action, dtype=np.float32), -1.0, 1.0)
 
