@@ -315,15 +315,12 @@ def process_action(action, model_family, action_mean=None, action_std=None):
     if model_family == "openvla":
         action = normalize_gripper_action(action, binarize=True)
         action = invert_gripper_action(action)
-    # change the octo branch in process_action:
     elif model_family == "octo":
+        # Align with baseline eval: always un-normalize with dataset stats
         if action_mean is None or action_std is None:
             raise ValueError("Action statistics (mean, std) must be provided for Octo model evaluation!")
         action_mean = action_mean[:action.shape[-1]]
         action_std = action_std[:action.shape[-1]]
-        if action_mask is not None:
-            mask = action_mask[:action.shape[-1]]
-            return np.where(mask, (action * action_std) + action_mean, action)
         return (action * action_std) + action_mean
     else:
         return np.clip(np.asarray(action, dtype=np.float32), -1.0, 1.0)
@@ -402,7 +399,8 @@ def resize_and_stack_per_layer(features_klnd: np.ndarray, sqrt_n: int) -> np.nda
     s = sqrt_n
     x = torch.from_numpy(features_klnd).float()
     x = x.reshape(K * L, s, s, D).permute(0, 3, 1, 2)
-    target_side = 16  # for 256 tokens
+    # Match offline dataset compression (64 tokens -> 8x8 grid)
+    target_side = 8
     x_small = F.interpolate(x, size=(target_side, target_side), mode='bilinear', align_corners=False)
     x_small = x_small.permute(0, 2, 3, 1).contiguous().view(K, L, target_side * target_side, D)
     return x_small.numpy()
@@ -430,13 +428,17 @@ def compute_compressed_vggt_tokens_torch(image: np.ndarray, vggt_ctx: dict) -> O
 
     # Preprocess to CHW float32 in [0,1]
     pre = load_and_preprocess_images([image], target_size=cfg.vggt_input_res)
-    klnd, sqrt_n = extractor.extract_layers(pre)               # [K,L,N,D]
-    k_l_256_d = resize_and_stack_per_layer(klnd, sqrt_n)        # [K,L,256,D]
-    K, L, S256, D = k_l_256_d.shape
-    tokens = torch.from_numpy(k_l_256_d).float().view(K * S256, L, D).to(device)
+    klnd, sqrt_n = extractor.extract_layers(pre)                # [K,L,N,D]
+    k_l_64_d = resize_and_stack_per_layer(klnd, sqrt_n)         # [K,L,64,D]
+    K, L, S64, D = k_l_64_d.shape
+    tokens = torch.from_numpy(k_l_64_d).float().view(K * S64, L, D).to(device)
     with torch.no_grad():
-        z = compressor.compress_tokens(tokens)                  # [K*256,512]
-    z = z.view(K, S256, -1).detach().cpu().numpy().astype(np.float16)  # [K,256,512]
+        z = compressor.compress_tokens(tokens)                  # [K*64,512]
+    z = z.view(K, S64, -1).detach().cpu().numpy().astype(np.float16)   # [K,64,512]
+    # One-time runtime log of the produced token shape
+    if not hasattr(compute_compressed_vggt_tokens_torch, "_printed_shape"):
+        print(f"[VGGT] Online compressed token shape: {z[0].shape} (should be 64x512)")
+        compute_compressed_vggt_tokens_torch._printed_shape = True
     return z[0]
 
 
