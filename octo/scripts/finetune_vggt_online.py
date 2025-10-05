@@ -109,6 +109,7 @@ flags.DEFINE_bool("jax_use_first_device_only", True, "Restrict JAX to the first 
 # Profiling toggles
 flags.DEFINE_bool("profile_vggt", False, "If True, print VGGT/AE timing breakdowns per batch.")
 flags.DEFINE_integer("profile_vggt_every", 50, "Print VGGT profile every N batches (1=every batch).")
+flags.DEFINE_bool("compile_vggt", False, "If True, compile VGGT aggregator for potential speedups.")
 
 
 # =========================
@@ -195,6 +196,11 @@ class TorchVGGTExtractor:
         self.agg_layers = int(agg_layers)
         self.layer_indices = layer_indices
         self.model = VGGT.from_pretrained("facebook/VGGT-1B").to(self.device).eval()
+        if bool(getattr(FLAGS, 'compile_vggt', False)):
+            try:
+                self.model.aggregator = torch.compile(self.model.aggregator, mode="reduce-overhead", fullgraph=False)
+            except Exception:
+                pass
         # Pick AMP dtype (bf16 on Hopper/Ampere+, else fp16). CPU -> no autocast
         if self.device.type == 'cuda':
             try:
@@ -207,21 +213,27 @@ class TorchVGGTExtractor:
 
     @torch.no_grad()
     def extract_layers(self, chw_images: np.ndarray):
-        x = torch.from_numpy(chw_images).to(self.device)  # [K,3,H,W]
+        # Use pinned host memory and non_blocking H2D copies for speed
+        x = torch.from_numpy(chw_images).pin_memory()  # [K,3,H,W]
+        x = x.to(self.device, non_blocking=True)
+        try:
+            x = x.contiguous(memory_format=torch.channels_last)
+        except Exception:
+            pass
         x = x.unsqueeze(1)  # [K,1,3,H,W]
         amp_ctx = (
             torch.cuda.amp.autocast(dtype=self.amp_dtype)
             if (self.device.type == 'cuda' and self.amp_dtype is not None)
             else nullcontext()
         )
-        with amp_ctx:
+        with amp_ctx, torch.inference_mode():
             output_list, patch_start_idx = self.model.aggregator(x)
         all_layers = []
         for t in output_list:  # [K,1,P,2048]
             t = t[:, 0]  # [K,P,2048]
             t = t[:, patch_start_idx:, :]  # keep only patch tokens => [K,N,2048]
             all_layers.append(t)
-        layers = torch.stack(all_layers, dim=0).permute(1, 0, 2, 3)  # [K,L,N,2048]
+        layers = torch.stack(all_layers, dim=0).permute(1, 0, 2, 3)  # [K,L,N,2048] on device
 
         if self.agg_layers < 24:
             idx = self.layer_indices if self.layer_indices else [3, 10, 16, 22]
@@ -229,7 +241,7 @@ class TorchVGGTExtractor:
 
         K, L, N, D = layers.shape
         sqrt_n = int(round(np.sqrt(N)))
-        return layers.detach().cpu().numpy(), sqrt_n
+        return layers.detach(), sqrt_n  # keep on device; caller decides dtype/transfer
 
 
 def preprocess_images_in_memory(images_np: np.ndarray, target_size: int) -> np.ndarray:
@@ -270,21 +282,40 @@ def preprocess_images_in_memory(images_np: np.ndarray, target_size: int) -> np.n
 
 
 def resize_and_stack_per_layer(
-    features_klnd: np.ndarray,
+    features_klnd,
     sqrt_n: int,
     target_tokens_hw: int,
     device: torch.device,
+    dtype: Optional[torch.dtype] = None,
 ) -> torch.Tensor:
-    """GPU bilinear downsample per-layer spatial grid to target_side x target_side and return torch.Tensor [K,L,T,D]."""
-    K, L, N, D = features_klnd.shape
-    s = sqrt_n
-    x = torch.from_numpy(features_klnd).to(device=device, dtype=torch.float32)  # [K,L,N,D]
-    x = x.reshape(K * L, s, s, D).permute(0, 3, 1, 2).contiguous()
+    """Downsample per-layer spatial grid to target_side x target_side on device; returns [K,L,T,D]."""
+    # Accept torch.Tensor (on device) or np.ndarray
+    if isinstance(features_klnd, np.ndarray):
+        x = torch.from_numpy(features_klnd).to(device=device)
+    else:
+        x = features_klnd.to(device)
 
+    K, L, N, D = x.shape
+    s = int(sqrt_n)
     target_side = int(np.sqrt(target_tokens_hw))
-    x_small = F.interpolate(x, size=(target_side, target_side), mode='bilinear', align_corners=False)
-    x_small = x_small.permute(0, 2, 3, 1).contiguous().view(K, L, target_side * target_side, D)
-    return x_small  # stays on device
+
+    # Cast to compute dtype if provided (e.g., fp16/bf16) for speed
+    if dtype is not None and str(device).startswith('cuda'):
+        x = x.to(dtype)
+    else:
+        x = x.float()
+
+    # Fast path: if already at target spatial size, just reshape
+    if s == target_side:
+        x_small = x.reshape(K, L, s, s, D)
+    else:
+        x = x.reshape(K * L, s, s, D).permute(0, 3, 1, 2).contiguous()  # [K*L, D, s, s]
+        x_small = F.interpolate(x, size=(target_side, target_side), mode='bilinear', align_corners=False)
+        x_small = x_small.permute(0, 2, 3, 1).contiguous().view(K, L, target_side * target_side, D)
+        return x_small  # early return keeps device/dtype
+
+    # If no interpolation, still return [K,L,T,D]
+    return x_small.permute(0, 2, 3, 1).contiguous().view(K, L, target_side * target_side, D)
 
 
 # Global state for online VGGT
@@ -319,6 +350,24 @@ def _init_vggt_online_if_needed():
             layer_indices = [3, 10, 16, 22]
     else:
         layer_indices = None
+
+    # Global backend perf knobs
+    try:
+        import torch.backends.cuda as _cuda_backends
+        torch.backends.cudnn.benchmark = True
+        if hasattr(_cuda_backends, 'matmul'):
+            _cuda_backends.matmul.allow_tf32 = True
+        try:
+            torch.set_float32_matmul_precision('high')
+        except Exception:
+            pass
+        try:
+            # Prefer flash + mem-efficient SDPA kernels when available
+            _cuda_backends.sdp_kernel(enable_flash=True, enable_math=False, enable_mem_efficient=True)
+        except Exception:
+            pass
+    except Exception:
+        pass
 
     extractor = TorchVGGTExtractor(device, FLAGS.vggt_input_res, FLAGS.vggt_agg_layers, layer_indices)
 
@@ -404,7 +453,10 @@ def compute_vggt_tokens_for_batch(image_5d: np.ndarray) -> np.ndarray:
         if do_profile and extractor.device.type == 'cuda':
             torch.cuda.synchronize(extractor.device)
         t3 = time.perf_counter()
-        k_l_t_d = resize_and_stack_per_layer(klnd, sqrt_n, target_tokens_hw, extractor.device)   # torch [K,L,T,D] on device
+        k_l_t_d = resize_and_stack_per_layer(
+            klnd, sqrt_n, target_tokens_hw, extractor.device,
+            dtype=(extractor.amp_dtype if extractor.device.type == 'cuda' else None)
+        )   # torch [K,L,T,D] on device
         if do_profile and extractor.device.type == 'cuda':
             torch.cuda.synchronize(extractor.device)
         t4 = time.perf_counter()
@@ -415,7 +467,13 @@ def compute_vggt_tokens_for_batch(image_5d: np.ndarray) -> np.ndarray:
             if do_profile and extractor.device.type == 'cuda':
                 torch.cuda.synchronize(extractor.device)
             t5 = time.perf_counter()
-            z = compressor.compress_tokens(toks_ld)
+            amp_ctx2 = (
+                torch.cuda.amp.autocast(dtype=extractor.amp_dtype)
+                if (extractor.device.type == 'cuda' and extractor.amp_dtype is not None)
+                else nullcontext()
+            )
+            with amp_ctx2:
+                z = compressor.compress_tokens(toks_ld)
         if do_profile and extractor.device.type == 'cuda':
             torch.cuda.synchronize(extractor.device)
         t6 = time.perf_counter()
