@@ -102,6 +102,8 @@ flags.DEFINE_integer("vggt_eval_batch_size", 16, "Batch size for VGGT forward in
 flags.DEFINE_integer("vggt_agg_layers", 24, "Number of layers to aggregate (24 for all; or subset).")
 flags.DEFINE_string("vggt_layer_indices", "3,10,16,22", "Comma-separated 0-based indices (used when vggt_agg_layers < 24).")
 flags.DEFINE_string("vggt_target_size", "64,512", "Target compressed size as 'height,width' => (n_tokens, feature_dim).")
+flags.DEFINE_integer("ae_hidden", 2048, "AE hidden dimension used in the checkpoint (must match).")
+flags.DEFINE_bool("jax_use_first_device_only", True, "Restrict JAX to the first visible GPU so VGGT can use another.")
 
 
 # =========================
@@ -329,7 +331,7 @@ def _init_vggt_online_if_needed():
         num_layers=L,
         input_dim=D,
         bottleneck_dim=target_dim,
-        hidden_dim=2048,
+        hidden_dim=int(FLAGS.ae_hidden),
         use_weighted_layer_fusion=True,
     )
     compressor.load(FLAGS.ae_path, map_location='cpu')
@@ -391,7 +393,8 @@ def main(_):
     # initialize_compilation_cache()
     # Ensure VisionMixer picks up concat mode without polluting the batch
     os.environ["VGGT_CONCAT_MODE"] = FLAGS.vggt_concat_mode
-    devices = jax.devices()
+    raw_devices = jax.devices()
+    devices = raw_devices[:1] if (FLAGS.jax_use_first_device_only and len(raw_devices) > 1) else raw_devices
     logging.info(
         f"""
         Octo Finetuning Script
@@ -402,7 +405,7 @@ def main(_):
         Task Modality: {FLAGS.config.modality}
         Finetuning Mode: {FLAGS.config.finetuning_mode}
 
-        # Devices: {jax.device_count()}
+        # Devices: {len(devices)}
         Batch size: {FLAGS.config.batch_size} ({FLAGS.config.batch_size // len(devices) } per device)
         # Steps: {FLAGS.config.num_steps}
     """
@@ -420,7 +423,7 @@ def main(_):
     ), f"Eval batch size ({FLAGS.config.viz_kwargs.eval_batch_size}) must be divisible by the number of devices ({len(devices)})"
 
     # create a 1D mesh with a single axis named "batch"
-    mesh = Mesh(jax.devices(), axis_names="batch")
+    mesh = Mesh(devices, axis_names="batch")
     # Our batches will be data-parallel sharded -- each device will get a slice of the batch
     dp_sharding = NamedSharding(mesh, PartitionSpec("batch"))
     # Our model will be replicated across devices (we are only doing data parallelism, not model parallelism)
