@@ -32,9 +32,9 @@ def get_config(config_string="full,multimodal"):
         "standardize_fn": ModuleSpec.create(
                 "octo.data.utils.data_utils:standardize_libero_vggt"
         ),
-        # If the default data loading speed is too slow, try these:
-        # "num_parallel_reads": 8,  # for reading from disk / GCS
-        # "num_parallel_calls": 16,  # for initial dataset construction
+        # Parallelism knobs for faster data loading
+        "num_parallel_reads": 8,   # for reading from disk / GCS
+        "num_parallel_calls": 16,  # for initial dataset construction
     }
 
     if mode == "full":
