@@ -77,12 +77,19 @@ print("==========================")
 PY
 
 export DISABLE_VGGT_TOKENS=0 # Set to 1 to disable VGGT tokens during training (debugging purposes)
+export CUDA_VISIBLE_DEVICES=0
+export XLA_VISIBLE_DEVICES=0
+
 
 srun -u python scripts/finetune_vggt_online.py \
-    --config=scripts/configs/config_vggt.py:full,language_conditioned \
-    --config.pretrained_path=hf://rail-berkeley/octo-base-1.5 \
-    --config.save_dir=/scratch-shared/tmp.cwkV8vOvfY/trained_models/my_octo_vggt_model_offline \
-    --use_vision_encoder=True \
-    --vggt_concat_mode=features \
-    --ae_path /home/pkarageorgis/AE_Compressor/vggt_autoencoder_24L_256x512_with_augs.pt \
-    --vggt_eval_batch_size 16
+  --config=scripts/configs/config_vggt.py:full,language_conditioned \
+  --config.pretrained_path=hf://rail-berkeley/octo-base-1.5 \
+  --config.save_dir=/scratch-shared/tmp.cwkV8vOvfY/trained_models/my_octo_vggt_model_online \
+  --use_vision_encoder=True \
+  --vggt_concat_mode=features \
+  --ae_path=/home/pkarageorgis/AE_Compressor/vggt_autoencoder_24L_256x512.pt \
+  --ae_hidden=8192 \
+  --vggt_eval_batch_size=16 \
+  --vggt_use_cuda=True \
+  --vggt_device_id=0 \
+  --jax_use_first_device_only=True

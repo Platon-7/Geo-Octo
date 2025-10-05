@@ -25,6 +25,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from vggt.models.vggt import VGGT
+from contextlib import nullcontext
 
 from octo.data.dataset import make_single_dataset
 from octo.model.octo_model import OctoModel
@@ -95,11 +96,14 @@ config_flags.DEFINE_config_file(
 # --- New CLI flags for online VGGT + AE ---
 flags.DEFINE_string("ae_path", None, "Path to trained AE .pt file (required to enable online VGGT)")
 flags.DEFINE_bool("vggt_use_cuda", True, "Use CUDA for VGGT/AE if available.")
+flags.DEFINE_integer("vggt_device_id", 0, "CUDA device index to run VGGT/AE on (when vggt_use_cuda=True).")
 flags.DEFINE_integer("vggt_input_res", 224, "VGGT input resolution (square).")
 flags.DEFINE_integer("vggt_eval_batch_size", 16, "Batch size for VGGT forward inside process_batch.")
 flags.DEFINE_integer("vggt_agg_layers", 24, "Number of layers to aggregate (24 for all; or subset).")
 flags.DEFINE_string("vggt_layer_indices", "3,10,16,22", "Comma-separated 0-based indices (used when vggt_agg_layers < 24).")
 flags.DEFINE_string("vggt_target_size", "256,512", "Target compressed size as 'height,width' => (n_tokens, feature_dim).")
+flags.DEFINE_integer("ae_hidden", 2048, "AE hidden dimension used in the checkpoint (must match).")
+flags.DEFINE_bool("jax_use_first_device_only", True, "Restrict JAX to the first visible GPU so VGGT can use another.")
 
 
 # =========================
@@ -123,7 +127,7 @@ class AECompressor(nn.Module):
         num_layers: int,
         input_dim: int,
         bottleneck_dim: int = 512,
-        hidden_dim: int = 4096,
+        hidden_dim: int = 2048,
         use_weighted_layer_fusion: bool = True,
     ):
         super().__init__()
@@ -186,12 +190,27 @@ class TorchVGGTExtractor:
         self.agg_layers = int(agg_layers)
         self.layer_indices = layer_indices
         self.model = VGGT.from_pretrained("facebook/VGGT-1B").to(self.device).eval()
+        # Pick AMP dtype (bf16 on Hopper/Ampere+, else fp16). CPU -> no autocast
+        if self.device.type == 'cuda':
+            try:
+                major, _ = torch.cuda.get_device_capability()
+                self.amp_dtype = torch.bfloat16 if major >= 8 else torch.float16
+            except Exception:
+                self.amp_dtype = torch.float16
+        else:
+            self.amp_dtype = None
 
     @torch.no_grad()
     def extract_layers(self, chw_images: np.ndarray):
         x = torch.from_numpy(chw_images).to(self.device)  # [K,3,H,W]
         x = x.unsqueeze(1)  # [K,1,3,H,W]
-        output_list, patch_start_idx = self.model.aggregator(x)
+        amp_ctx = (
+            torch.cuda.amp.autocast(dtype=self.amp_dtype)
+            if (self.device.type == 'cuda' and self.amp_dtype is not None)
+            else nullcontext()
+        )
+        with amp_ctx:
+            output_list, patch_start_idx = self.model.aggregator(x)
         all_layers = []
         for t in output_list:  # [K,1,P,2048]
             t = t[:, 0]  # [K,P,2048]
@@ -245,17 +264,22 @@ def preprocess_images_in_memory(images_np: np.ndarray, target_size: int) -> np.n
     return np.stack(processed_images, axis=0)
 
 
-def resize_and_stack_per_layer(features_klnd: np.ndarray, sqrt_n: int, target_tokens_hw: int) -> np.ndarray:
-    """Bilinear downsample per-layer spatial grid to target_side x target_side and return [K,L,T,D] with T=target_hw."""
+def resize_and_stack_per_layer(
+    features_klnd: np.ndarray,
+    sqrt_n: int,
+    target_tokens_hw: int,
+    device: torch.device,
+) -> torch.Tensor:
+    """GPU bilinear downsample per-layer spatial grid to target_side x target_side and return torch.Tensor [K,L,T,D]."""
     K, L, N, D = features_klnd.shape
     s = sqrt_n
-    x = torch.from_numpy(features_klnd).float()          # [K,L,N,D]
-    x = x.reshape(K * L, s, s, D).permute(0, 3, 1, 2)
+    x = torch.from_numpy(features_klnd).to(device=device, dtype=torch.float32)  # [K,L,N,D]
+    x = x.reshape(K * L, s, s, D).permute(0, 3, 1, 2).contiguous()
 
     target_side = int(np.sqrt(target_tokens_hw))
     x_small = F.interpolate(x, size=(target_side, target_side), mode='bilinear', align_corners=False)
     x_small = x_small.permute(0, 2, 3, 1).contiguous().view(K, L, target_side * target_side, D)
-    return x_small.numpy()
+    return x_small  # stays on device
 
 
 # Global state for online VGGT
@@ -263,7 +287,7 @@ VGGT_ONLINE_STATE = {
     "device": None,
     "extractor": None,
     "compressor": None,
-    "target_tokens": 64,
+    "target_tokens": 256,
 }
 
 
@@ -271,7 +295,13 @@ def _init_vggt_online_if_needed():
     if VGGT_ONLINE_STATE["extractor"] is not None and VGGT_ONLINE_STATE["compressor"] is not None:
         return
 
-    device = torch.device('cuda' if (FLAGS.vggt_use_cuda and torch.cuda.is_available()) else 'cpu')
+    if FLAGS.vggt_use_cuda and torch.cuda.is_available():
+        try:
+            device = torch.device(f'cuda:{int(FLAGS.vggt_device_id)}')
+        except Exception:
+            device = torch.device('cuda')
+    else:
+        device = torch.device('cpu')
 
     # Parse layer indices
     if FLAGS.vggt_agg_layers < 24:
@@ -301,7 +331,7 @@ def _init_vggt_online_if_needed():
         num_layers=L,
         input_dim=D,
         bottleneck_dim=target_dim,
-        hidden_dim=4096,
+        hidden_dim=int(FLAGS.ae_hidden),
         use_weighted_layer_fusion=True,
     )
     compressor.load(FLAGS.ae_path, map_location='cpu')
@@ -340,17 +370,17 @@ def compute_vggt_tokens_for_batch(image_5d: np.ndarray) -> np.ndarray:
     tokens_per_image_list: List[np.ndarray] = []
     for j in range(0, chw.shape[0], batch_size):
         sub = chw[j:j + batch_size]
-        klnd, sqrt_n = extractor.extract_layers(sub)         # [K,L,N,D]
-        k_l_t_d = resize_and_stack_per_layer(klnd, sqrt_n, target_tokens_hw)   # [K,L,T,D]
+        klnd, sqrt_n = extractor.extract_layers(sub)         # [K,L,N,D] on CPU numpy
+        k_l_t_d = resize_and_stack_per_layer(klnd, sqrt_n, target_tokens_hw, extractor.device)   # torch [K,L,T,D] on device
 
         K, L, TT, D = k_l_t_d.shape
-        toks_ld = torch.from_numpy(k_l_t_d).float().view(K * TT, L, D)  # [K*T, L, D]
+        toks_ld = k_l_t_d.view(K * TT, L, D)  # [K*T, L, D] on device
         with torch.no_grad():
             z = compressor.compress_tokens(toks_ld)
-        z = z.view(K, TT, -1).cpu().numpy().astype(np.float32)  # [K, T, bottleneck]
+        z = z.view(K, TT, -1).detach().cpu().numpy().astype(np.float32)  # [K, T, bottleneck]
         tokens_per_image_list.append(z)
 
-    tokens_bt_t_d = np.concatenate(tokens_per_image_list, axis=0)   # [B*T, 256, 512]
+    tokens_bt_t_d = np.concatenate(tokens_per_image_list, axis=0)   # [B*T,256, 512]
     tokens_b_t_t_d = tokens_bt_t_d.reshape(B, T, tokens_bt_t_d.shape[1], tokens_bt_t_d.shape[2])
     return tokens_b_t_t_d
 
@@ -363,7 +393,8 @@ def main(_):
     # initialize_compilation_cache()
     # Ensure VisionMixer picks up concat mode without polluting the batch
     os.environ["VGGT_CONCAT_MODE"] = FLAGS.vggt_concat_mode
-    devices = jax.devices()
+    raw_devices = jax.devices()
+    devices = raw_devices[:1] if (FLAGS.jax_use_first_device_only and len(raw_devices) > 1) else raw_devices
     logging.info(
         f"""
         Octo Finetuning Script
@@ -374,7 +405,7 @@ def main(_):
         Task Modality: {FLAGS.config.modality}
         Finetuning Mode: {FLAGS.config.finetuning_mode}
 
-        # Devices: {jax.device_count()}
+        # Devices: {len(devices)}
         Batch size: {FLAGS.config.batch_size} ({FLAGS.config.batch_size // len(devices) } per device)
         # Steps: {FLAGS.config.num_steps}
     """
@@ -392,7 +423,7 @@ def main(_):
     ), f"Eval batch size ({FLAGS.config.viz_kwargs.eval_batch_size}) must be divisible by the number of devices ({len(devices)})"
 
     # create a 1D mesh with a single axis named "batch"
-    mesh = Mesh(jax.devices(), axis_names="batch")
+    mesh = Mesh(devices, axis_names="batch")
     # Our batches will be data-parallel sharded -- each device will get a slice of the batch
     dp_sharding = NamedSharding(mesh, PartitionSpec("batch"))
     # Our model will be replicated across devices (we are only doing data parallelism, not model parallelism)
