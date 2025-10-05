@@ -25,6 +25,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from vggt.models.vggt import VGGT
+from contextlib import nullcontext
 
 from octo.data.dataset import make_single_dataset
 from octo.model.octo_model import OctoModel
@@ -186,12 +187,27 @@ class TorchVGGTExtractor:
         self.agg_layers = int(agg_layers)
         self.layer_indices = layer_indices
         self.model = VGGT.from_pretrained("facebook/VGGT-1B").to(self.device).eval()
+        # Pick AMP dtype (bf16 on Hopper/Ampere+, else fp16). CPU -> no autocast
+        if self.device.type == 'cuda':
+            try:
+                major, _ = torch.cuda.get_device_capability()
+                self.amp_dtype = torch.bfloat16 if major >= 8 else torch.float16
+            except Exception:
+                self.amp_dtype = torch.float16
+        else:
+            self.amp_dtype = None
 
     @torch.no_grad()
     def extract_layers(self, chw_images: np.ndarray):
         x = torch.from_numpy(chw_images).to(self.device)  # [K,3,H,W]
         x = x.unsqueeze(1)  # [K,1,3,H,W]
-        output_list, patch_start_idx = self.model.aggregator(x)
+        amp_ctx = (
+            torch.cuda.amp.autocast(dtype=self.amp_dtype)
+            if (self.device.type == 'cuda' and self.amp_dtype is not None)
+            else nullcontext()
+        )
+        with amp_ctx:
+            output_list, patch_start_idx = self.model.aggregator(x)
         all_layers = []
         for t in output_list:  # [K,1,P,2048]
             t = t[:, 0]  # [K,P,2048]
