@@ -96,6 +96,7 @@ config_flags.DEFINE_config_file(
 # --- New CLI flags for online VGGT + AE ---
 flags.DEFINE_string("ae_path", None, "Path to trained AE .pt file (required to enable online VGGT)")
 flags.DEFINE_bool("vggt_use_cuda", True, "Use CUDA for VGGT/AE if available.")
+flags.DEFINE_integer("vggt_device_id", 0, "CUDA device index to run VGGT/AE on (when vggt_use_cuda=True).")
 flags.DEFINE_integer("vggt_input_res", 224, "VGGT input resolution (square).")
 flags.DEFINE_integer("vggt_eval_batch_size", 16, "Batch size for VGGT forward inside process_batch.")
 flags.DEFINE_integer("vggt_agg_layers", 24, "Number of layers to aggregate (24 for all; or subset).")
@@ -292,7 +293,13 @@ def _init_vggt_online_if_needed():
     if VGGT_ONLINE_STATE["extractor"] is not None and VGGT_ONLINE_STATE["compressor"] is not None:
         return
 
-    device = torch.device('cuda' if (FLAGS.vggt_use_cuda and torch.cuda.is_available()) else 'cpu')
+    if FLAGS.vggt_use_cuda and torch.cuda.is_available():
+        try:
+            device = torch.device(f'cuda:{int(FLAGS.vggt_device_id)}')
+        except Exception:
+            device = torch.device('cuda')
+    else:
+        device = torch.device('cpu')
 
     # Parse layer indices
     if FLAGS.vggt_agg_layers < 24:
