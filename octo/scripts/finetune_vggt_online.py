@@ -261,17 +261,22 @@ def preprocess_images_in_memory(images_np: np.ndarray, target_size: int) -> np.n
     return np.stack(processed_images, axis=0)
 
 
-def resize_and_stack_per_layer(features_klnd: np.ndarray, sqrt_n: int, target_tokens_hw: int) -> np.ndarray:
-    """Bilinear downsample per-layer spatial grid to target_side x target_side and return [K,L,T,D] with T=target_hw."""
+def resize_and_stack_per_layer(
+    features_klnd: np.ndarray,
+    sqrt_n: int,
+    target_tokens_hw: int,
+    device: torch.device,
+) -> torch.Tensor:
+    """GPU bilinear downsample per-layer spatial grid to target_side x target_side and return torch.Tensor [K,L,T,D]."""
     K, L, N, D = features_klnd.shape
     s = sqrt_n
-    x = torch.from_numpy(features_klnd).float()          # [K,L,N,D]
-    x = x.reshape(K * L, s, s, D).permute(0, 3, 1, 2)
+    x = torch.from_numpy(features_klnd).to(device=device, dtype=torch.float32)  # [K,L,N,D]
+    x = x.reshape(K * L, s, s, D).permute(0, 3, 1, 2).contiguous()
 
     target_side = int(np.sqrt(target_tokens_hw))
     x_small = F.interpolate(x, size=(target_side, target_side), mode='bilinear', align_corners=False)
     x_small = x_small.permute(0, 2, 3, 1).contiguous().view(K, L, target_side * target_side, D)
-    return x_small.numpy()
+    return x_small  # stays on device
 
 
 # Global state for online VGGT
@@ -356,14 +361,14 @@ def compute_vggt_tokens_for_batch(image_5d: np.ndarray) -> np.ndarray:
     tokens_per_image_list: List[np.ndarray] = []
     for j in range(0, chw.shape[0], batch_size):
         sub = chw[j:j + batch_size]
-        klnd, sqrt_n = extractor.extract_layers(sub)         # [K,L,N,D]
-        k_l_t_d = resize_and_stack_per_layer(klnd, sqrt_n, target_tokens_hw)   # [K,L,T,D]
+        klnd, sqrt_n = extractor.extract_layers(sub)         # [K,L,N,D] on CPU numpy
+        k_l_t_d = resize_and_stack_per_layer(klnd, sqrt_n, target_tokens_hw, extractor.device)   # torch [K,L,T,D] on device
 
         K, L, TT, D = k_l_t_d.shape
-        toks_ld = torch.from_numpy(k_l_t_d).float().view(K * TT, L, D)  # [K*T, L, D]
+        toks_ld = k_l_t_d.view(K * TT, L, D)  # [K*T, L, D] on device
         with torch.no_grad():
             z = compressor.compress_tokens(toks_ld)
-        z = z.view(K, TT, -1).cpu().numpy().astype(np.float32)  # [K, T, bottleneck]
+        z = z.view(K, TT, -1).detach().cpu().numpy().astype(np.float32)  # [K, T, bottleneck]
         tokens_per_image_list.append(z)
 
     tokens_bt_t_d = np.concatenate(tokens_per_image_list, axis=0)   # [B*T, 64, 512]
