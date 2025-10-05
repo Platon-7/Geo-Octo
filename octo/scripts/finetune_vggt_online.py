@@ -212,10 +212,17 @@ class TorchVGGTExtractor:
             self.amp_dtype = None
 
     @torch.no_grad()
-    def extract_layers(self, chw_images: np.ndarray):
-        # Use pinned host memory and non_blocking H2D copies for speed
-        x = torch.from_numpy(chw_images).pin_memory()  # [K,3,H,W]
-        x = x.to(self.device, non_blocking=True)
+    def extract_layers(self, chw_images):
+        # Accept torch.Tensor or np.ndarray. Use pinned host memory and non_blocking H2D copies for speed
+        if isinstance(chw_images, torch.Tensor):
+            x = chw_images
+            if x.device != self.device:
+                x = x.to(self.device, non_blocking=True)
+            if not x.is_contiguous():
+                x = x.contiguous()
+        else:
+            x = torch.from_numpy(chw_images).pin_memory()  # [K,3,H,W]
+            x = x.to(self.device, non_blocking=True)
         try:
             x = x.contiguous(memory_format=torch.channels_last)
         except Exception:
@@ -428,7 +435,27 @@ def compute_vggt_tokens_for_batch(image_5d: np.ndarray) -> np.ndarray:
     # Flatten across time
     t0 = time.perf_counter()
     images_bt = images_np.reshape(B * T, H, W, C)
-    chw = preprocess_images_in_memory(images_bt, FLAGS.vggt_input_res)  # [K,3,H',W']
+    # Prefer GPU preprocessing when frames are already square; else fallback to CPU PIL path
+    if H == W:
+        tt0 = time.perf_counter()
+        chw = (
+            torch.from_numpy(images_bt)
+            .pin_memory()
+            .to(extractor.device, non_blocking=True)
+            .permute(0, 3, 1, 2)
+            .contiguous()
+            .float()
+            .div(255.0)
+        )  # [K,3,H,W]
+        if H != int(FLAGS.vggt_input_res):
+            chw = F.interpolate(chw, size=(int(FLAGS.vggt_input_res), int(FLAGS.vggt_input_res)), mode='bilinear', align_corners=False)
+        tt1 = time.perf_counter()
+        if do_profile:
+            # add to preprocess timing
+            t1 = t0 + (tt1 - tt0)
+    else:
+        chw = preprocess_images_in_memory(images_bt, FLAGS.vggt_input_res)  # [K,3,H',W']
+        t1 = time.perf_counter()
     t1 = time.perf_counter()
 
     # Process in chunks to bound memory
