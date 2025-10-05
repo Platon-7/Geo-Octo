@@ -16,6 +16,7 @@ import torch.nn.functional as F
 # Use Agg for headless environments
 import matplotlib
 matplotlib.use("Agg")
+import matplotlib.pyplot as plt
 
 # Reuse the official VGGT implementation shipped in this repo
 from vggt.models.vggt import VGGT
@@ -60,6 +61,14 @@ flags.DEFINE_float("aug_contrast_max", 1.1, "Random contrast max factor.")
 flags.DEFINE_float("aug_saturation_min", 0.9, "Random saturation min factor.")
 flags.DEFINE_float("aug_saturation_max", 1.1, "Random saturation max factor.")
 flags.DEFINE_float("aug_hue_delta", 0.05, "Random hue delta in [-delta, +delta] (HSV hue in [0,1]).")
+
+# Optional visualizations / verification
+flags.DEFINE_bool("pointmap_viz_enable", False, "If True, generate a few VGGT pointmap/conf visualizations.")
+flags.DEFINE_integer("pointmap_viz_count", 8, "Number of images to visualize with VGGT pointmap head.")
+flags.DEFINE_string("pointmap_viz_dir", None, "Directory to save pointmap visualizations (defaults under output_dir/pointmap_viz).")
+flags.DEFINE_bool("ae_verification_enable", True, "If True, run visual AE verification and save metrics/plots.")
+flags.DEFINE_integer("ae_verification_count", 8, "Number of images to use for the AE verification.")
+flags.DEFINE_string("ae_verification_dir", None, "Directory to save AE verification plots/metrics (defaults under output_dir/ae_verification).")
 
 
 # -------------------------
@@ -348,6 +357,128 @@ def _first_image_from_builder(builder) -> np.ndarray:
     return np.asarray(first_step['observation']['image'])
 
 
+@torch.no_grad()
+def visualize_pointmaps(builders: List[tfds.core.DatasetBuilder], extractor: TorchVGGTExtractor, max_images: int, out_dir: str, input_res: int):
+    os.makedirs(out_dir, exist_ok=True)
+    device = extractor.device
+    saved = 0
+    for img in _iter_images_from_builders(builders):
+        try:
+            chw = preprocess_images_in_memory(np.asarray([img]), input_res)  # [1,3,H,W]
+            x = torch.from_numpy(chw).to(device)
+            x = x.unsqueeze(1)  # [1,1,3,H,W]
+            preds = extractor.model(x)
+
+            conf = None
+            if isinstance(preds, dict) and 'world_points_conf' in preds:
+                conf = preds['world_points_conf'][0, 0].detach().cpu().numpy()
+            elif 'depth' in preds:
+                depth = preds['depth'][0, 0, ..., 0].detach().cpu().numpy()
+                mn, mx = float(np.nanmin(depth)), float(np.nanmax(depth))
+                conf = (depth - mn) / max(1e-6, (mx - mn))
+            elif 'depth_conf' in preds:
+                conf = preds['depth_conf'][0, 0].detach().cpu().numpy()
+            else:
+                if 'world_points' in preds:
+                    pts = preds['world_points'][0, 0].detach().cpu().numpy()  # [H,W,3]
+                    conf = np.linalg.norm(pts, axis=-1)
+                    mn, mx = float(np.nanmin(conf)), float(np.nanmax(conf))
+                    conf = (conf - mn) / max(1e-6, (mx - mn))
+                else:
+                    continue
+
+            fig, axs = plt.subplots(1, 2, figsize=(10, 5))
+            axs[0].imshow(img)
+            axs[0].set_title('Original')
+            axs[0].axis('off')
+            im = axs[1].imshow(conf, cmap='viridis')
+            axs[1].set_title('VGGT pointmap/conf')
+            axs[1].axis('off')
+            fig.colorbar(im, ax=axs[1], fraction=0.046, pad=0.04)
+            out_path = os.path.join(out_dir, f'pointmap_{saved:03d}.png')
+            fig.savefig(out_path, bbox_inches='tight')
+            plt.close(fig)
+            saved += 1
+            if saved >= max_images:
+                break
+        except Exception:
+            continue
+    logging.info("Saved %d pointmap visualizations to %s", saved, out_dir)
+
+
+@torch.no_grad()
+def verify_autoencoder_reconstruction(
+    builders: List[tfds.core.DatasetBuilder],
+    extractor: TorchVGGTExtractor,
+    compressor: AECompressor,
+    num_samples: int,
+    output_dir: str,
+    device: torch.device,
+):
+    """Visual + numerical check of AE reconstruction vs its target (fused mean)."""
+    from itertools import islice
+    from sklearn.metrics.pairwise import cosine_similarity
+    import torch.nn.functional as F
+
+    logging.info("--- Starting Autoencoder Verification Step ---")
+    os.makedirs(output_dir, exist_ok=True)
+
+    image_iterator = _iter_images_from_builders(builders)
+    metrics_path = os.path.join(output_dir, "metrics.txt")
+    with open(metrics_path, "w") as f:
+        f.write("idx\tMSE\tmean_cos\n")
+
+    for i, original_image_np in enumerate(islice(image_iterator, num_samples)):
+        try:
+            chw_image = preprocess_images_in_memory(np.asarray([original_image_np]), FLAGS.vggt_input_res)
+            klnd, sqrt_n = extractor.extract_layers(chw_image)      # [1, L, N, D]
+            k_l_t_d = resize_and_stack_per_layer(klnd, sqrt_n)      # [1, L, T, D]
+            K, L, T, D = k_l_t_d.shape
+
+            k_l_t_d_torch = torch.from_numpy(k_l_t_d).float().to(device)
+            tokens_ld = k_l_t_d_torch.view(K * T, L, D)
+
+            with torch.no_grad():
+                compressor.eval()
+                z, recon, gt = compressor(tokens_ld)
+            recon = recon.view(K, T, D)
+            gt    = gt.view(K, T, D)
+
+            mse_loss = float(F.mse_loss(recon, gt).cpu().item())
+
+            gt_np = gt.squeeze(0).cpu().numpy()
+            recon_np = recon.squeeze(0).cpu().numpy()
+            eps = 1e-8
+            a = gt_np / (np.linalg.norm(gt_np, axis=1, keepdims=True) + eps)
+            b = recon_np / (np.linalg.norm(recon_np, axis=1, keepdims=True) + eps)
+            mean_cos = float((a * b).sum(axis=1).mean())
+
+            with open(metrics_path, "a") as f:
+                f.write(f"{i}\t{mse_loss:.6f}\t{mean_cos:.6f}\n")
+
+            gt_sim = cosine_similarity(gt_np)
+            recon_sim = cosine_similarity(recon_np)
+
+            fig, axs = plt.subplots(1, 3, figsize=(18, 6))
+            axs[0].imshow(original_image_np)
+            axs[0].set_title("Original Image")
+            axs[0].axis('off')
+            im1 = axs[1].imshow(gt_sim)
+            axs[1].set_title("GT Similarity (fused target)")
+            fig.colorbar(im1, ax=axs[1], fraction=0.046, pad=0.04)
+            im2 = axs[2].imshow(recon_sim)
+            axs[2].set_title(f"Recon Similarity (MSE: {mse_loss:.4f}, cos: {mean_cos:.5f})")
+            fig.colorbar(im2, ax=axs[2], fraction=0.046, pad=0.04)
+            out_path = os.path.join(output_dir, f"ae_verification_{i:02d}.png")
+            fig.savefig(out_path, bbox_inches='tight')
+            plt.close(fig)
+            logging.info("Saved AE verification plot to %s", out_path)
+        except Exception as e:
+            logging.error("Failed to verify AE on sample %d: %s", i, e, exc_info=True)
+
+    logging.info("--- Autoencoder Verification Finished ---")
+
+
 def _iter_images_from_builders(builders: List[tfds.core.DatasetBuilder]):
     for builder in builders:
         try:
@@ -616,6 +747,21 @@ def main(_):
     logging.info("Fitting autoencoder compressor (samples=%d, epochs=%d)...", FLAGS.compression_samples, FLAGS.ae_epochs)
     compressor = _fit_autoencoder(original_builders, extractor, target_size, device)
     eval_ae(original_builders, extractor, compressor, num_tokens=512)
+
+    # Optional AE verification (plots + metrics) before/after saving
+    if FLAGS.ae_verification_enable:
+        verification_dir = FLAGS.ae_verification_dir or os.path.join(FLAGS.output_dir, "ae_verification")
+        try:
+            verify_autoencoder_reconstruction(
+                builders=original_builders,
+                extractor=extractor,
+                compressor=compressor,
+                num_samples=int(FLAGS.ae_verification_count),
+                output_dir=verification_dir,
+                device=device,
+            )
+        except Exception as e:
+            logging.warning("AE verification failed: %s", e)
 
     # Save AE
     os.makedirs(FLAGS.output_dir, exist_ok=True)
