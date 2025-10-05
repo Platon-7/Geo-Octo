@@ -27,6 +27,8 @@ import torch.nn.functional as F
 from vggt.models.vggt import VGGT
 from contextlib import nullcontext
 import time
+from concurrent.futures import ThreadPoolExecutor, Future
+from collections import deque
 
 from octo.data.dataset import make_single_dataset
 from octo.model.octo_model import OctoModel
@@ -110,6 +112,8 @@ flags.DEFINE_bool("jax_use_first_device_only", True, "Restrict JAX to the first 
 flags.DEFINE_bool("profile_vggt", False, "If True, print VGGT/AE timing breakdowns per batch.")
 flags.DEFINE_integer("profile_vggt_every", 50, "Print VGGT profile every N batches (1=every batch).")
 flags.DEFINE_bool("compile_vggt", False, "If True, compile VGGT aggregator for potential speedups.")
+flags.DEFINE_bool("overlap_vggt_with_train", True, "If True, compute VGGT tokens for the next batch in parallel with JAX train on current batch (2-GPU overlap).")
+flags.DEFINE_integer("prefetch_batches", 2, "Number of future batches to precompute VGGT tokens for when overlapping.")
 
 
 # =========================
@@ -716,15 +720,42 @@ def main(_):
         frame_transform_kwargs=FLAGS.config.frame_transform_kwargs,
         train=True,
     )
-    train_data_iter = (
+    raw_iter = (
         dataset.repeat()
         .unbatch()
         .shuffle(FLAGS.config.shuffle_buffer_size)
         .batch(FLAGS.config.batch_size)
         .iterator()
     )
-    train_data_iter = map(process_batch, train_data_iter)
-    example_batch = next(train_data_iter)
+
+    # Helper to process one batch (VGGT tokens + text etc.)
+    def process_batch_fn(b):
+        return process_batch(b)
+
+    # Build example_batch synchronously
+    example_batch = process_batch_fn(next(raw_iter))
+
+    # Optional overlap: precompute tokens for the next batches on a background thread
+    overlap_enabled = bool(FLAGS.overlap_vggt_with_train) and (len(jax.devices()) >= 1)
+    prefetch_depth = max(0, int(FLAGS.prefetch_batches))
+    executor: ThreadPoolExecutor = ThreadPoolExecutor(max_workers=1) if overlap_enabled and prefetch_depth > 0 else None
+    prefetch_q: deque[Future] = deque()
+
+    def _submit_next():
+        try:
+            nxt = next(raw_iter)
+        except StopIteration:
+            return False
+        fut = executor.submit(process_batch_fn, nxt) if executor is not None else None
+        if fut is not None:
+            prefetch_q.append(fut)
+        return True
+
+    if executor is not None:
+        # Pre-fill the queue
+        for _ in range(prefetch_depth):
+            if not _submit_next():
+                break
 
     obs = example_batch.get("observation", {})
     img = obs.get("image_primary")
@@ -1049,7 +1080,20 @@ def main(_):
         timer.tick("total")
 
         with timer("dataset"):
-            batch = next(train_data_iter)
+            if executor is None:
+                # No overlap: process synchronously
+                batch = process_batch_fn(next(raw_iter))
+            else:
+                # Overlap: get the oldest completed future and top-up queue
+                try:
+                    batch = example_batch if i == start_step else prefetch_q.popleft().result()
+                except IndexError:
+                    # In case queue drained unexpectedly, fall back to sync
+                    batch = process_batch_fn(next(raw_iter))
+                # Top up the queue
+                while executor is not None and len(prefetch_q) < prefetch_depth:
+                    if not _submit_next():
+                        break
 
         if not _batch_check_printed:
             print("\n" + "="*50)
@@ -1136,6 +1180,13 @@ def main(_):
                 logging.info("Saving final checkpoint before early stop...")
                 save_callback(train_state, i + 1)
             break
+
+    # Cleanup executor
+    try:
+        if executor is not None:
+            executor.shutdown(wait=False, cancel_futures=True)
+    except Exception:
+        pass
 
 
 if __name__ == "__main__":
