@@ -342,7 +342,7 @@ class WeightedLayerFuser(nn.Module):
 
 
 class AECompressor(nn.Module):
-    def __init__(self, num_layers: int, input_dim: int, bottleneck_dim: int = 512, hidden_dim: int = 2048):
+    def __init__(self, num_layers: int, input_dim: int, bottleneck_dim: int = 512, hidden_dim: int = 4096):
         super().__init__()
         self.fuser = WeightedLayerFuser(num_layers)
         self.encoder = nn.Sequential(
@@ -384,11 +384,11 @@ class TorchVGGTExtractor:
         x = x.unsqueeze(1)  # [K,1,3,H,W]
         output_list, patch_start_idx = self.model.aggregator(x)
         all_layers = []
-        for t in output_list:  # [K,1,P,2048]
-            t = t[:, 0]  # [K,P,2048]
+        for t in output_list:  # [K,1,P,4096]
+            t = t[:, 0]  # [K,P,4096]
             t = t[:, patch_start_idx:, :]
             all_layers.append(t)
-        layers = torch.stack(all_layers, dim=0).permute(1, 0, 2, 3)  # [K,L,N,2048]
+        layers = torch.stack(all_layers, dim=0).permute(1, 0, 2, 3)  # [K,L,N,4096]
         if self.agg_layers < 24:
             idx = self.layer_indices if (self.layer_indices and len(self.layer_indices) > 0) else [3, 10, 16, 22]
             layers = layers[:, idx, :, :]
@@ -622,7 +622,7 @@ def eval_libero(cfg: GenerateConfig) -> float:
                 L = klnd.shape[1]
                 D = klnd.shape[3]
 
-                compressor = AECompressor(num_layers=L, input_dim=D, bottleneck_dim=512, hidden_dim=2048)
+                compressor = AECompressor(num_layers=L, input_dim=D, bottleneck_dim=512, hidden_dim=4096)
                 compressor.load_state_dict(torch.load(cfg.vggt_ae_path, map_location='cpu'))
                 compressor = compressor.to(device).eval()
 

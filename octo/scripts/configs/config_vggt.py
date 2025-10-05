@@ -136,12 +136,21 @@ def get_config(config_string="full,multimodal"):
         ],
     )
 
+    # frame_transform_kwargs = dict(
+    #     resize_size={
+    #         "primary": (256, 256),  # workspace (3rd person) camera is at 256x256
+    #         "wrist": (128, 128),  # wrist camera is at 128x128
+    #     },
+    #     image_augment_kwargs={},
+    # )
     frame_transform_kwargs = dict(
         resize_size={
             "primary": (256, 256),  # workspace (3rd person) camera is at 256x256
             "wrist": (128, 128),  # wrist camera is at 128x128
         },
-        image_augment_kwargs={},
+        image_augment_kwargs=dict(
+            primary=workspace_augment_kwargs,
+        ),
     )
     
     # If the default data loading speed is too slow, try these:
@@ -152,42 +161,9 @@ def get_config(config_string="full,multimodal"):
     config["traj_transform_kwargs"] = traj_transform_kwargs
     config["frame_transform_kwargs"] = frame_transform_kwargs
     
-    
-#     config['update_config'] = {
-#     "model": {
-#         "observation_tokenizers": {
-#             "mixed_vision": ModuleSpec.create(
-#                 "octo.model.components.tokenizers:VisionMixer",
-#                 patch_tokenizer_spec={
-#                     "module": "octo.model.components.tokenizers:ImageTokenizer",
-#                     "kwargs": {
-#                         "encoder": ModuleSpec.create(
-#                             "octo.model.components.vit_encoders:PatchEncoder",
-#                             patch_size=32,
-#                             num_features=512,
-#                         ),
-#                         "obs_stack_keys": ("image_primary",),
-#                     },
-#                 },
-#                 vggt_tokenizer_spec={
-#                     "module": "octo.model.components.tokenizers:VGGTTokenizer",
-#                 },
-#             ),
-#         },
-#         "repeat_task_tokens": True,
-#     }
-# }
-    
-    
     config['config_delete_keys'] = {
         "model": {"observation_tokenizers": {"wrist": True}}
     }
-    
-    # config['config_delete_keys'] = {
-    #     "model": {
-    #         "observation_tokenizers": True  # remove the entire dict from the base config
-    #     }
-    # }
     
 
 #     # VGGT ONLY VERSION
