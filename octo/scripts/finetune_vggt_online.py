@@ -68,6 +68,17 @@ print("jaxlib path:", jaxlib.__file__)
 print("devices:", jax.devices())
 print("=========================")
 
+# Torch performance knobs (safe no-ops on older GPUs)
+try:
+    torch.backends.cuda.matmul.allow_tf32 = True
+    torch.backends.cudnn.allow_tf32 = True
+    torch.backends.cudnn.benchmark = True
+    # Hint PyTorch to pick TF32 when possible
+    if hasattr(torch, "set_float32_matmul_precision"):
+        torch.set_float32_matmul_precision("high")
+except Exception:
+    pass
+
 # Keep existing flags
 flags.DEFINE_string("name", "experiment", "Experiment name.")
 flags.DEFINE_bool("debug", False, "Debug config (no wandb logging)")
@@ -190,6 +201,12 @@ class TorchVGGTExtractor:
         self.agg_layers = int(agg_layers)
         self.layer_indices = layer_indices
         self.model = VGGT.from_pretrained("facebook/VGGT-1B").to(self.device).eval()
+        # Optionally compile aggregator for Torch 2.x
+        try:
+            if hasattr(torch, "compile"):
+                self.model.aggregator = torch.compile(self.model.aggregator, mode="reduce-overhead", fullgraph=False)
+        except Exception:
+            pass
         # Pick AMP dtype (bf16 on Hopper/Ampere+, else fp16). CPU -> no autocast
         if self.device.type == 'cuda':
             try:
@@ -202,7 +219,12 @@ class TorchVGGTExtractor:
 
     @torch.no_grad()
     def extract_layers(self, chw_images: np.ndarray):
-        x = torch.from_numpy(chw_images).to(self.device)  # [K,3,H,W]
+        if self.device.type == 'cuda':
+            x = torch.from_numpy(chw_images).pin_memory().to(self.device, non_blocking=True)  # [K,3,H,W]
+        else:
+            x = torch.from_numpy(chw_images).to(self.device)  # [K,3,H,W]
+        # channels_last can speed up the early conv stems
+        x = x.to(memory_format=torch.channels_last)
         x = x.unsqueeze(1)  # [K,1,3,H,W]
         amp_ctx = (
             torch.cuda.amp.autocast(dtype=self.amp_dtype)
@@ -224,14 +246,33 @@ class TorchVGGTExtractor:
 
         K, L, N, D = layers.shape
         sqrt_n = int(round(np.sqrt(N)))
-        return layers.detach().cpu().numpy(), sqrt_n
+        # Keep features on device to avoid CPU round-trips; callers can decide when to move
+        return layers, sqrt_n
 
 
 def preprocess_images_in_memory(images_np: np.ndarray, target_size: int) -> np.ndarray:
-    """Aspect-preserving resize to nearest multiple of 14 and white-pad to square; returns CHW floats in [0,1]."""
+    """Aspect-preserving resize to nearest multiple of 14 and white-pad to square; returns CHW floats in [0,1].
+
+    Fast-path: if all images are already RGB and square at target_size, avoid PIL and just transpose/normalize.
+    """
     from PIL import Image
 
     processed_images = []
+    # Fast path: all images are already (H=W=target_size, C=3)
+    try:
+        if (
+            images_np.ndim == 4
+            and images_np.shape[-1] == 3
+            and np.all(images_np.shape[1] == images_np.shape[2])
+            and int(images_np.shape[1]) == int(target_size)
+            and images_np.dtype == np.uint8
+        ):
+            arr = images_np.astype(np.float32) / 255.0  # [N,H,W,3]
+            arr = np.transpose(arr, (0, 3, 1, 2))       # [N,3,H,W]
+            return arr
+    except Exception:
+        # Fall back to PIL path
+        pass
     for img_array in images_np:
         pil_image = Image.fromarray(img_array)
 
@@ -265,15 +306,22 @@ def preprocess_images_in_memory(images_np: np.ndarray, target_size: int) -> np.n
 
 
 def resize_and_stack_per_layer(
-    features_klnd: np.ndarray,
+    features_klnd,
     sqrt_n: int,
     target_tokens_hw: int,
     device: torch.device,
 ) -> torch.Tensor:
-    """GPU bilinear downsample per-layer spatial grid to target_side x target_side and return torch.Tensor [K,L,T,D]."""
-    K, L, N, D = features_klnd.shape
+    """GPU bilinear downsample per-layer spatial grid to target_side x target_side and return torch.Tensor [K,L,T,D].
+
+    Accepts either a torch.Tensor on any device or a NumPy array; keeps result on `device`.
+    """
+    if isinstance(features_klnd, torch.Tensor):
+        x = features_klnd.to(device=device, dtype=torch.float32)
+        K, L, N, D = x.shape
+    else:
+        K, L, N, D = features_klnd.shape
+        x = torch.from_numpy(features_klnd).to(device=device, dtype=torch.float32)  # [K,L,N,D]
     s = sqrt_n
-    x = torch.from_numpy(features_klnd).to(device=device, dtype=torch.float32)  # [K,L,N,D]
     x = x.reshape(K * L, s, s, D).permute(0, 3, 1, 2).contiguous()
 
     target_side = int(np.sqrt(target_tokens_hw))
@@ -370,7 +418,7 @@ def compute_vggt_tokens_for_batch(image_5d: np.ndarray) -> np.ndarray:
     tokens_per_image_list: List[np.ndarray] = []
     for j in range(0, chw.shape[0], batch_size):
         sub = chw[j:j + batch_size]
-        klnd, sqrt_n = extractor.extract_layers(sub)         # [K,L,N,D] on CPU numpy
+        klnd, sqrt_n = extractor.extract_layers(sub)         # [K,L,N,D] torch tensor on device
         k_l_t_d = resize_and_stack_per_layer(klnd, sqrt_n, target_tokens_hw, extractor.device)   # torch [K,L,T,D] on device
 
         K, L, TT, D = k_l_t_d.shape
