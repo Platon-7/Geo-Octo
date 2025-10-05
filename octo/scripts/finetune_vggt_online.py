@@ -633,24 +633,33 @@ def main(_):
     config.update(FLAGS.config.get("update_config", ConfigDict()))
     config = config.to_dict()
 
-    # Wrap the pretrained 'primary' tokenizer with VisionMixer, inheriting its exact spec
+    # Conditionally use VisionMixer or VGGT-only primary
     try:
         obs_toks = config["model"].get("observation_tokenizers", {})
         old_primary = obs_toks.get("primary")
         if isinstance(old_primary, dict):
-            obs_toks["primary"] = ModuleSpec.create(
-                "octo.model.components.tokenizers:VisionMixer",
-                patch_tokenizer_spec=old_primary,
-                vggt_tokenizer_spec={
-                    "module": "octo.model.components.tokenizers:VGGTTokenizer",
-                },
-                concat_mode=FLAGS.vggt_concat_mode,
-            )
-            config["model"]["observation_tokenizers"] = obs_toks
-            config["model"]["repeat_task_tokens"] = True
-            logging.info("Wrapped 'primary' with VisionMixer, inheriting pretrained encoder spec.")
+            if FLAGS.use_vision_encoder:
+                obs_toks["primary"] = ModuleSpec.create(
+                    "octo.model.components.tokenizers:VisionMixer",
+                    patch_tokenizer_spec=old_primary,
+                    vggt_tokenizer_spec={
+                        "module": "octo.model.components.tokenizers:VGGTTokenizer",
+                    },
+                    concat_mode=FLAGS.vggt_concat_mode,
+                )
+                config["model"]["observation_tokenizers"] = obs_toks
+                config["model"]["repeat_task_tokens"] = True
+                logging.info("Wrapped 'primary' with VisionMixer (patch + VGGT).")
+            else:
+                # VGGT-only path: replace primary with VGGTTokenizer directly
+                obs_toks["primary"] = ModuleSpec.create(
+                    "octo.model.components.tokenizers:VGGTTokenizer"
+                )
+                config["model"]["observation_tokenizers"] = obs_toks
+                config["model"]["repeat_task_tokens"] = False
+                logging.info("Using VGGTTokenizer as 'primary' (VGGT-only mode).")
     except Exception as _e:
-        logging.warning("Could not wrap primary with VisionMixer: %s", _e)
+        logging.warning("Could not configure primary vision tokenizer: %s", _e)
 
     #########
     # Setup Data Loader
