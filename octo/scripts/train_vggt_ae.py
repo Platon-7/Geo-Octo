@@ -40,12 +40,26 @@ flags.DEFINE_integer("vggt_agg_layers", 24, "Number of layers to aggregate (24 f
 flags.DEFINE_string("vggt_layer_indices", "3,10,16,22", "Comma-separated 0-based indices for subset (only when vggt_agg_layers < 24).")
 
 # AE settings
-flags.DEFINE_string("target_size", "64,512", "Output compressed size as 'height,width' => (n_tokens, feature_dim).")
+# Default target set to 256x512 tokens as requested
+flags.DEFINE_string("target_size", "256,512", "Output compressed size as 'height,width' => (n_tokens, feature_dim).")
 flags.DEFINE_integer("compression_samples", 2500, "Number of spatial tokens to sample for fitting the autoencoder.")
 flags.DEFINE_integer("ae_epochs", 3, "Autoencoder training epochs.")
 flags.DEFINE_float("ae_lr", 1e-3, "Autoencoder learning rate.")
 flags.DEFINE_integer("ae_hidden", 2048, "Autoencoder hidden dimension for MLP bottleneck.")
 flags.DEFINE_bool("use_weighted_layer_fusion", True, "If True, learn softmax layer weights; else uniform mean.")
+
+# Augmentation settings (mirroring config_vggt.py workspace_augment_kwargs)
+flags.DEFINE_bool("use_augmentations", True, "If True, augment images during AE sampling to improve robustness.")
+flags.DEFINE_float("aug_rrc_scale_min", 0.8, "RandomResizedCrop min scale fraction.")
+flags.DEFINE_float("aug_rrc_scale_max", 1.0, "RandomResizedCrop max scale fraction.")
+flags.DEFINE_float("aug_rrc_ratio_min", 0.9, "RandomResizedCrop min aspect ratio.")
+flags.DEFINE_float("aug_rrc_ratio_max", 1.1, "RandomResizedCrop max aspect ratio.")
+flags.DEFINE_float("aug_brightness_delta", 0.1, "Random brightness delta (factor in [1-d,1+d]).")
+flags.DEFINE_float("aug_contrast_min", 0.9, "Random contrast min factor.")
+flags.DEFINE_float("aug_contrast_max", 1.1, "Random contrast max factor.")
+flags.DEFINE_float("aug_saturation_min", 0.9, "Random saturation min factor.")
+flags.DEFINE_float("aug_saturation_max", 1.1, "Random saturation max factor.")
+flags.DEFINE_float("aug_hue_delta", 0.05, "Random hue delta in [-delta, +delta] (HSV hue in [0,1]).")
 
 
 # -------------------------
@@ -90,6 +104,106 @@ def preprocess_images_in_memory(images_np: np.ndarray, target_size: int) -> np.n
         processed_images.append(arr)
 
     return np.stack(processed_images, axis=0)
+
+
+# -------------------------
+# Augmentations (match config_vggt.py workspace_augment_kwargs and order)
+# -------------------------
+
+def _random_resized_crop(pil_image, scale_range: Tuple[float, float], ratio_range: Tuple[float, float]):
+    import random
+    width, height = pil_image.size
+    area = width * height
+    for _ in range(10):
+        target_area = area * random.uniform(scale_range[0], scale_range[1])
+        log_ratio_min = math.log(max(1e-6, ratio_range[0]))
+        log_ratio_max = math.log(max(1e-6, ratio_range[1]))
+        aspect = math.exp(random.uniform(log_ratio_min, log_ratio_max))
+        w = int(round((target_area * aspect) ** 0.5))
+        h = int(round((target_area / aspect) ** 0.5))
+        if w <= width and h <= height and w > 0 and h > 0:
+            i = random.randint(0, height - h)
+            j = random.randint(0, width - w)
+            return pil_image.crop((j, i, j + w, i + h))
+    # Fallback: center crop to min side
+    min_side = min(width, height)
+    i = (height - min_side) // 2
+    j = (width - min_side) // 2
+    return pil_image.crop((j, i, j + min_side, i + min_side))
+
+
+def _adjust_brightness(pil_image, delta: float):
+    from PIL import ImageEnhance
+    import random
+    factor = 1.0 + random.uniform(-delta, delta)
+    return ImageEnhance.Brightness(pil_image).enhance(max(0.0, factor))
+
+
+def _adjust_contrast(pil_image, cmin: float, cmax: float):
+    from PIL import ImageEnhance
+    import random
+    factor = random.uniform(cmin, cmax)
+    return ImageEnhance.Contrast(pil_image).enhance(max(0.0, factor))
+
+
+def _adjust_saturation(pil_image, smin: float, smax: float):
+    from PIL import ImageEnhance
+    import random
+    factor = random.uniform(smin, smax)
+    return ImageEnhance.Color(pil_image).enhance(max(0.0, factor))
+
+
+def _adjust_hue(pil_image, delta: float):
+    # Convert to HSV and shift hue by delta in [-d, d]
+    import random
+    from PIL import Image
+    if delta <= 0:
+        return pil_image
+    h_delta = random.uniform(-delta, delta)
+    hsv = pil_image.convert('HSV')
+    h, s, v = hsv.split()
+    # PIL uses 0..255 for channels
+    np_h = np.array(h, dtype=np.uint16)
+    np_h = (np_h + int(h_delta * 255)) % 256
+    h = Image.fromarray(np_h.astype(np.uint8), 'L')
+    return Image.merge('HSV', (h, s, v)).convert('RGB')
+
+
+def augment_images_in_memory(images_np: np.ndarray) -> np.ndarray:
+    """Apply augmentations in the order: random_resized_crop -> brightness -> contrast -> saturation -> hue.
+    Returns an array with the same number of images.
+    """
+    from PIL import Image
+    aug_images = []
+    for img_array in images_np:
+        pil_image = Image.fromarray(img_array)
+        if pil_image.mode == 'RGBA':
+            background = Image.new('RGBA', pil_image.size, (255, 255, 255, 255))
+            pil_image = Image.alpha_composite(background, pil_image)
+        pil_image = pil_image.convert('RGB')
+
+        # 1) RandomResizedCrop
+        pil_image = _random_resized_crop(
+            pil_image,
+            (FLAGS.aug_rrc_scale_min, FLAGS.aug_rrc_scale_max),
+            (FLAGS.aug_rrc_ratio_min, FLAGS.aug_rrc_ratio_max),
+        )
+
+        # 2) Random brightness
+        pil_image = _adjust_brightness(pil_image, FLAGS.aug_brightness_delta)
+
+        # 3) Random contrast
+        pil_image = _adjust_contrast(pil_image, FLAGS.aug_contrast_min, FLAGS.aug_contrast_max)
+
+        # 4) Random saturation
+        pil_image = _adjust_saturation(pil_image, FLAGS.aug_saturation_min, FLAGS.aug_saturation_max)
+
+        # 5) Random hue
+        pil_image = _adjust_hue(pil_image, FLAGS.aug_hue_delta)
+
+        aug_images.append(np.asarray(pil_image, dtype=np.uint8))
+
+    return np.stack(aug_images, axis=0)
 
 
 # -------------------------
@@ -307,7 +421,19 @@ def _sample_tokens_for_ae(
                 if images_np.size == 0:
                     continue
 
-                chw_images = preprocess_images_in_memory(images_np, FLAGS.vggt_input_res)
+                # Optionally augment; we will mix augmented and clean for robustness
+                if FLAGS.use_augmentations:
+                    try:
+                        aug_np = augment_images_in_memory(images_np)
+                        # Concatenate 1:1 clean and augmented (or just augmented if you prefer)
+                        mixed_np = np.concatenate([images_np, aug_np], axis=0)
+                    except Exception as _e:
+                        logging.warning("Augmentation failed; proceeding without aug for this episode: %s", _e)
+                        mixed_np = images_np
+                else:
+                    mixed_np = images_np
+
+                chw_images = preprocess_images_in_memory(mixed_np, FLAGS.vggt_input_res)
 
                 for j in range(0, chw_images.shape[0], batch_size):
                     if (per_builder_token_cap is not None and builder_yielded >= per_builder_token_cap) or total_yielded >= num_tokens:
@@ -315,9 +441,9 @@ def _sample_tokens_for_ae(
 
                     batch = chw_images[j:j + batch_size]
                     klnd, sqrt_n = extractor.extract_layers(batch)
-                    k_l_64_d = resize_and_stack_per_layer(klnd, sqrt_n)  # [K,L,64,D]
-                    K, L, S64, D = k_l_64_d.shape
-                    tokens = torch.from_numpy(k_l_64_d).float().view(K * S64, L, D).cpu()
+                    k_l_t_d = resize_and_stack_per_layer(klnd, sqrt_n)  # [K,L,T,D] where T = target_tokens
+                    K, L, T_tokens, D = k_l_t_d.shape
+                    tokens = torch.from_numpy(k_l_t_d).float().view(K * T_tokens, L, D).cpu()
 
                     buffer_tensor = tokens if buffer_tensor is None else torch.cat([buffer_tensor, tokens], dim=0)
                     if buffer_tensor.shape[0] > shuffle_buffer_size:
