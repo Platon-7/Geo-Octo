@@ -26,6 +26,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from vggt.models.vggt import VGGT
 from contextlib import nullcontext
+import time
 
 from octo.data.dataset import make_single_dataset
 from octo.model.octo_model import OctoModel
@@ -104,6 +105,10 @@ flags.DEFINE_string("vggt_layer_indices", "3,10,16,22", "Comma-separated 0-based
 flags.DEFINE_string("vggt_target_size", "256,512", "Target compressed size as 'height,width' => (n_tokens, feature_dim).")
 flags.DEFINE_integer("ae_hidden", 2048, "AE hidden dimension used in the checkpoint (must match).")
 flags.DEFINE_bool("jax_use_first_device_only", True, "Restrict JAX to the first visible GPU so VGGT can use another.")
+
+# Profiling toggles
+flags.DEFINE_bool("profile_vggt", False, "If True, print VGGT/AE timing breakdowns per batch.")
+flags.DEFINE_integer("profile_vggt_every", 50, "Print VGGT profile every N batches (1=every batch).")
 
 
 # =========================
@@ -290,6 +295,9 @@ VGGT_ONLINE_STATE = {
     "target_tokens": 256,
 }
 
+# Internal profiling counter
+_VGGT_PROFILE_CALLS = 0
+
 
 def _init_vggt_online_if_needed():
     if VGGT_ONLINE_STATE["extractor"] is not None and VGGT_ONLINE_STATE["compressor"] is not None:
@@ -361,27 +369,89 @@ def compute_vggt_tokens_for_batch(image_5d: np.ndarray) -> np.ndarray:
         raise ValueError(f"Expected (B,T,H,W,C) images; got shape {images_np.shape}")
     B, T, H, W, C = images_np.shape
 
+    global _VGGT_PROFILE_CALLS
+    do_profile = bool(FLAGS.profile_vggt)
+    should_print = False
+    if do_profile:
+        _VGGT_PROFILE_CALLS += 1
+        should_print = (_VGGT_PROFILE_CALLS % max(1, int(FLAGS.profile_vggt_every)) == 0)
+
     # Flatten across time
+    t0 = time.perf_counter()
     images_bt = images_np.reshape(B * T, H, W, C)
     chw = preprocess_images_in_memory(images_bt, FLAGS.vggt_input_res)  # [K,3,H',W']
+    t1 = time.perf_counter()
 
     # Process in chunks to bound memory
     batch_size = max(1, int(FLAGS.vggt_eval_batch_size))
     tokens_per_image_list: List[np.ndarray] = []
+    agg_time = 0.0
+    resize_time = 0.0
+    ae_time = 0.0
+    cpu_time = 0.0
+    max_mem = 0
+    if do_profile and extractor.device.type == 'cuda':
+        try:
+            torch.cuda.reset_peak_memory_stats(extractor.device)
+        except Exception:
+            pass
     for j in range(0, chw.shape[0], batch_size):
         sub = chw[j:j + batch_size]
+        if do_profile and extractor.device.type == 'cuda':
+            torch.cuda.synchronize(extractor.device)
+        t2 = time.perf_counter()
         klnd, sqrt_n = extractor.extract_layers(sub)         # [K,L,N,D] on CPU numpy
+        if do_profile and extractor.device.type == 'cuda':
+            torch.cuda.synchronize(extractor.device)
+        t3 = time.perf_counter()
         k_l_t_d = resize_and_stack_per_layer(klnd, sqrt_n, target_tokens_hw, extractor.device)   # torch [K,L,T,D] on device
+        if do_profile and extractor.device.type == 'cuda':
+            torch.cuda.synchronize(extractor.device)
+        t4 = time.perf_counter()
 
         K, L, TT, D = k_l_t_d.shape
         toks_ld = k_l_t_d.view(K * TT, L, D)  # [K*T, L, D] on device
         with torch.no_grad():
+            if do_profile and extractor.device.type == 'cuda':
+                torch.cuda.synchronize(extractor.device)
+            t5 = time.perf_counter()
             z = compressor.compress_tokens(toks_ld)
-        z = z.view(K, TT, -1).detach().cpu().numpy().astype(np.float32)  # [K, T, bottleneck]
-        tokens_per_image_list.append(z)
+        if do_profile and extractor.device.type == 'cuda':
+            torch.cuda.synchronize(extractor.device)
+        t6 = time.perf_counter()
+        z = z.view(K, TT, -1).detach()
+        t7 = time.perf_counter()
+        z_np = z.cpu().numpy().astype(np.float32)  # [K, T, bottleneck]
+        t8 = time.perf_counter()
+        tokens_per_image_list.append(z_np)
+
+        if do_profile:
+            agg_time += (t3 - t2)
+            resize_time += (t4 - t3)
+            ae_time += (t6 - t5)
+            cpu_time += (t8 - t7)
+            if extractor.device.type == 'cuda':
+                try:
+                    max_mem = max(max_mem, torch.cuda.max_memory_allocated(extractor.device))
+                except Exception:
+                    pass
 
     tokens_bt_t_d = np.concatenate(tokens_per_image_list, axis=0)   # [B*T,256, 512]
     tokens_b_t_t_d = tokens_bt_t_d.reshape(B, T, tokens_bt_t_d.shape[1], tokens_bt_t_d.shape[2])
+    t9 = time.perf_counter()
+
+    if do_profile and should_print:
+        pre_ms = (t1 - t0) * 1000.0
+        agg_ms = agg_time * 1000.0
+        resize_ms = resize_time * 1000.0
+        ae_ms = ae_time * 1000.0
+        cpu_ms = cpu_time * 1000.0
+        tot_ms = (t9 - t0) * 1000.0
+        mem_gib = max_mem / (1024**3) if max_mem else 0.0
+        logging.info(
+            "[VGGT PROFILE] B=%d T=%d res=%d bs=%d | pre=%.1fms agg=%.1fms resize=%.1fms ae=%.1fms cpu=%.1fms | total=%.1fms | peak=%.2fGiB",
+            B, T, int(FLAGS.vggt_input_res), int(batch_size), pre_ms, agg_ms, resize_ms, ae_ms, cpu_ms, tot_ms, mem_gib,
+        )
     return tokens_b_t_t_d
 
 
