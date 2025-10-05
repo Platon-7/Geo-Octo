@@ -305,17 +305,17 @@ def resize_and_stack_per_layer(
     else:
         x = x.float()
 
-    # Fast path: if already at target spatial size, just reshape
+    # Fast path: if already at target spatial size, just flatten spatial dims
     if s == target_side:
-        x_small = x.reshape(K, L, s, s, D)
+        x_small = x.reshape(K, L, s * s, D)
     else:
         x = x.reshape(K * L, s, s, D).permute(0, 3, 1, 2).contiguous()  # [K*L, D, s, s]
         x_small = F.interpolate(x, size=(target_side, target_side), mode='bilinear', align_corners=False)
         x_small = x_small.permute(0, 2, 3, 1).contiguous().view(K, L, target_side * target_side, D)
         return x_small  # early return keeps device/dtype
 
-    # If no interpolation, still return [K,L,T,D]
-    return x_small.permute(0, 2, 3, 1).contiguous().view(K, L, target_side * target_side, D)
+    # If no interpolation, already [K,L,T,D]
+    return x_small
 
 
 # Global state for online VGGT
