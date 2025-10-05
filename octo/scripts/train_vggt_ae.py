@@ -61,6 +61,12 @@ flags.DEFINE_float("aug_contrast_max", 1.1, "Random contrast max factor.")
 flags.DEFINE_float("aug_saturation_min", 0.9, "Random saturation min factor.")
 flags.DEFINE_float("aug_saturation_max", 1.1, "Random saturation max factor.")
 flags.DEFINE_float("aug_hue_delta", 0.05, "Random hue delta in [-delta, +delta] (HSV hue in [0,1]).")
+flags.DEFINE_float(
+    "augmentation_mix_ratio",
+    -1.0,
+    "Fraction of augmented samples in the mixed batch (0..1). "
+    "If <0, use 1:1 doubling (clean+aug concatenation)."
+)
 
 # Optional visualizations / verification
 flags.DEFINE_bool("pointmap_viz_enable", False, "If True, generate a few VGGT pointmap/conf visualizations.")
@@ -564,8 +570,26 @@ def _sample_tokens_for_ae(
                 if FLAGS.use_augmentations:
                     try:
                         aug_np = augment_images_in_memory(images_np)
-                        # Concatenate 1:1 clean and augmented (or just augmented if you prefer)
-                        mixed_np = np.concatenate([images_np, aug_np], axis=0)
+                        # Mix clean and augmented according to augmentation_mix_ratio
+                        mix_ratio = float(FLAGS.augmentation_mix_ratio)
+                        if mix_ratio < 0:
+                            # Default behavior: 1:1 doubling
+                            mixed_np = np.concatenate([images_np, aug_np], axis=0)
+                        else:
+                            N = images_np.shape[0]
+                            n_aug = int(round(mix_ratio * N))
+                            n_clean = max(0, N - n_aug)
+                            # Randomly sample without replacement
+                            perm = np.random.permutation(N)
+                            aug_idx = perm[:n_aug]
+                            clean_idx = perm[n_aug:n_aug + n_clean]
+                            mixed_np = np.concatenate([images_np[clean_idx], aug_np[aug_idx]], axis=0)
+                        # Debug: log mean absolute diff once
+                        try:
+                            mad = float(np.mean(np.abs(aug_np.astype(np.int16) - images_np.astype(np.int16))))
+                            logging.info("AE aug: mean abs diff=%.2f (H=%d W=%d)", mad, images_np.shape[1], images_np.shape[2])
+                        except Exception:
+                            pass
                     except Exception as _e:
                         logging.warning("Augmentation failed; proceeding without aug for this episode: %s", _e)
                         mixed_np = images_np
