@@ -184,6 +184,10 @@ def augment_images_in_memory(images_np: np.ndarray) -> np.ndarray:
     """
     from PIL import Image
     aug_images = []
+    # Enforce consistent output size across the batch to allow stacking
+    if images_np.ndim != 4:
+        raise ValueError(f"Expected images_np with shape [N,H,W,C], got {images_np.shape}")
+    out_h, out_w = int(images_np.shape[1]), int(images_np.shape[2])
     for img_array in images_np:
         pil_image = Image.fromarray(img_array)
         if pil_image.mode == 'RGBA':
@@ -209,6 +213,10 @@ def augment_images_in_memory(images_np: np.ndarray) -> np.ndarray:
 
         # 5) Random hue
         pil_image = _adjust_hue(pil_image, FLAGS.aug_hue_delta)
+
+        # Resize back to the episode's original (H,W) so all samples share the same shape
+        if pil_image.size != (out_w, out_h):
+            pil_image = pil_image.resize((out_w, out_h), Image.Resampling.BILINEAR)
 
         aug_images.append(np.asarray(pil_image, dtype=np.uint8))
 
