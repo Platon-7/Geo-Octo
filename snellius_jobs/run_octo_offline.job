@@ -83,7 +83,7 @@ srun -u python scripts/finetune_vggt.py \
     --config.pretrained_path=hf://rail-berkeley/octo-base-1.5 \
     --config.save_dir=/scratch-shared/tmp.cwkV8vOvfY/trained_models/my_octo_vggt_model_offline \
     --use_vision_encoder=True \
-    --vggt_concat_mode="tokens"
+    --vggt_concat_mode="features"
 
 # RESUME CODE
 # srun -u python scripts/finetune_vggt.py \

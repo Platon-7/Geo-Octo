@@ -26,6 +26,9 @@ import torch.nn as nn
 import torch.nn.functional as F
 from vggt.models.vggt import VGGT
 from contextlib import nullcontext
+import time
+from concurrent.futures import ThreadPoolExecutor, Future
+from collections import deque
 
 from octo.data.dataset import make_single_dataset
 from octo.model.octo_model import OctoModel
@@ -104,6 +107,13 @@ flags.DEFINE_string("vggt_layer_indices", "3,10,16,22", "Comma-separated 0-based
 flags.DEFINE_string("vggt_target_size", "256,512", "Target compressed size as 'height,width' => (n_tokens, feature_dim).")
 flags.DEFINE_integer("ae_hidden", 2048, "AE hidden dimension used in the checkpoint (must match).")
 flags.DEFINE_bool("jax_use_first_device_only", True, "Restrict JAX to the first visible GPU so VGGT can use another.")
+
+# Profiling toggles
+flags.DEFINE_bool("profile_vggt", False, "If True, print VGGT/AE timing breakdowns per batch.")
+flags.DEFINE_integer("profile_vggt_every", 50, "Print VGGT profile every N batches (1=every batch).")
+flags.DEFINE_bool("compile_vggt", False, "If True, compile VGGT aggregator for potential speedups.")
+flags.DEFINE_bool("overlap_vggt_with_train", True, "If True, compute VGGT tokens for the next batch in parallel with JAX train on current batch (2-GPU overlap).")
+flags.DEFINE_integer("prefetch_batches", 2, "Number of future batches to precompute VGGT tokens for when overlapping.")
 
 
 # =========================
@@ -190,6 +200,11 @@ class TorchVGGTExtractor:
         self.agg_layers = int(agg_layers)
         self.layer_indices = layer_indices
         self.model = VGGT.from_pretrained("facebook/VGGT-1B").to(self.device).eval()
+        if bool(getattr(FLAGS, 'compile_vggt', False)):
+            try:
+                self.model.aggregator = torch.compile(self.model.aggregator, mode="reduce-overhead", fullgraph=False)
+            except Exception:
+                pass
         # Pick AMP dtype (bf16 on Hopper/Ampere+, else fp16). CPU -> no autocast
         if self.device.type == 'cuda':
             try:
@@ -201,22 +216,35 @@ class TorchVGGTExtractor:
             self.amp_dtype = None
 
     @torch.no_grad()
-    def extract_layers(self, chw_images: np.ndarray):
-        x = torch.from_numpy(chw_images).to(self.device)  # [K,3,H,W]
+    def extract_layers(self, chw_images):
+        # Accept torch.Tensor or np.ndarray. Use pinned host memory and non_blocking H2D copies for speed
+        if isinstance(chw_images, torch.Tensor):
+            x = chw_images
+            if x.device != self.device:
+                x = x.to(self.device, non_blocking=True)
+            if not x.is_contiguous():
+                x = x.contiguous()
+        else:
+            x = torch.from_numpy(chw_images).pin_memory()  # [K,3,H,W]
+            x = x.to(self.device, non_blocking=True)
+        try:
+            x = x.contiguous(memory_format=torch.channels_last)
+        except Exception:
+            pass
         x = x.unsqueeze(1)  # [K,1,3,H,W]
         amp_ctx = (
             torch.cuda.amp.autocast(dtype=self.amp_dtype)
             if (self.device.type == 'cuda' and self.amp_dtype is not None)
             else nullcontext()
         )
-        with amp_ctx:
+        with amp_ctx, torch.inference_mode():
             output_list, patch_start_idx = self.model.aggregator(x)
         all_layers = []
         for t in output_list:  # [K,1,P,2048]
             t = t[:, 0]  # [K,P,2048]
             t = t[:, patch_start_idx:, :]  # keep only patch tokens => [K,N,2048]
             all_layers.append(t)
-        layers = torch.stack(all_layers, dim=0).permute(1, 0, 2, 3)  # [K,L,N,2048]
+        layers = torch.stack(all_layers, dim=0).permute(1, 0, 2, 3)  # [K,L,N,2048] on device
 
         if self.agg_layers < 24:
             idx = self.layer_indices if self.layer_indices else [3, 10, 16, 22]
@@ -224,7 +252,7 @@ class TorchVGGTExtractor:
 
         K, L, N, D = layers.shape
         sqrt_n = int(round(np.sqrt(N)))
-        return layers.detach().cpu().numpy(), sqrt_n
+        return layers.detach(), sqrt_n  # keep on device; caller decides dtype/transfer
 
 
 def preprocess_images_in_memory(images_np: np.ndarray, target_size: int) -> np.ndarray:
@@ -265,21 +293,40 @@ def preprocess_images_in_memory(images_np: np.ndarray, target_size: int) -> np.n
 
 
 def resize_and_stack_per_layer(
-    features_klnd: np.ndarray,
+    features_klnd,
     sqrt_n: int,
     target_tokens_hw: int,
     device: torch.device,
+    dtype: Optional[torch.dtype] = None,
 ) -> torch.Tensor:
-    """GPU bilinear downsample per-layer spatial grid to target_side x target_side and return torch.Tensor [K,L,T,D]."""
-    K, L, N, D = features_klnd.shape
-    s = sqrt_n
-    x = torch.from_numpy(features_klnd).to(device=device, dtype=torch.float32)  # [K,L,N,D]
-    x = x.reshape(K * L, s, s, D).permute(0, 3, 1, 2).contiguous()
+    """Downsample per-layer spatial grid to target_side x target_side on device; returns [K,L,T,D]."""
+    # Accept torch.Tensor (on device) or np.ndarray
+    if isinstance(features_klnd, np.ndarray):
+        x = torch.from_numpy(features_klnd).to(device=device)
+    else:
+        x = features_klnd.to(device)
 
+    K, L, N, D = x.shape
+    s = int(sqrt_n)
     target_side = int(np.sqrt(target_tokens_hw))
-    x_small = F.interpolate(x, size=(target_side, target_side), mode='bilinear', align_corners=False)
-    x_small = x_small.permute(0, 2, 3, 1).contiguous().view(K, L, target_side * target_side, D)
-    return x_small  # stays on device
+
+    # Cast to compute dtype if provided (e.g., fp16/bf16) for speed
+    if dtype is not None and str(device).startswith('cuda'):
+        x = x.to(dtype)
+    else:
+        x = x.float()
+
+    # Fast path: if already at target spatial size, just flatten spatial dims
+    if s == target_side:
+        x_small = x.reshape(K, L, s * s, D).contiguous()
+    else:
+        x = x.reshape(K * L, s, s, D).permute(0, 3, 1, 2).contiguous()  # [K*L, D, s, s]
+        x_small = F.interpolate(x, size=(target_side, target_side), mode='bilinear', align_corners=False)
+        x_small = x_small.permute(0, 2, 3, 1).contiguous().reshape(K, L, target_side * target_side, D)
+        return x_small  # early return keeps device/dtype
+
+    # If no interpolation, already [K,L,T,D]
+    return x_small
 
 
 # Global state for online VGGT
@@ -289,6 +336,9 @@ VGGT_ONLINE_STATE = {
     "compressor": None,
     "target_tokens": 256,
 }
+
+# Internal profiling counter
+_VGGT_PROFILE_CALLS = 0
 
 
 def _init_vggt_online_if_needed():
@@ -311,6 +361,24 @@ def _init_vggt_online_if_needed():
             layer_indices = [3, 10, 16, 22]
     else:
         layer_indices = None
+
+    # Global backend perf knobs
+    try:
+        import torch.backends.cuda as _cuda_backends
+        torch.backends.cudnn.benchmark = True
+        if hasattr(_cuda_backends, 'matmul'):
+            _cuda_backends.matmul.allow_tf32 = True
+        try:
+            torch.set_float32_matmul_precision('high')
+        except Exception:
+            pass
+        try:
+            # Prefer flash + mem-efficient SDPA kernels when available
+            _cuda_backends.sdp_kernel(enable_flash=True, enable_math=False, enable_mem_efficient=True)
+        except Exception:
+            pass
+    except Exception:
+        pass
 
     extractor = TorchVGGTExtractor(device, FLAGS.vggt_input_res, FLAGS.vggt_agg_layers, layer_indices)
 
@@ -361,27 +429,118 @@ def compute_vggt_tokens_for_batch(image_5d: np.ndarray) -> np.ndarray:
         raise ValueError(f"Expected (B,T,H,W,C) images; got shape {images_np.shape}")
     B, T, H, W, C = images_np.shape
 
+    global _VGGT_PROFILE_CALLS
+    do_profile = bool(FLAGS.profile_vggt)
+    should_print = False
+    if do_profile:
+        _VGGT_PROFILE_CALLS += 1
+        should_print = (_VGGT_PROFILE_CALLS % max(1, int(FLAGS.profile_vggt_every)) == 0)
+
     # Flatten across time
+    t0 = time.perf_counter()
     images_bt = images_np.reshape(B * T, H, W, C)
-    chw = preprocess_images_in_memory(images_bt, FLAGS.vggt_input_res)  # [K,3,H',W']
+    # Prefer GPU preprocessing when frames are already square; else fallback to CPU PIL path
+    if H == W:
+        tt0 = time.perf_counter()
+        chw = (
+            torch.from_numpy(images_bt)
+            .pin_memory()
+            .to(extractor.device, non_blocking=True)
+            .permute(0, 3, 1, 2)
+            .contiguous()
+            .float()
+            .div(255.0)
+        )  # [K,3,H,W]
+        if H != int(FLAGS.vggt_input_res):
+            chw = F.interpolate(chw, size=(int(FLAGS.vggt_input_res), int(FLAGS.vggt_input_res)), mode='bilinear', align_corners=False)
+        tt1 = time.perf_counter()
+        if do_profile:
+            # add to preprocess timing
+            t1 = t0 + (tt1 - tt0)
+    else:
+        chw = preprocess_images_in_memory(images_bt, FLAGS.vggt_input_res)  # [K,3,H',W']
+        t1 = time.perf_counter()
+    t1 = time.perf_counter()
 
     # Process in chunks to bound memory
     batch_size = max(1, int(FLAGS.vggt_eval_batch_size))
     tokens_per_image_list: List[np.ndarray] = []
+    agg_time = 0.0
+    resize_time = 0.0
+    ae_time = 0.0
+    cpu_time = 0.0
+    max_mem = 0
+    if do_profile and extractor.device.type == 'cuda':
+        try:
+            torch.cuda.reset_peak_memory_stats(extractor.device)
+        except Exception:
+            pass
     for j in range(0, chw.shape[0], batch_size):
         sub = chw[j:j + batch_size]
+        if do_profile and extractor.device.type == 'cuda':
+            torch.cuda.synchronize(extractor.device)
+        t2 = time.perf_counter()
         klnd, sqrt_n = extractor.extract_layers(sub)         # [K,L,N,D] on CPU numpy
-        k_l_t_d = resize_and_stack_per_layer(klnd, sqrt_n, target_tokens_hw, extractor.device)   # torch [K,L,T,D] on device
+        if do_profile and extractor.device.type == 'cuda':
+            torch.cuda.synchronize(extractor.device)
+        t3 = time.perf_counter()
+        k_l_t_d = resize_and_stack_per_layer(
+            klnd, sqrt_n, target_tokens_hw, extractor.device,
+            dtype=(extractor.amp_dtype if extractor.device.type == 'cuda' else None)
+        )   # torch [K,L,T,D] on device
+        if do_profile and extractor.device.type == 'cuda':
+            torch.cuda.synchronize(extractor.device)
+        t4 = time.perf_counter()
 
         K, L, TT, D = k_l_t_d.shape
         toks_ld = k_l_t_d.view(K * TT, L, D)  # [K*T, L, D] on device
         with torch.no_grad():
-            z = compressor.compress_tokens(toks_ld)
-        z = z.view(K, TT, -1).detach().cpu().numpy().astype(np.float32)  # [K, T, bottleneck]
-        tokens_per_image_list.append(z)
+            if do_profile and extractor.device.type == 'cuda':
+                torch.cuda.synchronize(extractor.device)
+            t5 = time.perf_counter()
+            amp_ctx2 = (
+                torch.cuda.amp.autocast(dtype=extractor.amp_dtype)
+                if (extractor.device.type == 'cuda' and extractor.amp_dtype is not None)
+                else nullcontext()
+            )
+            with amp_ctx2:
+                z = compressor.compress_tokens(toks_ld)
+        if do_profile and extractor.device.type == 'cuda':
+            torch.cuda.synchronize(extractor.device)
+        t6 = time.perf_counter()
+        z = z.view(K, TT, -1).detach()
+        t7 = time.perf_counter()
+        z_np = z.cpu().numpy().astype(np.float32)  # [K, T, bottleneck]
+        t8 = time.perf_counter()
+        tokens_per_image_list.append(z_np)
+
+        if do_profile:
+            agg_time += (t3 - t2)
+            resize_time += (t4 - t3)
+            ae_time += (t6 - t5)
+            cpu_time += (t8 - t7)
+            if extractor.device.type == 'cuda':
+                try:
+                    max_mem = max(max_mem, torch.cuda.max_memory_allocated(extractor.device))
+                except Exception:
+                    pass
 
     tokens_bt_t_d = np.concatenate(tokens_per_image_list, axis=0)   # [B*T,256, 512]
     tokens_b_t_t_d = tokens_bt_t_d.reshape(B, T, tokens_bt_t_d.shape[1], tokens_bt_t_d.shape[2])
+    t9 = time.perf_counter()
+
+    if do_profile and should_print:
+        pre_ms = (t1 - t0) * 1000.0
+        agg_ms = agg_time * 1000.0
+        resize_ms = resize_time * 1000.0
+        ae_ms = ae_time * 1000.0
+        cpu_ms = cpu_time * 1000.0
+        tot_ms = (t9 - t0) * 1000.0
+        mem_gib = max_mem / (1024**3) if max_mem else 0.0
+        logging.info(
+            "[VGGT PROFILE] B=%d T=%d res=%d bs=%d | pre=%.1fms agg=%.1fms resize=%.1fms ae=%.1fms cpu=%.1fms | total=%.1fms | peak=%.2fGiB",
+            B, T, int(FLAGS.vggt_input_res), int(batch_size), pre_ms, agg_ms, resize_ms, ae_ms, cpu_ms, tot_ms, mem_gib,
+        )
     return tokens_b_t_t_d
 
 
@@ -561,15 +720,42 @@ def main(_):
         frame_transform_kwargs=FLAGS.config.frame_transform_kwargs,
         train=True,
     )
-    train_data_iter = (
+    raw_iter = (
         dataset.repeat()
         .unbatch()
         .shuffle(FLAGS.config.shuffle_buffer_size)
         .batch(FLAGS.config.batch_size)
         .iterator()
     )
-    train_data_iter = map(process_batch, train_data_iter)
-    example_batch = next(train_data_iter)
+
+    # Helper to process one batch (VGGT tokens + text etc.)
+    def process_batch_fn(b):
+        return process_batch(b)
+
+    # Build example_batch synchronously
+    example_batch = process_batch_fn(next(raw_iter))
+
+    # Optional overlap: precompute tokens for the next batches on a background thread
+    overlap_enabled = bool(FLAGS.overlap_vggt_with_train) and (len(jax.devices()) >= 1)
+    prefetch_depth = max(0, int(FLAGS.prefetch_batches))
+    executor: ThreadPoolExecutor = ThreadPoolExecutor(max_workers=1) if overlap_enabled and prefetch_depth > 0 else None
+    prefetch_q: deque[Future] = deque()
+
+    def _submit_next():
+        try:
+            nxt = next(raw_iter)
+        except StopIteration:
+            return False
+        fut = executor.submit(process_batch_fn, nxt) if executor is not None else None
+        if fut is not None:
+            prefetch_q.append(fut)
+        return True
+
+    if executor is not None:
+        # Pre-fill the queue
+        for _ in range(prefetch_depth):
+            if not _submit_next():
+                break
 
     obs = example_batch.get("observation", {})
     img = obs.get("image_primary")
@@ -885,6 +1071,7 @@ def main(_):
             logging.warning("Disabling dump_train_images: imageio not available or cannot create output dir.")
 
     _batch_check_printed = False
+    jax_timer = Timer()
 
     for i in tqdm.tqdm(
         range(start_step, int(FLAGS.config.num_steps)),
@@ -894,7 +1081,20 @@ def main(_):
         timer.tick("total")
 
         with timer("dataset"):
-            batch = next(train_data_iter)
+            if executor is None:
+                # No overlap: process synchronously
+                batch = process_batch_fn(next(raw_iter))
+            else:
+                # Overlap: get the oldest completed future and top-up queue
+                try:
+                    batch = example_batch if i == start_step else prefetch_q.popleft().result()
+                except IndexError:
+                    # In case queue drained unexpectedly, fall back to sync
+                    batch = process_batch_fn(next(raw_iter))
+                # Top up the queue
+                while executor is not None and len(prefetch_q) < prefetch_depth:
+                    if not _submit_next():
+                        break
 
         if not _batch_check_printed:
             print("\n" + "="*50)
@@ -939,15 +1139,17 @@ def main(_):
                 except Exception as _e:
                     pass
 
+        jax_timer.tick("jax_train")
         with timer("train"):
             train_state, update_info = train_step(train_state, batch)
 
+        jax_timer.tock("jax_train")
         timer.tock("total")
 
         if (i + 1) % FLAGS.config.log_interval == 0:
             update_info = jax.device_get(update_info)
             wandb_log(
-                {"training": update_info, "timer": timer.get_average_times()}, step=i
+                {"training": update_info, "timer": timer.get_average_times(), "jax_step_timer": jax_timer.get_average_times()}, step=i
             )
 
         if (i + 1) % FLAGS.config.eval_interval == 0:
@@ -981,6 +1183,13 @@ def main(_):
                 logging.info("Saving final checkpoint before early stop...")
                 save_callback(train_state, i + 1)
             break
+
+    # Cleanup executor
+    try:
+        if executor is not None:
+            executor.shutdown(wait=False, cancel_futures=True)
+    except Exception:
+        pass
 
 
 if __name__ == "__main__":

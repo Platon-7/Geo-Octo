@@ -33,8 +33,8 @@ def get_config(config_string="full,multimodal"):
                 "octo.data.utils.data_utils:standardize_libero_vggt"
         ),
         # If the default data loading speed is too slow, try these:
-        # "num_parallel_reads": 8,  # for reading from disk / GCS
-        # "num_parallel_calls": 16,  # for initial dataset construction
+        "num_parallel_reads": 8,  # for reading from disk / GCS
+        "num_parallel_calls": 16,  # for initial dataset construction
     }
 
     if mode == "full":
@@ -156,7 +156,7 @@ def get_config(config_string="full,multimodal"):
     # If the default data loading speed is too slow, try these:
     config[
         "frame_transform_threads"
-    ] = 16  # for the most CPU-intensive ops (decoding, resizing, augmenting)
+    ] = 24  # for the most CPU-intensive ops (decoding, resizing, augmenting)
 
     config["traj_transform_kwargs"] = traj_transform_kwargs
     config["frame_transform_kwargs"] = frame_transform_kwargs

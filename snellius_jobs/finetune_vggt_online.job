@@ -22,8 +22,6 @@ export TF_FORCE_GPU_ALLOW_GROWTH=true
 export JAX_TRACEBACK_FILTERING=off
 export TOKENIZERS_PARALLELISM=false
 
-#export XLA_PYTHON_CLIENT_MEM_FRACTION=.7
-#export XLA_PYTHON_CLIENT_PREALLOCATE=false
 export JAX_PERSISTENT_CACHE_DISABLE=1
 export JAX_DISABLE_PERSISTENT_CACHE=1
 
@@ -79,6 +77,13 @@ PY
 export DISABLE_VGGT_TOKENS=0 # Set to 1 to disable VGGT tokens during training (debugging purposes)
 export CUDA_VISIBLE_DEVICES=0
 export XLA_VISIBLE_DEVICES=0
+export XLA_PYTHON_CLIENT_PREALLOCATE=false
+export XLA_PYTHON_CLIENT_MEM_FRACTION=0.75
+export XLA_PYTHON_CLIENT_ALLOCATOR=platform
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+export TORCH_BACKENDS_MATMUL_ALLOW_TF32=1
+export TORCH_CUDNN_ALLOW_TF32=1
+export JAX_DEFAULT_MATMUL_PRECISION=tensorfloat32
 
 
 srun -u python scripts/finetune_vggt_online.py \
@@ -89,7 +94,12 @@ srun -u python scripts/finetune_vggt_online.py \
   --vggt_concat_mode=features \
   --ae_path=/home/pkarageorgis/AE_Compressor/vggt_autoencoder_24L_256x512.pt \
   --ae_hidden=8192 \
-  --vggt_eval_batch_size=16 \
+  --vggt_eval_batch_size=48 \
   --vggt_use_cuda=True \
   --vggt_device_id=0 \
-  --jax_use_first_device_only=True
+  --jax_use_first_device_only=True \
+  --profile_vggt=True \
+  --profile_vggt_every=20 \
+  --overlap_vggt_with_train=False \
+  --compile_vggt=False \
+  --prefetch_batches=2
