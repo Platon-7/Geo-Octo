@@ -439,27 +439,27 @@ def compute_vggt_tokens_for_batch(image_5d: np.ndarray) -> np.ndarray:
     # Flatten across time
     t0 = time.perf_counter()
     images_bt = images_np.reshape(B * T, H, W, C)
-    # Prefer GPU preprocessing when frames are already square; else fallback to CPU PIL path
-    if H == W:
-        tt0 = time.perf_counter()
-        chw = (
-            torch.from_numpy(images_bt)
-            .pin_memory()
-            .to(extractor.device, non_blocking=True)
-            .permute(0, 3, 1, 2)
-            .contiguous()
-            .float()
-            .div(255.0)
-        )  # [K,3,H,W]
-        if H != int(FLAGS.vggt_input_res):
-            chw = F.interpolate(chw, size=(int(FLAGS.vggt_input_res), int(FLAGS.vggt_input_res)), mode='bilinear', align_corners=False)
-        tt1 = time.perf_counter()
-        if do_profile:
-            # add to preprocess timing
-            t1 = t0 + (tt1 - tt0)
+    # Prepare CHW on CPU pinned memory; move/resize/pad per-chunk on device to reduce upfront cost
+    # Ensure 3-channel RGB on CPU (pinned) before GPU transfer
+    if C == 4:
+        # Alpha composite over white background
+        rgb = images_bt[..., :3].astype(np.float32)
+        a = (images_bt[..., 3:4].astype(np.float32) / 255.0)
+        rgb = rgb * a + 255.0 * (1.0 - a)
+        images_bt_rgb = rgb
+    elif C == 1:
+        # Replicate grayscale to RGB
+        images_bt_rgb = np.repeat(images_bt, 3, axis=-1).astype(np.float32)
     else:
-        chw = preprocess_images_in_memory(images_bt, FLAGS.vggt_input_res)  # [K,3,H',W']
-        t1 = time.perf_counter()
+        images_bt_rgb = images_bt.astype(np.float32)
+
+    chw_cpu = (
+        torch.from_numpy(images_bt_rgb)
+        .pin_memory()
+        .permute(0, 3, 1, 2)
+        .contiguous()
+        .div(255.0)
+    )  # [K,3,H,W] on CPU (pinned, float32 in [0,1])
     t1 = time.perf_counter()
 
     # Process in chunks to bound memory
@@ -475,12 +475,34 @@ def compute_vggt_tokens_for_batch(image_5d: np.ndarray) -> np.ndarray:
             torch.cuda.reset_peak_memory_stats(extractor.device)
         except Exception:
             pass
-    for j in range(0, chw.shape[0], batch_size):
-        sub = chw[j:j + batch_size]
+    for j in range(0, chw_cpu.shape[0], batch_size):
+        # Move the sub-batch to device and aspect-preserve resize+pad there
+        sub_cpu = chw_cpu[j:j + batch_size]
+        sub = sub_cpu.to(extractor.device, non_blocking=True)
+        target_size = int(FLAGS.vggt_input_res)
+        # Compute target aspect-preserving size snapped to multiples of 14
+        if int(W) >= int(H):
+            new_w = target_size
+            new_h = int(round((H * (new_w / float(W))) / 14.0) * 14)
+        else:
+            new_h = target_size
+            new_w = int(round((W * (new_h / float(H))) / 14.0) * 14)
+        # Resize if needed
+        if int(new_h) != int(H) or int(new_w) != int(W):
+            sub = F.interpolate(sub, size=(int(new_h), int(new_w)), mode='bilinear', align_corners=False)
+        # Pad to square with white background (1.0)
+        pad_h = int(target_size - new_h)
+        pad_w = int(target_size - new_w)
+        if pad_h > 0 or pad_w > 0:
+            pad_top = pad_h // 2
+            pad_bottom = pad_h - pad_top
+            pad_left = pad_w // 2
+            pad_right = pad_w - pad_left
+            sub = F.pad(sub, (pad_left, pad_right, pad_top, pad_bottom), mode='constant', value=1.0)
         if do_profile and extractor.device.type == 'cuda':
             torch.cuda.synchronize(extractor.device)
         t2 = time.perf_counter()
-        klnd, sqrt_n = extractor.extract_layers(sub)         # [K,L,N,D] on CPU numpy
+        klnd, sqrt_n = extractor.extract_layers(sub)         # [K,L,N,D] on device (torch)
         if do_profile and extractor.device.type == 'cuda':
             torch.cuda.synchronize(extractor.device)
         t3 = time.perf_counter()
