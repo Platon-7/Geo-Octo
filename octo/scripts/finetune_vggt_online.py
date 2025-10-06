@@ -440,26 +440,20 @@ def compute_vggt_tokens_for_batch(image_5d: np.ndarray) -> np.ndarray:
     t0 = time.perf_counter()
     images_bt = images_np.reshape(B * T, H, W, C)
     # Prepare CHW on CPU pinned memory; move/resize/pad per-chunk on device to reduce upfront cost
-    # Ensure 3-channel RGB on CPU (pinned) before GPU transfer
+    # Ensure 3-channel RGB; avoid whole-batch float conversion on CPU to reduce 'pre'
     if C == 4:
-        # Alpha composite over white background
+        # Alpha composite over white background on CPU; produces float32 RGB
         rgb = images_bt[..., :3].astype(np.float32)
         a = (images_bt[..., 3:4].astype(np.float32) / 255.0)
-        rgb = rgb * a + 255.0 * (1.0 - a)
-        images_bt_rgb = rgb
+        images_bt_rgb = rgb * a + 255.0 * (1.0 - a)
     elif C == 1:
-        # Replicate grayscale to RGB
-        images_bt_rgb = np.repeat(images_bt, 3, axis=-1).astype(np.float32)
+        # Replicate grayscale to RGB on CPU; keep uint8
+        images_bt_rgb = np.repeat(images_bt, 3, axis=-1)
     else:
-        images_bt_rgb = images_bt.astype(np.float32)
+        images_bt_rgb = images_bt  # likely uint8 RGB
 
-    chw_cpu = (
-        torch.from_numpy(images_bt_rgb)
-        .pin_memory()
-        .permute(0, 3, 1, 2)
-        .contiguous()
-        .div(255.0)
-    )  # [K,3,H,W] on CPU (pinned, float32 in [0,1])
+    # Defer tensor creation and float normalization to per-chunk to cut 'pre'
+    chw_cpu = None  # no whole-batch CPU tensor
     t1 = time.perf_counter()
 
     # Process in chunks to bound memory
@@ -475,10 +469,14 @@ def compute_vggt_tokens_for_batch(image_5d: np.ndarray) -> np.ndarray:
             torch.cuda.reset_peak_memory_stats(extractor.device)
         except Exception:
             pass
-    for j in range(0, chw_cpu.shape[0], batch_size):
-        # Move the sub-batch to device and aspect-preserve resize+pad there
-        sub_cpu = chw_cpu[j:j + batch_size]
+    total_k = images_bt_rgb.shape[0]
+    for j in range(0, total_k, batch_size):
+        # Slice numpy -> CPU pinned tensor, then H2D and normalize on GPU
+        sub_np = images_bt_rgb[j:j + batch_size]
+        sub_cpu = torch.from_numpy(sub_np).pin_memory()
         sub = sub_cpu.to(extractor.device, non_blocking=True)
+        # NHWC -> NCHW and to [0,1] float on device
+        sub = sub.permute(0, 3, 1, 2).contiguous().float().div(255.0)
         target_size = int(FLAGS.vggt_input_res)
         # Compute target aspect-preserving size snapped to multiples of 14
         if int(W) >= int(H):
