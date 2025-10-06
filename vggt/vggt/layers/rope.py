@@ -22,41 +22,27 @@ from typing import Dict, Tuple
 
 
 class PositionGetter:
-    """Generates and caches 2D spatial positions for patches in a grid.
+    """Generates 2D spatial positions for patches in a grid.
 
-    This class efficiently manages the generation of spatial coordinates for patches
-    in a 2D grid, caching results to avoid redundant computations.
-
-    Attributes:
-        position_cache: Dictionary storing precomputed position tensors for different
-            grid dimensions.
+    NOTE: To be friendly with torch.compile/Inductor cudagraphs, we cache ONLY on CPU
+    and create a fresh device tensor per call. This avoids reusing graph outputs across runs.
     """
 
     def __init__(self):
-        """Initializes the position generator with an empty cache."""
-        self.position_cache: Dict[Tuple[int, int], torch.Tensor] = {}
+        # CPU cache: (H, W) -> LongTensor [H*W, 2] on CPU
+        self._cpu_cache: Dict[Tuple[int, int], torch.Tensor] = {}
 
     def __call__(self, batch_size: int, height: int, width: int, device: torch.device) -> torch.Tensor:
-        """Generates spatial positions for a batch of patches.
+        if (height, width) not in self._cpu_cache:
+            y_coords = torch.arange(height, device='cpu', dtype=torch.long)
+            x_coords = torch.arange(width, device='cpu', dtype=torch.long)
+            positions_cpu = torch.cartesian_prod(y_coords, x_coords)  # [H*W, 2] on CPU
+            self._cpu_cache[height, width] = positions_cpu.contiguous()
 
-        Args:
-            batch_size: Number of samples in the batch.
-            height: Height of the grid in patches.
-            width: Width of the grid in patches.
-            device: Target device for the position tensor.
-
-        Returns:
-            Tensor of shape (batch_size, height*width, 2) containing y,x coordinates
-            for each position in the grid, repeated for each batch item.
-        """
-        if (height, width) not in self.position_cache:
-            y_coords = torch.arange(height, device=device)
-            x_coords = torch.arange(width, device=device)
-            positions = torch.cartesian_prod(y_coords, x_coords)
-            self.position_cache[height, width] = positions
-
-        cached_positions = self.position_cache[height, width]
-        return cached_positions.view(1, height * width, 2).expand(batch_size, -1, -1).clone()
+        # Materialize on the requested device each call; clone to ensure distinct storage per run
+        cached_cpu = self._cpu_cache[height, width]
+        positions = cached_cpu.to(device, non_blocking=True)
+        return positions.view(1, height * width, 2).expand(batch_size, -1, -1).clone()
 
 
 class RotaryPositionEmbedding2D(nn.Module):
