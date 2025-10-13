@@ -371,6 +371,7 @@ class TorchVGGTExtractor:
         preds = self.model(x)
 
         feat_list = []  # channels to stack -> [K, C, H, W]
+        channel_names: List[str] = []
         K = x.shape[0]
         H = x.shape[-2]
         W = x.shape[-1]
@@ -379,26 +380,34 @@ class TorchVGGTExtractor:
             pts = preds["world_points"][:, 0]  # [K,H,W,3]
             pts = pts.permute(0, 3, 1, 2).contiguous()  # [K,3,H,W]
             feat_list.append(pts)
+            channel_names += ["x", "y", "z"]
             if "world_points_conf" in preds:
                 conf = preds["world_points_conf"][:, 0].unsqueeze(1)  # [K,1,H,W]
                 feat_list.append(conf)
+                channel_names += ["conf"]
         elif isinstance(preds, dict) and "depth" in preds:
             depth = preds["depth"][:, 0, ..., 0]  # [K,H,W]
             depth = depth.unsqueeze(1)  # [K,1,H,W]
             feat_list.append(depth)
+            channel_names += ["depth"]
             if "depth_conf" in preds:
                 conf = preds["depth_conf"][:, 0].unsqueeze(1)  # [K,1,H,W]
                 feat_list.append(conf)
+                channel_names += ["conf"]
         else:
             # Fallback: use depth_conf if available alone
             if isinstance(preds, dict) and "depth_conf" in preds:
                 conf = preds["depth_conf"][:, 0].unsqueeze(1)
                 feat_list.append(conf)
+                channel_names += ["depth_conf"]
             else:
                 raise RuntimeError("VGGT pointmap tokens requested but neither world_points nor depth were produced.")
 
         x_feat = torch.cat(feat_list, dim=1).float()  # [K,C,H,W]
-        logging.info("Pointmap feature tensor shape [K,C,H,W]=%s", tuple(x_feat.shape))
+        logging.info(
+            "Pointmap feature tensor [K,C,H,W]=%s; channels=%s",
+            tuple(x_feat.shape), channel_names,
+        )
 
         # Downsample to target grid using FLAGS.target_size (e.g., 256 -> 16x16)
         target_h, _ = _parse_target_size(FLAGS.target_size)
@@ -408,7 +417,10 @@ class TorchVGGTExtractor:
         # [K,C,S,S] -> [K,1,T,C]
         x_small = x_small.permute(0, 2, 3, 1).contiguous()  # [K,S,S,C]
         k_1_t_d = x_small.view(K, 1, target_side * target_side, x_small.shape[-1])
-        logging.info("Pointmap tokens shape [K,L,T,D]=%s (L=1)", tuple(k_1_t_d.shape))
+        logging.info(
+            "Pointmap tokens [K,L,T,D]=%s (L=1); D=%d channels=%s",
+            tuple(k_1_t_d.shape), k_1_t_d.shape[-1], channel_names,
+        )
         return k_1_t_d.detach().cpu().numpy()
 
     @torch.no_grad()
