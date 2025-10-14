@@ -1,15 +1,18 @@
 import os
+import datetime
 from absl import app, flags, logging
 from ml_collections import config_flags
 import jax
 import jax.numpy as jnp
 import numpy as np
+import tqdm
+import tensorflow as tf
+import wandb
 
 from octo.data.dataset import make_single_dataset
 from octo.model.octo_model import OctoModel
 from octo.utils.spec import ModuleSpec
-from octo.utils.train_utils import TrainState, create_optimizer
-from octo.utils.train_utils import format_name_with_config
+from octo.utils.train_utils import TrainState, create_optimizer, merge_params, Timer, format_name_with_config
 
 FLAGS = flags.FLAGS
 
@@ -65,6 +68,11 @@ def main(_):
     # Load config
     cfg = FLAGS.config.to_dict()
 
+    # Setup WandB
+    name = format_name_with_config(FLAGS.name, cfg)
+    wandb_id = f"{name}_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    wandb.init(config=cfg, id=wandb_id, name=name, mode=None)
+
     # Build dataset
     dataset = make_single_dataset(
         cfg["dataset_kwargs"],
@@ -106,6 +114,9 @@ def main(_):
         text_processor=None,
         dataset_statistics=dataset.dataset_statistics,
     )
+    # Merge pretrained params into new structure
+    merged = merge_params(model.params, pretrained.params)
+    model = model.replace(params=merged)
 
     # Freeze everything except pointmap encoder and readout gates
     frozen_keys = ("octo_transformer.*",)
@@ -115,9 +126,56 @@ def main(_):
     rng = jax.random.PRNGKey(cfg.get("seed", 42))
     train_state = TrainState.create(rng=rng, model=model, tx=tx)
 
-    logging.info("Model ready. To train: use existing train loop.")
-    logging.info("Shapes: token_dim=%d; expecting pointmap embedding injected into readout.", model.config["model"]["token_embedding_size"])
-    logging.info("IMPORTANT: remove legacy VGGT+vision concatenation prints; this script does additive readout injection only.")
+    # Loss fn using action head
+    def loss_fn(params, batch, rng, train=True):
+        bound_module = model.module.bind({"params": params}, rngs={"dropout": rng})
+        transformer_embeddings = bound_module.octo_transformer(
+            batch["observation"],
+            batch["task"],
+            batch["observation"]["timestep_pad_mask"],
+            train=train,
+        )
+        action_loss, action_metrics = bound_module.heads["action"].loss(
+            transformer_embeddings,
+            batch["action"],
+            batch["observation"]["timestep_pad_mask"],
+            batch["action_pad_mask"],
+            train=train,
+        )
+        return action_loss, action_metrics
+
+    @jax.jit
+    def train_step(state: TrainState, batch):
+        rng, dropout_rng = jax.random.split(state.rng)
+        (loss, info), grads = jax.value_and_grad(loss_fn, has_aux=True)(
+            state.model.params, batch, dropout_rng, True
+        )
+        updates, new_opt_state = state.tx.update(grads, state.opt_state, state.model.params)
+        new_params = optax.apply_updates(state.model.params, updates)
+        new_model = state.model.replace(params=new_params)
+        new_state = state.replace(model=new_model, opt_state=new_opt_state, rng=rng, step=state.step + 1)
+        info.update({
+            "loss": loss,
+        })
+        return new_state, info
+
+    # Training loop (minimal)
+    timer = Timer()
+    for step in tqdm.tqdm(range(int(cfg["num_steps"]))):
+        batch = next(data_iter)
+        batch = add_pointmap_to_batch(batch, FLAGS.pointmap_key, FLAGS.normalize_pointmap)
+        train_state, info = train_step(train_state, batch)
+        if (step + 1) % int(cfg["log_interval"]) == 0:
+            info = jax.device_get(info)
+            wandb.log({"training/loss": float(info["loss"])}, step=step)
+
+    # Save checkpoint dir like finetune_vggt
+    save_dir = cfg.get("save_dir")
+    if save_dir:
+        ckpt_dir = os.path.join(save_dir, FLAGS.name)
+        tf.io.gfile.makedirs(ckpt_dir)
+        model.save_pretrained(step=train_state.step, checkpoint_path=ckpt_dir)
+        logging.info("Saved checkpoint to %s", ckpt_dir)
 
 
 if __name__ == "__main__":
