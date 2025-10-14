@@ -9,6 +9,7 @@ import tqdm
 import tensorflow as tf
 import wandb
 from copy import deepcopy
+import torch
 
 from octo.data.dataset import make_single_dataset
 from octo.model.octo_model import OctoModel
@@ -30,6 +31,12 @@ config_flags.DEFINE_config_file(
 flags.DEFINE_string("pointmap_key", "pointmap", "Observations key for VGGT pointmap (B,T,H,W,C=4).")
 flags.DEFINE_bool("normalize_pointmap", True, "Per-image mean/std normalize XYZ (conf unchanged).")
 
+# Online VGGT settings (mirrors prior online flags)
+flags.DEFINE_integer("vggt_input_res", 224, "VGGT input resolution (square).")
+flags.DEFINE_bool("vggt_use_cuda", True, "Use CUDA for VGGT online.")
+flags.DEFINE_integer("vggt_device_id", 0, "CUDA device id for VGGT online.")
+flags.DEFINE_integer("vggt_eval_batch_size", 16, "Batch size for VGGT online forward.")
+
 
 def _normalize_pointmap(pm: np.ndarray, keep_conf: bool = True) -> np.ndarray:
     # pm: (B,T,H,W,C)
@@ -49,12 +56,92 @@ def _normalize_pointmap(pm: np.ndarray, keep_conf: bool = True) -> np.ndarray:
         return (x - mean) / std
 
 
-def add_pointmap_to_batch(batch: dict, key: str, normalize: bool) -> dict:
+def _preprocess_images_for_vggt(images_np: np.ndarray, target_size: int) -> np.ndarray:
+    # images_np: (N,H,W,3) uint8
+    from PIL import Image
+    proc = []
+    for img in images_np:
+        im = Image.fromarray(img)
+        if im.mode == 'RGBA':
+            bg = Image.new('RGBA', im.size, (255, 255, 255, 255))
+            im = Image.alpha_composite(bg, im)
+        im = im.convert('RGB')
+        w, h = im.size
+        if w >= h:
+            new_w = target_size
+            new_h = int(round(h * (new_w / w) / 14) * 14)
+        else:
+            new_h = target_size
+            new_w = int(round(w * (new_h / h) / 14) * 14)
+        im = im.resize((new_w, new_h), Image.Resampling.BILINEAR)
+        arr = np.asarray(im, dtype=np.float32) / 255.0
+        arr = np.transpose(arr, (2, 0, 1))
+        hp = target_size - arr.shape[1]
+        wp = target_size - arr.shape[2]
+        pt, pb = hp // 2, hp - hp // 2
+        pl, pr = wp // 2, wp - wp // 2
+        arr = np.pad(arr, ((0, 0), (pt, pb), (pl, pr)), mode='constant', constant_values=1.0)
+        proc.append(arr)
+    return np.stack(proc, axis=0)
+
+
+class OnlineVGGTPointmap:
+    def __init__(self, input_res: int, use_cuda: bool, device_id: int):
+        device = f"cuda:{device_id}" if (use_cuda and torch.cuda.is_available()) else "cpu"
+        self.device = torch.device(device)
+        from vggt.models.vggt import VGGT
+        self.model = VGGT.from_pretrained("facebook/VGGT-1B").to(self.device).eval()
+        self.input_res = int(input_res)
+        logging.info("[PointMap Online] VGGT device=%s input_res=%d", self.device, self.input_res)
+
+    @torch.no_grad()
+    def compute(self, images_bt3hw: np.ndarray, batch_size: int) -> np.ndarray:
+        # images_bt3hw: (B,T,H,W,3) uint8
+        b, t, h, w, c = images_bt3hw.shape
+        flat = images_bt3hw.reshape(b * t, h, w, c)
+        chw = _preprocess_images_for_vggt(flat, self.input_res)  # (N,3,H,W)
+        out_list = []
+        N = chw.shape[0]
+        for i in range(0, N, batch_size):
+            x = torch.from_numpy(chw[i:i+batch_size]).to(self.device)  # (k,3,H,W)
+            x = x.unsqueeze(1)  # (k,1,3,H,W)
+            preds = self.model(x)
+            if isinstance(preds, dict) and 'world_points' in preds:
+                pts = preds['world_points'][:, 0]  # (k,H,W,3)
+                conf = preds.get('world_points_conf', None)
+                if conf is not None:
+                    conf = conf[:, 0][..., None]  # (k,H,W,1)
+                else:
+                    conf = torch.ones((*pts.shape[:-1], 1), device=pts.device)
+                out = torch.cat([pts, conf], dim=-1)  # (k,H,W,4)
+            elif 'depth' in preds:
+                depth = preds['depth'][:, 0, ..., 0][..., None]
+                conf = preds.get('depth_conf', None)
+                conf = conf[:, 0][..., None] if conf is not None else torch.ones_like(depth)
+                # tile to xyz-like format (optional): here keep (H,W,2) -> expand to 4 by padding zeros
+                zeros = torch.zeros_like(depth)
+                out = torch.cat([zeros, zeros, depth, conf], dim=-1)
+            else:
+                raise RuntimeError("VGGT did not return point/depth predictions")
+            out_list.append(out.detach().cpu().numpy())
+        stacked = np.concatenate(out_list, axis=0)  # (N,H,W,4)
+        logging.info("[PointMap Online] produced (N,H,W,C)=%s", stacked.shape)
+        return stacked.reshape(b, t, stacked.shape[1], stacked.shape[2], 4)
+
+
+def add_pointmap_to_batch(batch: dict, key: str, normalize: bool, runner: OnlineVGGTPointmap | None = None) -> dict:
     obs = batch.setdefault("observation", {})
     pm = obs.get(key)
     if pm is None:
-        logging.warning("[PointMap] '%s' missing in observations; skipping injection for this batch.", key)
-        return batch
+        # Try to compute online from image_primary
+        img = obs.get("image_primary")
+        if runner is not None and img is not None:
+            arr = np.asarray(img)
+            logging.info("[PointMap Online] computing pointmap from image_primary %s", arr.shape)
+            pm = runner.compute(arr, batch_size=FLAGS.vggt_eval_batch_size)
+        else:
+            logging.warning("[PointMap] '%s' missing and no online runner/images; skipping.", key)
+            return batch
     arr = np.asarray(pm)
     logging.info("[PointMap] raw %s shape=%s dtype=%s", key, arr.shape, arr.dtype)
     if normalize:
@@ -89,9 +176,10 @@ def main(_):
         .iterator()
     )
 
-    # Prime example batch and add pointmap key
+    # Prime example batch and add pointmap key (compute online if missing)
     example_batch = next(data_iter)
-    example_batch = add_pointmap_to_batch(example_batch, FLAGS.pointmap_key, FLAGS.normalize_pointmap)
+    vggt_runner = OnlineVGGTPointmap(FLAGS.vggt_input_res, FLAGS.vggt_use_cuda, FLAGS.vggt_device_id)
+    example_batch = add_pointmap_to_batch(example_batch, FLAGS.pointmap_key, FLAGS.normalize_pointmap, runner=vggt_runner)
 
     # Load pretrained model for shapes, then create from updated config
     logging.info("Loading pretrained model from %s", cfg["pretrained_path"])
@@ -193,7 +281,7 @@ def main(_):
     timer = Timer()
     for step in tqdm.tqdm(range(int(cfg["num_steps"]))):
         batch = next(data_iter)
-        batch = add_pointmap_to_batch(batch, FLAGS.pointmap_key, FLAGS.normalize_pointmap)
+        batch = add_pointmap_to_batch(batch, FLAGS.pointmap_key, FLAGS.normalize_pointmap, runner=vggt_runner)
         train_state, info = train_step(train_state, batch)
         if (step + 1) % int(cfg["log_interval"]) == 0:
             info = jax.device_get(info)
