@@ -11,6 +11,7 @@ from typing import Callable, Sequence, TypeVar
 
 from flax import linen as nn
 import jax.numpy as jnp
+from absl import logging
 
 from octo.model.components.film_conditioning_layer import FilmConditioning
 
@@ -276,6 +277,39 @@ class SmallStem32(SmallStem):
 class ResNet26FILM(ViTResnet):
     use_film: bool = True
     num_layers: tuple = (2, 2, 2, 2)
+
+
+class PointMapEncoder(nn.Module):
+    """
+    Lightweight CNN that maps (B,T,H,W,C=4) pointmaps to (B,T,embed_dim) embeddings.
+    """
+    in_channels: int = 4
+    base_width: int = 64
+    embed_dim: int = 512
+
+    @nn.compact
+    def __call__(self, pm: jnp.ndarray, train: bool = True) -> jnp.ndarray:
+        # pm: (B,T,H,W,C)
+        logging.info("[PointMapEncoder] input shape=%s", pm.shape)
+        b, t, h, w, c = pm.shape
+        x = jnp.reshape(pm, (b * t, h, w, c))
+        x = nn.Conv(self.base_width, (3, 3), (2, 2), padding="SAME")(x)
+        x = nn.LayerNorm()(x)
+        x = nn.gelu(x)
+        x = nn.Conv(self.base_width * 2, (3, 3), (2, 2), padding="SAME")(x)
+        x = nn.LayerNorm()(x)
+        x = nn.gelu(x)
+        x = nn.Conv(self.base_width * 4, (3, 3), (2, 2), padding="SAME")(x)
+        x = nn.LayerNorm()(x)
+        x = nn.gelu(x)
+        # Global average pool
+        x = jnp.mean(x, axis=(1, 2))  # (B*T, C)
+        x = nn.Dense(self.embed_dim)(x)
+        x = nn.LayerNorm()(x)
+        x = nn.gelu(x)
+        out = jnp.reshape(x, (b, t, self.embed_dim))
+        logging.info("[PointMapEncoder] output shape=%s", out.shape)
+        return out
 
 
 vit_encoder_configs = {
