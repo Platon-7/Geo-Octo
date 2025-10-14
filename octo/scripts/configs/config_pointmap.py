@@ -22,13 +22,13 @@ def get_config():
         dataset_kwargs=dict(
             name=placeholder(str),
             data_dir=placeholder(str),
-            image_obs_keys={"primary": "image_0", "wrist": None},
+            image_obs_keys={"primary": "image_primary"},
             proprio_obs_key="proprio",
             language_key="language_instruction",
             action_proprio_normalization_type="normal",
             action_normalization_mask=[True, True, True, True, True, True, False],
             standardize_fn=ModuleSpec.create(
-                "octo.data.oxe.oxe_standardization_transforms:bridge_dataset_transform",
+                "octo.data.utils.data_utils:standardize_libero_vggt",
             ),
         ),
         traj_transform_kwargs=dict(
