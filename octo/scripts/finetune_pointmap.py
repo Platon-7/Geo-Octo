@@ -8,6 +8,7 @@ import numpy as np
 import tqdm
 import tensorflow as tf
 import wandb
+from copy import deepcopy
 
 from octo.data.dataset import make_single_dataset
 from octo.model.octo_model import OctoModel
@@ -92,24 +93,53 @@ def main(_):
     example_batch = next(data_iter)
     example_batch = add_pointmap_to_batch(example_batch, FLAGS.pointmap_key, FLAGS.normalize_pointmap)
 
-    # Build model config: freeze base, add pointmap encoder at readout injection
-    model_conf = cfg["model"]
-    model_conf = dict(model_conf)
-    # Add pointmap encoder module spec (CNN -> 512)
-    pointmap_encoder_spec = ModuleSpec.create(
-        "octo.model.components.vit_encoders:PointMapEncoder",
-        in_channels=4,
-        base_width=64,
-        embed_dim=model_conf["token_embedding_size"],
-    )
-    model_conf["pointmap_encoder"] = pointmap_encoder_spec
-    model_conf["pointmap_input_key"] = "pointmap"
-
     # Load pretrained model for shapes, then create from updated config
     logging.info("Loading pretrained model from %s", cfg["pretrained_path"])
     pretrained = OctoModel.load_pretrained(cfg["pretrained_path"], step=cfg["pretrained_step"])
+    # Start from pretrained config and apply updates from CLI config
+    new_conf = deepcopy(pretrained.config)
+    # Merge top-level overrides (non-structural)
+    for k, v in cfg.items():
+        if k in ("update_config", "config_delete_keys"):  # handled separately
+            continue
+        new_conf[k] = v
+    # Apply config_delete_keys if provided
+    def _delete_keys(tree, delete_spec):
+        for k, v in delete_spec.items():
+            if isinstance(v, dict) and k in tree:
+                _delete_keys(tree[k], v)
+                if not tree[k]:
+                    tree.pop(k, None)
+            elif v is True and k in tree:
+                tree.pop(k, None)
+        return tree
+    if "config_delete_keys" in cfg:
+        _delete_keys(new_conf, cfg["config_delete_keys"])  # in-place
+    # Apply update_config (deep update)
+    def _deep_update(d, u):
+        for k, v in u.items():
+            if isinstance(v, dict):
+                d[k] = _deep_update(d.get(k, {}), v)
+            else:
+                d[k] = v
+        return d
+    # Ensure pointmap encoder is present
+    upd = cfg.get("update_config", {})
+    upd_model = upd.setdefault("model", {})
+    upd_model.setdefault(
+        "pointmap_encoder",
+        ModuleSpec.create(
+            "octo.model.components.vit_encoders:PointMapEncoder",
+            in_channels=4,
+            base_width=64,
+            embed_dim=new_conf.get("model", {}).get("token_embedding_size", 512),
+        ),
+    )
+    upd_model.setdefault("pointmap_input_key", "pointmap")
+    _deep_update(new_conf, upd)
+
     model = OctoModel.from_config(
-        dict(cfg, model=model_conf),
+        new_conf,
         example_batch,
         text_processor=None,
         dataset_statistics=dataset.dataset_statistics,
