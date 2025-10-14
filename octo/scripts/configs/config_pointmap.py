@@ -158,6 +158,15 @@ def get_config(config_string="full,multimodal"):
     config["update_config"] = {
         "model": {
             "pointmap_input_key": "pointmap",
+            # Reduce memory in PointMapEncoder
+            "pointmap_encoder": ModuleSpec.create(
+                "octo.model.components.vit_encoders:PointMapEncoder",
+                in_channels=4,
+                base_width=64,
+                embed_dim=placeholder(int) or 512,
+                pre_downsample=2,
+                use_bfloat16=True,
+            ),
         }
     }
 

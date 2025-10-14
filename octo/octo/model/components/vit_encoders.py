@@ -287,6 +287,8 @@ class PointMapEncoder(nn.Module):
     in_channels: int = 4
     base_width: int = 64
     embed_dim: int = 512
+    pre_downsample: int = 2  # downsample H,W by this factor at input (memory saver)
+    use_bfloat16: bool = True  # compute in bf16 to save memory
 
     @nn.compact
     def __call__(self, pm: jnp.ndarray, train: bool = True) -> jnp.ndarray:
@@ -295,10 +297,23 @@ class PointMapEncoder(nn.Module):
         b, t, h, w, c = pm.shape
         x = jnp.reshape(pm, (b * t, h, w, c))
 
+        # Use lower-precision compute to reduce activation memory
+        compute_dtype = jnp.bfloat16 if self.use_bfloat16 else jnp.float32
+        x = x.astype(compute_dtype)
+
+        # Early spatial downsampling to reduce activation footprint
+        if self.pre_downsample and int(self.pre_downsample) > 1:
+            x = nn.avg_pool(
+                x,
+                window_shape=(self.pre_downsample, self.pre_downsample),
+                strides=(self.pre_downsample, self.pre_downsample),
+                padding="SAME",
+            )
+
         def conv_block(x, out_ch):
-            x = nn.Conv(out_ch, (3, 3), (1, 1), padding="SAME")(x)
+            x = nn.Conv(out_ch, (3, 3), (1, 1), padding="SAME", dtype=compute_dtype, param_dtype=compute_dtype)(x)
             x = nn.gelu(x)
-            x = nn.Conv(out_ch, (3, 3), (1, 1), padding="SAME")(x)
+            x = nn.Conv(out_ch, (3, 3), (1, 1), padding="SAME", dtype=compute_dtype, param_dtype=compute_dtype)(x)
             x = nn.gelu(x)
             return x
 
@@ -322,8 +337,8 @@ class PointMapEncoder(nn.Module):
 
         # Concatenate multi-scale features
         multi = jnp.concatenate([g1, g2, g3, g4], axis=-1)
-        multi = nn.LayerNorm()(multi)
-        multi = nn.Dense(self.embed_dim)(multi)
+        multi = nn.LayerNorm()(multi.astype(jnp.float32))
+        multi = nn.Dense(self.embed_dim, dtype=jnp.float32, param_dtype=jnp.float32)(multi)
         multi = nn.gelu(multi)
         out = jnp.reshape(multi, (b, t, self.embed_dim))
         logging.info("[PointMapEncoder] output shape=%s", out.shape)
