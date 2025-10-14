@@ -325,6 +325,8 @@ def main(_):
             in_channels=4,
             base_width=64,
             embed_dim=model_cfg.get("token_embedding_size", 512),
+            pre_downsample=2,
+            use_bfloat16=True,
         )
     # Align Octo module's expected pointmap key with CLI flag
     model_cfg["pointmap_input_key"] = str(getattr(FLAGS, "pointmap_key", "pointmap"))
