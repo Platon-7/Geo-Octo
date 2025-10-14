@@ -99,6 +99,10 @@ flags.DEFINE_bool("compile_vggt", False, "If True, compile VGGT aggregator for p
 flags.DEFINE_bool("overlap_vggt_with_train", True, "If True, compute pointmaps for the next batch in parallel with JAX train on current batch (2-GPU overlap).")
 flags.DEFINE_integer("prefetch_batches", 2, "Number of future batches to precompute when overlapping.")
 
+# Pointmap controls
+flags.DEFINE_string("pointmap_key", "pointmap", "Observation key to store pointmap under (B,T,H,W,4).")
+flags.DEFINE_bool("normalize_pointmap", True, "Per-image mean/std normalize XYZ (keep conf channel unchanged).")
+
 
 # =========================
 # Online VGGT pointmap helpers
@@ -208,6 +212,24 @@ class OnlineVGGTPointmap:
             if should_print:
                 logging.info("[POINTMAP PROFILE] N=%d res=%d bs=%d | total=%.1fms", N, int(self.input_res), int(bs), t0.elapsed_time(t1))
         return stacked.reshape(b, t, stacked.shape[1], stacked.shape[2], 4)
+
+
+def _normalize_pointmap(pm: np.ndarray, keep_conf: bool = True) -> np.ndarray:
+    """Normalize XYZ per image; keep confidence unchanged."""
+    if pm.ndim != 5 or pm.shape[-1] < 1:
+        return pm
+    x = pm.astype(np.float32)
+    if keep_conf and x.shape[-1] >= 4:
+        xyz = x[..., :3]
+        conf = x[..., 3:4]
+        mean = np.nanmean(xyz, axis=(-3, -2), keepdims=True)
+        std = np.nanstd(xyz, axis=(-3, -2), keepdims=True) + 1e-6
+        xyz = (xyz - mean) / std
+        return np.concatenate([xyz, conf], axis=-1)
+    else:
+        mean = np.nanmean(x, axis=(-3, -2), keepdims=True)
+        std = np.nanstd(x, axis=(-3, -2), keepdims=True) + 1e-6
+        return (x - mean) / std
 
 
 # =========================
@@ -333,9 +355,11 @@ def main(_):
         try:
             if image_primary is not None:
                 pointmap = pm_runner.compute_pointmap(np.asarray(image_primary))
-                obs["pointmap"] = pointmap.astype(np.float32)
+                if bool(FLAGS.normalize_pointmap):
+                    pointmap = _normalize_pointmap(pointmap)
+                obs[FLAGS.pointmap_key] = pointmap.astype(np.float32)
                 batch["observation"] = obs
-                logging.info("[PointMap] injected pointmap %s", pointmap.shape)
+                logging.info("[PointMap] injected %s %s", FLAGS.pointmap_key, pointmap.shape)
         except Exception as e:
             logging.warning("Online pointmap computation failed for this batch: %s", e)
 
@@ -628,12 +652,13 @@ def main(_):
             print("\n" + "="*50)
             print("DEBUG: Final batch check (what the model receives)!")
             print("Batch observation keys:", list(batch['observation'].keys()))
-            if 'pointmap' in batch['observation']:
-                pm_shape = batch['observation']['pointmap'].shape
-                pm_dtype = batch['observation']['pointmap'].dtype
-                print(f"  -> SUCCESS: 'pointmap' is in the final batch! shape={pm_shape} dtype={pm_dtype}")
+            key = FLAGS.pointmap_key
+            if key in batch['observation']:
+                pm_shape = batch['observation'][key].shape
+                pm_dtype = batch['observation'][key].dtype
+                print(f"  -> SUCCESS: '{key}' is in the final batch! shape={pm_shape} dtype={pm_dtype}")
             else:
-                print("  -> CRITICAL WARNING: 'pointmap' missing in the final batch!")
+                print(f"  -> CRITICAL WARNING: '{key}' missing in the final batch!")
             print("="*50 + "\n")
             _batch_check_printed = True
 
