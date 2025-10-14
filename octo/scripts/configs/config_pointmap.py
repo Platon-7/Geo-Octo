@@ -40,12 +40,12 @@ def get_config(config_string="full,multimodal"):
         # Language/image task tokenizers
         "octo_transformer.task_*",
         # Projections into token dim
-        "octo_transformer.obs_*_projection",
-        "octo_transformer.task_*_projection",
+        "octo_transformer.obs_*_projection*",
+        "octo_transformer.task_*_projection*",
         # Normalization adapters
-        "octo_transformer.obs_*_norm_adapter",
-        "octo_transformer.task_*_norm_adapter",
-        "octo_transformer.repeated_*_norm_adapter",
+        "octo_transformer.obs_*_norm_adapter*",
+        "octo_transformer.task_*_norm_adapter*",
+        "octo_transformer.repeated_*_norm_adapter*",
         # Transformer backbone
         "octo_transformer.BlockTransformer_*",
         # Positional embeddings (keep fixed)
