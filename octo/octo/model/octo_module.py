@@ -373,7 +373,8 @@ class OctoTransformer(nn.Module):
                     nn.initializers.constant(0.05),
                     (),
                 )
-                logging.info("[PointMap Injection] gate_scale=%s", float(gate_scale))
+                # Avoid converting tracers to Python float during init/jit
+                logging.info("[PointMap Injection] gate_scale initialized")
                 readout_tokens = readout_tokens + gate_scale * pm_embed
                 logging.info(
                     "[PointMap Injection] Added to '%s'; resulting readout tokens %s",
