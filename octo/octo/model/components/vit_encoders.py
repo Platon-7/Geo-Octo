@@ -281,7 +281,8 @@ class ResNet26FILM(ViTResnet):
 
 class PointMapEncoder(nn.Module):
     """
-    Lightweight CNN that maps (B,T,H,W,C=4) pointmaps to (B,T,embed_dim) embeddings.
+    Lightweight hierarchical CNN that maps (B,T,H,W,C=4) pointmaps to (B,T,embed_dim) embeddings.
+    Inspired by iDP3-style multi-scale feature extraction.
     """
     in_channels: int = 4
     base_width: int = 64
@@ -293,21 +294,38 @@ class PointMapEncoder(nn.Module):
         logging.info("[PointMapEncoder] input shape=%s", pm.shape)
         b, t, h, w, c = pm.shape
         x = jnp.reshape(pm, (b * t, h, w, c))
-        x = nn.Conv(self.base_width, (3, 3), (2, 2), padding="SAME")(x)
-        x = nn.LayerNorm()(x)
-        x = nn.gelu(x)
-        x = nn.Conv(self.base_width * 2, (3, 3), (2, 2), padding="SAME")(x)
-        x = nn.LayerNorm()(x)
-        x = nn.gelu(x)
-        x = nn.Conv(self.base_width * 4, (3, 3), (2, 2), padding="SAME")(x)
-        x = nn.LayerNorm()(x)
-        x = nn.gelu(x)
-        # Global average pool
-        x = jnp.mean(x, axis=(1, 2))  # (B*T, C)
-        x = nn.Dense(self.embed_dim)(x)
-        x = nn.LayerNorm()(x)
-        x = nn.gelu(x)
-        out = jnp.reshape(x, (b, t, self.embed_dim))
+
+        def conv_block(x, out_ch):
+            x = nn.Conv(out_ch, (3, 3), (1, 1), padding="SAME")(x)
+            x = nn.gelu(x)
+            x = nn.Conv(out_ch, (3, 3), (1, 1), padding="SAME")(x)
+            x = nn.gelu(x)
+            return x
+
+        # Pyramid with max pooling between blocks
+        f1 = conv_block(x, self.base_width)            # (BT,H,W,C1)
+        p1 = nn.max_pool(f1, (2, 2), (2, 2), padding="SAME")
+
+        f2 = conv_block(p1, self.base_width * 2)       # (BT,H/2,W/2,C2)
+        p2 = nn.max_pool(f2, (2, 2), (2, 2), padding="SAME")
+
+        f3 = conv_block(p2, self.base_width * 4)       # (BT,H/4,W/4,C3)
+        p3 = nn.max_pool(f3, (2, 2), (2, 2), padding="SAME")
+
+        f4 = conv_block(p3, self.base_width * 8)       # (BT,H/8,W/8,C4)
+
+        # Global average pooling per scale
+        g1 = jnp.mean(f1, axis=(1, 2))
+        g2 = jnp.mean(f2, axis=(1, 2))
+        g3 = jnp.mean(f3, axis=(1, 2))
+        g4 = jnp.mean(f4, axis=(1, 2))
+
+        # Concatenate multi-scale features
+        multi = jnp.concatenate([g1, g2, g3, g4], axis=-1)
+        multi = nn.LayerNorm()(multi)
+        multi = nn.Dense(self.embed_dim)(multi)
+        multi = nn.gelu(multi)
+        out = jnp.reshape(multi, (b, t, self.embed_dim))
         logging.info("[PointMapEncoder] output shape=%s", out.shape)
         return out
 

@@ -356,13 +356,21 @@ class OctoTransformer(nn.Module):
                     raise ValueError(
                         f"PointMapEncoder output dim {pm_embed.shape[-1]} != token_embedding_size {self.token_embedding_size}"
                     )
+
+                # Small trainable projection for readout alignment (per-readout MLP)
+                # Shape preserves (batch, horizon, dim)
+                proj_name = f"{group_name}_pointmap_proj"
+                pm_embed = nn.LayerNorm(name=f"{proj_name}_ln")(pm_embed)
+                pm_embed = nn.Dense(self.token_embedding_size, name=proj_name)(pm_embed)
+
                 # Broadcast to readout token count
                 pm_embed = pm_embed[:, :, None, :]
                 pm_embed = jnp.tile(pm_embed, (1, 1, n_tokens_for_readout, 1))
-                # Learnable gate to control residual strength
+
+                # Learnable gate to control residual strength (trainable; small init)
                 gate_scale = self.param(
                     f"{group_name}_pointmap_gate",
-                    nn.initializers.constant(0.1),
+                    nn.initializers.constant(0.05),
                     (),
                 )
                 logging.info("[PointMap Injection] gate_scale=%s", float(gate_scale))
