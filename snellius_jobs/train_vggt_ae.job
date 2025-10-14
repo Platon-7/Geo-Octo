@@ -84,6 +84,7 @@ srun -u python /gpfs/home4/pkarageorgis/geo_octo/octo/scripts/train_vggt_ae.py \
   --ae_epochs=25 --ae_lr=1e-4 --ae_hidden=8192 \
   --target_size=256,512 --compression_samples=5000 \
   --batch_size_eval=16 --vggt_agg_layers=24 --vggt_layer_indices=None \
+  --pointmap_tokens=True \
   --use_weighted_layer_fusion=True \
   --use_augmentations=True \
   --ae_verification_enable=True --ae_verification_count=8 \

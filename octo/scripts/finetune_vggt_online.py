@@ -439,27 +439,21 @@ def compute_vggt_tokens_for_batch(image_5d: np.ndarray) -> np.ndarray:
     # Flatten across time
     t0 = time.perf_counter()
     images_bt = images_np.reshape(B * T, H, W, C)
-    # Prefer GPU preprocessing when frames are already square; else fallback to CPU PIL path
-    if H == W:
-        tt0 = time.perf_counter()
-        chw = (
-            torch.from_numpy(images_bt)
-            .pin_memory()
-            .to(extractor.device, non_blocking=True)
-            .permute(0, 3, 1, 2)
-            .contiguous()
-            .float()
-            .div(255.0)
-        )  # [K,3,H,W]
-        if H != int(FLAGS.vggt_input_res):
-            chw = F.interpolate(chw, size=(int(FLAGS.vggt_input_res), int(FLAGS.vggt_input_res)), mode='bilinear', align_corners=False)
-        tt1 = time.perf_counter()
-        if do_profile:
-            # add to preprocess timing
-            t1 = t0 + (tt1 - tt0)
+    # Prepare CHW on CPU pinned memory; move/resize/pad per-chunk on device to reduce upfront cost
+    # Ensure 3-channel RGB; avoid whole-batch float conversion on CPU to reduce 'pre'
+    if C == 4:
+        # Alpha composite over white background on CPU; produces float32 RGB
+        rgb = images_bt[..., :3].astype(np.float32)
+        a = (images_bt[..., 3:4].astype(np.float32) / 255.0)
+        images_bt_rgb = rgb * a + 255.0 * (1.0 - a)
+    elif C == 1:
+        # Replicate grayscale to RGB on CPU; keep uint8
+        images_bt_rgb = np.repeat(images_bt, 3, axis=-1)
     else:
-        chw = preprocess_images_in_memory(images_bt, FLAGS.vggt_input_res)  # [K,3,H',W']
-        t1 = time.perf_counter()
+        images_bt_rgb = images_bt  # likely uint8 RGB
+
+    # Defer tensor creation and float normalization to per-chunk to cut 'pre'
+    chw_cpu = None  # no whole-batch CPU tensor
     t1 = time.perf_counter()
 
     # Process in chunks to bound memory
@@ -475,12 +469,38 @@ def compute_vggt_tokens_for_batch(image_5d: np.ndarray) -> np.ndarray:
             torch.cuda.reset_peak_memory_stats(extractor.device)
         except Exception:
             pass
-    for j in range(0, chw.shape[0], batch_size):
-        sub = chw[j:j + batch_size]
+    total_k = images_bt_rgb.shape[0]
+    for j in range(0, total_k, batch_size):
+        # Slice numpy -> CPU pinned tensor, then H2D and normalize on GPU
+        sub_np = images_bt_rgb[j:j + batch_size]
+        sub_cpu = torch.from_numpy(sub_np.copy()).pin_memory()
+        sub = sub_cpu.to(extractor.device, non_blocking=True)
+        # NHWC -> NCHW and to [0,1] float on device
+        sub = sub.permute(0, 3, 1, 2).contiguous().float().div(255.0)
+        target_size = int(FLAGS.vggt_input_res)
+        # Compute target aspect-preserving size snapped to multiples of 14
+        if int(W) >= int(H):
+            new_w = target_size
+            new_h = int(round((H * (new_w / float(W))) / 14.0) * 14)
+        else:
+            new_h = target_size
+            new_w = int(round((W * (new_h / float(H))) / 14.0) * 14)
+        # Resize if needed
+        if int(new_h) != int(H) or int(new_w) != int(W):
+            sub = F.interpolate(sub, size=(int(new_h), int(new_w)), mode='bilinear', align_corners=False)
+        # Pad to square with white background (1.0)
+        pad_h = int(target_size - new_h)
+        pad_w = int(target_size - new_w)
+        if pad_h > 0 or pad_w > 0:
+            pad_top = pad_h // 2
+            pad_bottom = pad_h - pad_top
+            pad_left = pad_w // 2
+            pad_right = pad_w - pad_left
+            sub = F.pad(sub, (pad_left, pad_right, pad_top, pad_bottom), mode='constant', value=1.0)
         if do_profile and extractor.device.type == 'cuda':
             torch.cuda.synchronize(extractor.device)
         t2 = time.perf_counter()
-        klnd, sqrt_n = extractor.extract_layers(sub)         # [K,L,N,D] on CPU numpy
+        klnd, sqrt_n = extractor.extract_layers(sub)         # [K,L,N,D] on device (torch)
         if do_profile and extractor.device.type == 'cuda':
             torch.cuda.synchronize(extractor.device)
         t3 = time.perf_counter()
@@ -493,18 +513,32 @@ def compute_vggt_tokens_for_batch(image_5d: np.ndarray) -> np.ndarray:
         t4 = time.perf_counter()
 
         K, L, TT, D = k_l_t_d.shape
-        toks_ld = k_l_t_d.view(K * TT, L, D)  # [K*T, L, D] on device
-        with torch.no_grad():
-            if do_profile and extractor.device.type == 'cuda':
-                torch.cuda.synchronize(extractor.device)
-            t5 = time.perf_counter()
-            amp_ctx2 = (
-                torch.cuda.amp.autocast(dtype=extractor.amp_dtype)
-                if (extractor.device.type == 'cuda' and extractor.amp_dtype is not None)
-                else nullcontext()
-            )
-            with amp_ctx2:
-                z = compressor.compress_tokens(toks_ld)
+        toks_ld = k_l_t_d.view(K * TT, L, D)
+
+        amp_ctx2 = (
+            torch.cuda.amp.autocast(dtype=extractor.amp_dtype)
+            if (extractor.device.type == 'cuda' and extractor.amp_dtype is not None)
+            else nullcontext()
+        )
+
+        if do_profile and extractor.device.type == 'cuda':
+            torch.cuda.synchronize(extractor.device)
+        t5 = time.perf_counter()
+
+        with torch.no_grad(), amp_ctx2:
+            fused = compressor.fuser(toks_ld)     # [K*T, D]
+            z_pre = compressor.encoder(fused)     # pre-LayerNorm
+            # one-time debug
+            if not getattr(compute_vggt_tokens_for_batch, "_printed_pre_norm", False):
+                zp = z_pre.float()
+                # print("pre-norm mean/std:", zp.mean().item(), zp.std().item())
+                # os.makedirs("test", exist_ok=True)
+                # out_path = os.path.join("test", "augs.npy")
+                # np.save(out_path, z_pre.detach().float().cpu().numpy())
+                # print(f"[VGGT] Saved z_pre to {out_path}")
+                compute_vggt_tokens_for_batch._printed_pre_norm = True
+            z = compressor.output_norm(z_pre)     # match compress_tokens output
+
         if do_profile and extractor.device.type == 'cuda':
             torch.cuda.synchronize(extractor.device)
         t6 = time.perf_counter()
@@ -1101,6 +1135,8 @@ def main(_):
             print("DEBUG: Final batch check (what the model receives)!")
             print("Batch observation keys:", list(batch['observation'].keys()))
             if 'vggt_tokens' in batch['observation']:
+                a = np.asarray(batch['observation']['vggt_tokens'], dtype=np.float32)
+                print(f"  VGGT stats: mean={a.mean():.4f}, std={a.std():.4f}, min={a.min():.4f}, max={a.max():.4f}")
                 vggt_shape = batch['observation']['vggt_tokens'].shape
                 vggt_dtype = batch['observation']['vggt_tokens'].dtype
                 print(f"  -> SUCCESS: 'vggt_tokens' are in the final batch!")
@@ -1173,16 +1209,16 @@ def main(_):
             save_callback(train_state, i + 1)
 
         # Early stop aligned with original script constraint
-        if (i + 1) >= 100000:
-            logging.info(
-                "Early stopping at step %d (target 150000). Cosine scheduler remains configured for %d steps.",
-                i + 1,
-                int(FLAGS.config.num_steps),
-            )
-            if (i + 1) % FLAGS.config.save_interval != 0 and save_dir is not None:
-                logging.info("Saving final checkpoint before early stop...")
-                save_callback(train_state, i + 1)
-            break
+        # if (i + 1) >= 100000:
+        #     logging.info(
+        #         "Early stopping at step %d (target 150000). Cosine scheduler remains configured for %d steps.",
+        #         i + 1,
+        #         int(FLAGS.config.num_steps),
+        #     )
+        #     if (i + 1) % FLAGS.config.save_interval != 0 and save_dir is not None:
+        #         logging.info("Saving final checkpoint before early stop...")
+        #         save_callback(train_state, i + 1)
+        #     break
 
     # Cleanup executor
     try:

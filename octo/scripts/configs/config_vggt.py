@@ -62,7 +62,7 @@ def get_config(config_string="full,multimodal"):
         num_steps=max_steps,
         log_interval=100,
         eval_interval=1000,
-        save_interval=1000,
+        save_interval=5000,
         save_dir=placeholder(str),
         seed=42,
         wandb=dict(
@@ -92,9 +92,9 @@ def get_config(config_string="full,multimodal"):
         ),
         viz_kwargs=dict(
             eval_batch_size=128,
-            trajs_for_metrics=100,
-            trajs_for_viz=8,
-            samples_per_state=8,
+            trajs_for_metrics=0,
+            trajs_for_viz=0,
+            samples_per_state=0,
         ),
     )
 

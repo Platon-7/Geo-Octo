@@ -39,6 +39,11 @@ flags.DEFINE_bool("use_cuda", True, "Use CUDA if available.")
 flags.DEFINE_integer("batch_size_eval", 16, "Batch size for VGGT forward when sampling tokens.")
 flags.DEFINE_integer("vggt_agg_layers", 24, "Number of layers to aggregate (24 for all, or e.g., 4 for subset).")
 flags.DEFINE_string("vggt_layer_indices", "3,10,16,22", "Comma-separated 0-based indices for subset (only when vggt_agg_layers < 24).")
+flags.DEFINE_bool(
+    "pointmap_tokens",
+    False,
+    "If True, use VGGT pointmap outputs (e.g., world_points [+conf]) as tokens instead of aggregated layers.",
+)
 
 # AE settings
 # Default target set to 256x512 tokens as requested
@@ -311,12 +316,27 @@ def _parse_target_size(s: str) -> Tuple[int, int]:
 # -------------------------
 
 class TorchVGGTExtractor:
-    def __init__(self, device: torch.device, input_res: int, agg_layers: int, layer_indices: Optional[List[int]] = None):
+    def __init__(
+        self,
+        device: torch.device,
+        input_res: int,
+        agg_layers: int,
+        layer_indices: Optional[List[int]] = None,
+        use_pointmap_tokens: bool = False,
+    ):
         self.device = device
         self.input_res = input_res
         self.agg_layers = int(agg_layers)
         self.layer_indices = layer_indices
+        self.use_pointmap_tokens = bool(use_pointmap_tokens)
         self.model = VGGT.from_pretrained("facebook/VGGT-1B").to(self.device).eval()
+        logging.info(
+            "Extractor init: pointmap_tokens=%s, input_res=%d, agg_layers=%d, layer_indices=%s",
+            self.use_pointmap_tokens,
+            self.input_res,
+            self.agg_layers,
+            str(self.layer_indices),
+        )
 
     @torch.no_grad()
     def extract_layers(self, chw_images: np.ndarray):
@@ -338,6 +358,88 @@ class TorchVGGTExtractor:
         sqrt_n = int(round(np.sqrt(N)))
         return layers.detach().cpu().numpy(), sqrt_n
 
+    @torch.no_grad()
+    def extract_pointmap_tokens(self, chw_images: np.ndarray) -> np.ndarray:
+        """Extract tokens from VGGT point map heads and downsample to target token grid.
+
+        Returns np.ndarray with shape [K, 1, T, D], where T = target_side^2 and D is the
+        number of channels from the chosen pointmap representation (e.g., 4 for xyz+conf).
+        """
+        # Forward through full model to access heads
+        x = torch.from_numpy(chw_images).to(self.device)  # [K,3,H,W]
+        x = x.unsqueeze(1)  # [K,1,3,H,W]
+        preds = self.model(x)
+
+        feat_list = []  # channels to stack -> [K, C, H, W]
+        channel_names: List[str] = []
+        K = x.shape[0]
+        H = x.shape[-2]
+        W = x.shape[-1]
+
+        if isinstance(preds, dict) and "world_points" in preds:
+            pts = preds["world_points"][:, 0]  # [K,H,W,3]
+            pts = pts.permute(0, 3, 1, 2).contiguous()  # [K,3,H,W]
+            feat_list.append(pts)
+            channel_names += ["x", "y", "z"]
+            if "world_points_conf" in preds:
+                conf = preds["world_points_conf"][:, 0].unsqueeze(1)  # [K,1,H,W]
+                feat_list.append(conf)
+                channel_names += ["conf"]
+        elif isinstance(preds, dict) and "depth" in preds:
+            depth = preds["depth"][:, 0, ..., 0]  # [K,H,W]
+            depth = depth.unsqueeze(1)  # [K,1,H,W]
+            feat_list.append(depth)
+            channel_names += ["depth"]
+            if "depth_conf" in preds:
+                conf = preds["depth_conf"][:, 0].unsqueeze(1)  # [K,1,H,W]
+                feat_list.append(conf)
+                channel_names += ["conf"]
+        else:
+            # Fallback: use depth_conf if available alone
+            if isinstance(preds, dict) and "depth_conf" in preds:
+                conf = preds["depth_conf"][:, 0].unsqueeze(1)
+                feat_list.append(conf)
+                channel_names += ["depth_conf"]
+            else:
+                raise RuntimeError("VGGT pointmap tokens requested but neither world_points nor depth were produced.")
+
+        x_feat = torch.cat(feat_list, dim=1).float()  # [K,C,H,W]
+        logging.info(
+            "Pointmap feature tensor [K,C,H,W]=%s; channels=%s",
+            tuple(x_feat.shape), channel_names,
+        )
+
+        # Downsample to target grid using FLAGS.target_size (e.g., 256 -> 16x16)
+        target_h, _ = _parse_target_size(FLAGS.target_size)
+        target_side = int(np.sqrt(target_h))
+        x_small = F.interpolate(x_feat, size=(target_side, target_side), mode="bilinear", align_corners=False)
+        logging.info("Pointmap downsampled to side=%d (tokens=%d)", target_side, target_side * target_side)
+        # [K,C,S,S] -> [K,1,T,C]
+        x_small = x_small.permute(0, 2, 3, 1).contiguous()  # [K,S,S,C]
+        k_1_t_d = x_small.view(K, 1, target_side * target_side, x_small.shape[-1])
+        logging.info(
+            "Pointmap tokens [K,L,T,D]=%s (L=1); D=%d channels=%s",
+            tuple(k_1_t_d.shape), k_1_t_d.shape[-1], channel_names,
+        )
+        return k_1_t_d.detach().cpu().numpy()
+
+    @torch.no_grad()
+    def extract_tokens(self, chw_images: np.ndarray) -> np.ndarray:
+        """Unified token extraction.
+
+        If pointmap mode is enabled, returns [K, 1, T, D] from point heads.
+        Otherwise, aggregates layers then resizes spatially to return [K, L, T, D].
+        """
+        if self.use_pointmap_tokens:
+            logging.info("Extractor path: pointmap_tokens=True")
+            return self.extract_pointmap_tokens(chw_images)
+        # Aggregated layer path
+        logging.info("Extractor path: aggregated layers (pointmap_tokens=False)")
+        layers, sqrt_n = self.extract_layers(chw_images)  # [K,L,N,D]
+        k_l_t_d = resize_and_stack_per_layer(layers, sqrt_n)  # [K,L,T,D]
+        logging.info("Aggregated tokens shape after resize [K,L,T,D]=%s", tuple(k_l_t_d.shape))
+        return k_l_t_d
+
 
 _logged_resized_shape = False
 
@@ -350,6 +452,7 @@ def resize_and_stack_per_layer(features_klnd: np.ndarray, sqrt_n: int) -> np.nda
 
     target_h, _ = _parse_target_size(FLAGS.target_size)
     target_side = int(np.sqrt(target_h))
+    logging.info("Aggregated features resize: from %dx%d to %dx%d (T=%d)", s, s, target_side, target_side, target_side * target_side)
 
     x_small = F.interpolate(x, size=(target_side, target_side), mode='bilinear', align_corners=False)
     x_small = x_small.permute(0, 2, 3, 1).contiguous().view(K, L, target_side * target_side, D)
@@ -445,8 +548,8 @@ def verify_autoencoder_reconstruction(
     for i, original_image_np in enumerate(islice(image_iterator, num_samples)):
         try:
             chw_image = preprocess_images_in_memory(np.asarray([original_image_np]), FLAGS.vggt_input_res)
-            klnd, sqrt_n = extractor.extract_layers(chw_image)      # [1, L, N, D]
-            k_l_t_d = resize_and_stack_per_layer(klnd, sqrt_n)      # [1, L, T, D]
+            k_l_t_d = extractor.extract_tokens(chw_image)           # [1, L, T, D]
+            logging.info("Verify: tokens [K,L,T,D]=%s", tuple(k_l_t_d.shape))
             K, L, T, D = k_l_t_d.shape
 
             k_l_t_d_torch = torch.from_numpy(k_l_t_d).float().to(device)
@@ -457,6 +560,7 @@ def verify_autoencoder_reconstruction(
                 z, recon, gt = compressor(tokens_ld)
             recon = recon.view(K, T, D)
             gt    = gt.view(K, T, D)
+            logging.info("Verify: recon=%s gt=%s (post-reshape)", tuple(recon.shape), tuple(gt.shape))
 
             mse_loss = float(F.mse_loss(recon, gt).cpu().item())
 
@@ -597,14 +701,19 @@ def _sample_tokens_for_ae(
                     mixed_np = images_np
 
                 chw_images = preprocess_images_in_memory(mixed_np, FLAGS.vggt_input_res)
+                if not hasattr(_sample_tokens_for_ae, "_logged_chw_shape"):
+                    logging.info("Sampler: preprocessed CHW shape [K,3,H,W]=%s", tuple(chw_images.shape))
+                    _sample_tokens_for_ae._logged_chw_shape = True
 
                 for j in range(0, chw_images.shape[0], batch_size):
                     if (per_builder_token_cap is not None and builder_yielded >= per_builder_token_cap) or total_yielded >= num_tokens:
                         break
 
                     batch = chw_images[j:j + batch_size]
-                    klnd, sqrt_n = extractor.extract_layers(batch)
-                    k_l_t_d = resize_and_stack_per_layer(klnd, sqrt_n)  # [K,L,T,D] where T = target_tokens
+                    k_l_t_d = extractor.extract_tokens(batch)  # [K,L,T,D] where T = target_tokens
+                    if not hasattr(_sample_tokens_for_ae, "_logged_tokens_shape"):
+                        logging.info("Sampler: tokens [K,L,T,D]=%s", tuple(k_l_t_d.shape))
+                        _sample_tokens_for_ae._logged_tokens_shape = True
                     K, L, T_tokens, D = k_l_t_d.shape
                     tokens = torch.from_numpy(k_l_t_d).float().view(K * T_tokens, L, D).cpu()
 
@@ -683,9 +792,10 @@ def _fit_autoencoder(builders: List[tfds.core.DatasetBuilder], extractor: TorchV
     target_h, target_w = target_size  # expect (64, 512)
     first_image = _first_image_from_builder(builders[0])
     chw = preprocess_images_in_memory(np.asarray([first_image]), FLAGS.vggt_input_res)
-    klnd, sqrt_n = extractor.extract_layers(chw)
-    L = klnd.shape[1]
-    D = klnd.shape[3]
+    k_l_t_d = extractor.extract_tokens(chw)
+    L = k_l_t_d.shape[1]
+    D = k_l_t_d.shape[3]
+    logging.info("AE probe: tokens shape [K,L,T,D]=%s -> inferred L=%d, D=%d", tuple(k_l_t_d.shape), L, D)
 
     model = AECompressor(
         num_layers=L,
@@ -715,9 +825,15 @@ def _fit_autoencoder(builders: List[tfds.core.DatasetBuilder], extractor: TorchV
         running = 0.0
         pbar = tqdm(total=FLAGS.compression_samples, desc=f"AE train epoch {epoch+1}/{FLAGS.ae_epochs}", leave=False, dynamic_ncols=True, file=sys.stdout)
         for batch in batches:
+            if not hasattr(_fit_autoencoder, "_logged_batch_shape"):
+                logging.info("AE train: batch tokens shape [B,L,D]=%s", tuple(batch.shape))
+                _fit_autoencoder._logged_batch_shape = True
             batch = batch.to(device)
             opt.zero_grad(set_to_none=True)
             z, recon, reconstruction_target = model(batch)
+            if not hasattr(_fit_autoencoder, "_logged_recon_shapes"):
+                logging.info("AE train: z=%s recon=%s target=%s", tuple(z.shape), tuple(recon.shape), tuple(reconstruction_target.shape))
+                _fit_autoencoder._logged_recon_shapes = True
             loss = loss_fn(recon, reconstruction_target.detach())
             loss.backward()
             opt.step()
@@ -771,7 +887,13 @@ def main(_):
             layer_indices = [3, 10, 16, 22]
     else:
         layer_indices = None
-    extractor = TorchVGGTExtractor(device, FLAGS.vggt_input_res, FLAGS.vggt_agg_layers, layer_indices)
+    extractor = TorchVGGTExtractor(
+        device,
+        FLAGS.vggt_input_res,
+        FLAGS.vggt_agg_layers,
+        layer_indices,
+        use_pointmap_tokens=FLAGS.pointmap_tokens,
+    )
 
     # Prepare / train AE compressor
     target_size = _parse_target_size(FLAGS.target_size)
@@ -797,7 +919,8 @@ def main(_):
 
     # Save AE
     os.makedirs(FLAGS.output_dir, exist_ok=True)
-    ae_path = os.path.join(FLAGS.output_dir, f"vggt_autoencoder_{FLAGS.vggt_agg_layers}L_{target_size[0]}x{target_size[1]}.pt")
+    agg_tag = "pointmap" if FLAGS.pointmap_tokens else f"{FLAGS.vggt_agg_layers}L"
+    ae_path = os.path.join(FLAGS.output_dir, f"vggt_autoencoder_{agg_tag}_{target_size[0]}x{target_size[1]}.pt")
     compressor.cpu().save(ae_path)
     logging.info("Saved AE compressor to %s", ae_path)
 

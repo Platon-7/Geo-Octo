@@ -1,4 +1,3 @@
-# Written by Dibya
 import logging
 from typing import Dict, Optional
 
@@ -139,6 +138,9 @@ class OctoTransformer(nn.Module):
     # add normalization layer
     use_input_normalization: bool = True
     normalization_gate_scale: float = 0.01
+    # Optional pointmap injection
+    pointmap_encoder: Optional[nn.Module] = None
+    pointmap_input_key: str = "pointmap"
 
     @nn.compact
     def __call__(
@@ -333,6 +335,43 @@ class OctoTransformer(nn.Module):
             readout_tokens += self._create_positional_embedding(
                 group_name, readout_tokens
             )
+
+            # Inject pointmap embedding additively if provided in observations
+            if (self.pointmap_encoder is not None) and (self.pointmap_input_key in observations):
+                pm = observations[self.pointmap_input_key]
+                # Expected shape: (batch, horizon, H, W, C)
+                logging.info(
+                    "[PointMap Injection] Using key '%s' with shape %s",
+                    self.pointmap_input_key,
+                    tuple(pm.shape),
+                )
+                # Encode to (batch, horizon, token_dim)
+                pm_embed = self.pointmap_encoder(pm, train=train)
+                logging.info(
+                    "[PointMap Injection] Encoder output shape %s (token_dim=%d)",
+                    tuple(pm_embed.shape),
+                    pm_embed.shape[-1],
+                )
+                if pm_embed.shape[-1] != self.token_embedding_size:
+                    raise ValueError(
+                        f"PointMapEncoder output dim {pm_embed.shape[-1]} != token_embedding_size {self.token_embedding_size}"
+                    )
+                # Broadcast to readout token count
+                pm_embed = pm_embed[:, :, None, :]
+                pm_embed = jnp.tile(pm_embed, (1, 1, n_tokens_for_readout, 1))
+                # Learnable gate to control residual strength
+                gate_scale = self.param(
+                    f"{group_name}_pointmap_gate",
+                    nn.initializers.constant(0.1),
+                    (),
+                )
+                logging.info("[PointMap Injection] gate_scale=%s", float(gate_scale))
+                readout_tokens = readout_tokens + gate_scale * pm_embed
+                logging.info(
+                    "[PointMap Injection] Added to '%s'; resulting readout tokens %s",
+                    group_name,
+                    tuple(readout_tokens.shape),
+                )
             readout_mask = jnp.ones((batch_size, horizon, n_tokens_for_readout))
             readout_attention_rules = {
                 "task_*": AttentionRule.CAUSAL,
@@ -461,6 +500,8 @@ class OctoModule(nn.Module):
         use_correct_attention: bool = False,
         use_input_normalization: bool = True,
         normalization_gate_scale: float = 0.01,
+        pointmap_encoder: Optional[ModuleSpec] = None,
+        pointmap_input_key: str = "pointmap",
     ) -> "OctoModule":
         """
         Canonical way to create an OctoModule from configuration.
@@ -493,6 +534,11 @@ class OctoModule(nn.Module):
 
         head_defs = {k: ModuleSpec.instantiate(spec)() for k, spec in heads.items()}
 
+        # Instantiate optional pointmap encoder if provided
+        pointmap_encoder_def = (
+            ModuleSpec.instantiate(pointmap_encoder)() if pointmap_encoder is not None else None
+        )
+
         model_def = OctoTransformer(
             observation_tokenizers=observation_tokenizer_defs,
             task_tokenizers=task_tokenizer_defs,
@@ -504,6 +550,8 @@ class OctoModule(nn.Module):
             use_correct_attention=use_correct_attention,
             use_input_normalization=use_input_normalization,
             normalization_gate_scale=normalization_gate_scale,
+            pointmap_encoder=pointmap_encoder_def,
+            pointmap_input_key=pointmap_input_key,
         )
 
         return cls(

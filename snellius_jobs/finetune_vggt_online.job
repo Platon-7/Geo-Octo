@@ -6,7 +6,7 @@
 #SBATCH --gpus=1                 # Request 4 GPUs
 #SBATCH --job-name=Finetune_Octo_Online
 #SBATCH --ntasks=1
-#SBATCH --time=30:00:00
+#SBATCH --time=60:00:00
 #SBATCH --mem=121000M             # Double the memory (or adjust as needed)
 #SBATCH --output=outfiles/finetune_online_octo_%A.out
 
@@ -90,7 +90,7 @@ srun -u python scripts/finetune_vggt_online.py \
   --config=scripts/configs/config_vggt.py:full,language_conditioned \
   --config.pretrained_path=hf://rail-berkeley/octo-base-1.5 \
   --config.save_dir=/scratch-shared/tmp.cwkV8vOvfY/trained_models/my_octo_vggt_model_online \
-  --use_vision_encoder=True \
+  --use_vision_encoder=False \
   --vggt_concat_mode=features \
   --ae_path=/home/pkarageorgis/AE_Compressor/vggt_autoencoder_24L_256x512.pt \
   --ae_hidden=8192 \
@@ -102,4 +102,4 @@ srun -u python scripts/finetune_vggt_online.py \
   --profile_vggt_every=20 \
   --overlap_vggt_with_train=False \
   --compile_vggt=False \
-  --prefetch_batches=2
+  --prefetch_batches=3

@@ -435,7 +435,8 @@ class VGGTTokenizer(nn.Module):
         if vggt_tokens is None:
             raise ValueError("vggt_tokens not found in observations.")
         x = jnp.asarray(vggt_tokens, dtype=jnp.float32)
-        
+
+        logging.info("VGGTTokenizer: received %s", x.shape)
         if x.ndim == 5:
             # (B, T, H, W, C) -> (B, T, N, C)
             b, t, h, w, c = x.shape
@@ -451,7 +452,7 @@ class VGGTTokenizer(nn.Module):
             raise ValueError(
                 f"Unsupported vggt_tokens shape {x.shape}. Expected (B, T, H, W, C) or (B, T, N, C)."
             )
-        logging.info("VGGTTokenizer active: tokens shape is %s", tokens.shape)
+        logging.info("VGGTTokenizer: tokens %s", tokens.shape)
         
         mask = jnp.ones(tokens.shape[:-1], dtype=jnp.bool_)
         return TokenGroup(tokens=tokens, mask=mask)
