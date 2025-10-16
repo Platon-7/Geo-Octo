@@ -373,6 +373,7 @@ class OctoTransformer(nn.Module):
                 # Pointmap bottleneck (per (B,T))
                 p_ln = nn.LayerNorm(name=f"{group_name}_bottleneck_point_ln")(pm_embed)
                 p_b = nn.Dense(bottleneck_dim, name=f"{group_name}_bottleneck_point_proj")(p_ln)
+                p_b = nn.gelu(p_b)
                 # Broadcast to readout token count
                 p_b = p_b[:, :, None, :]
                 p_b = jnp.tile(p_b, (1, 1, n_tokens_for_readout, 1))
