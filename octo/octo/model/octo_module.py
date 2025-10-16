@@ -356,16 +356,26 @@ class OctoTransformer(nn.Module):
                     raise ValueError(
                         f"PointMapEncoder output dim {pm_embed.shape[-1]} != token_embedding_size {self.token_embedding_size}"
                     )
+                # Bottleneck fusion (PointVLA-style):
+                # readout_b = LN(readout) -> Dense(b) -> GELU
+                # point_b   = LN(pointmap_embed) -> Dense(b)
+                # fused_b   = readout_b + gate * broadcast(point_b)
+                # out       = Dense(d_model)(fused_b)
+                # readout   = readout + out  (residual)
 
-                # Small trainable projection for readout alignment (per-readout MLP)
-                # Shape preserves (batch, horizon, dim)
-                proj_name = f"{group_name}_pointmap_proj"
-                pm_embed = nn.LayerNorm(name=f"{proj_name}_ln")(pm_embed)
-                pm_embed = nn.Dense(self.token_embedding_size, name=proj_name)(pm_embed)
+                bottleneck_dim = min(256, self.token_embedding_size)
 
+                # Readout bottleneck
+                r_ln = nn.LayerNorm(name=f"{group_name}_bottleneck_readout_ln")(readout_tokens)
+                r_b = nn.Dense(bottleneck_dim, name=f"{group_name}_bottleneck_readout_proj")(r_ln)
+                r_b = nn.gelu(r_b)
+
+                # Pointmap bottleneck (per (B,T))
+                p_ln = nn.LayerNorm(name=f"{group_name}_bottleneck_point_ln")(pm_embed)
+                p_b = nn.Dense(bottleneck_dim, name=f"{group_name}_bottleneck_point_proj")(p_ln)
                 # Broadcast to readout token count
-                pm_embed = pm_embed[:, :, None, :]
-                pm_embed = jnp.tile(pm_embed, (1, 1, n_tokens_for_readout, 1))
+                p_b = p_b[:, :, None, :]
+                p_b = jnp.tile(p_b, (1, 1, n_tokens_for_readout, 1))
 
                 # Learnable gate to control residual strength (trainable; small init)
                 gate_scale = self.param(
@@ -373,9 +383,11 @@ class OctoTransformer(nn.Module):
                     nn.initializers.constant(0.05),
                     (),
                 )
-                # Avoid converting tracers to Python float during init/jit
                 logging.info("[PointMap Injection] gate_scale initialized")
-                readout_tokens = readout_tokens + gate_scale * pm_embed
+
+                fused_b = r_b + gate_scale * p_b
+                out = nn.Dense(self.token_embedding_size, name=f"{group_name}_bottleneck_out_proj")(fused_b)
+                readout_tokens = readout_tokens + out
                 logging.info(
                     "[PointMap Injection] Added to '%s'; resulting readout tokens %s",
                     group_name,
