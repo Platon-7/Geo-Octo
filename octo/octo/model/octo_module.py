@@ -365,15 +365,15 @@ class OctoTransformer(nn.Module):
 
                 bottleneck_dim = min(256, self.token_embedding_size)
 
-                # Readout bottleneck
+                # Readout bottleneck + MLP adapter at bottleneck dim (Dense(b)->GELU->Dense(b))
                 r_ln = nn.LayerNorm(name=f"{group_name}_bottleneck_readout_ln")(readout_tokens)
                 r_b = nn.Dense(bottleneck_dim, name=f"{group_name}_bottleneck_readout_proj")(r_ln)
                 r_b = nn.gelu(r_b)
+                r_b = nn.Dense(bottleneck_dim, name=f"{group_name}_bottleneck_readout_ffn")(r_b)
 
                 # Pointmap bottleneck (per (B,T))
                 p_ln = nn.LayerNorm(name=f"{group_name}_bottleneck_point_ln")(pm_embed)
                 p_b = nn.Dense(bottleneck_dim, name=f"{group_name}_bottleneck_point_proj")(p_ln)
-                p_b = nn.gelu(p_b)
                 # Broadcast to readout token count
                 p_b = p_b[:, :, None, :]
                 p_b = jnp.tile(p_b, (1, 1, n_tokens_for_readout, 1))
