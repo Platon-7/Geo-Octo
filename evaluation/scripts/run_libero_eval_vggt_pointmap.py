@@ -396,7 +396,8 @@ def compute_pointmap_for_image(image: np.ndarray, pm_ctx: dict) -> Optional[np.n
     pm = extractor.compute_pointmap(pre)[0]  # (H',W',4)
     if cfg.normalize_pointmap:
         pm = _normalize_pointmap(pm[np.newaxis, ...])[0]
-    return pm.astype(np.float16)
+    # Match finetune_pointmap: use float32 for JAX stability
+    return pm.astype(np.float32)
 
 
 def run_episode(

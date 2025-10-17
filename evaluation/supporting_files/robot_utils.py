@@ -312,6 +312,8 @@ def get_action(
         # Conditionally add pointmap
         if pointmap_stack is not None:
             observation[pm_key] = pointmap_stack[np.newaxis, ...]  # (1, T, H, W, C)
+            # Pointmaps are readouts injected post-tokenizers (no tokenizer name to mask),
+            # so we do NOT add to pad_mask_dict. OctoModule consumes this directly.
 
         # Construct task from text without touching its representation
         task = model.create_tasks(texts=[task_label])
