@@ -50,8 +50,7 @@ def get_config(config_string="full,multimodal"):
         "octo_transformer.BlockTransformer_*",
         # Positional embeddings (keep fixed)
         "octo_transformer.*_pos_embedding",
-        # Freeze action/value heads per plan
-        "heads_*",
+        # Note: DO NOT freeze heads; allow action head to adapt
     )
 
     max_steps = FieldReference(200000)
