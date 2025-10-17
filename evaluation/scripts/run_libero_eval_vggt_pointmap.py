@@ -459,6 +459,14 @@ def run_episode(
                     noisy_action_projector=noisy_action_projector,
                     use_film=cfg.use_film,
                 )
+                # Guard against empty action chunks for clearer debugging
+                if actions is None or len(actions) == 0:
+                    obs_keys = list(observation.keys())
+                    raise RuntimeError(
+                        "Empty action chunk from model. This usually means required inputs are missing. "
+                        f"Observation keys at t={t}: {obs_keys}. If your checkpoint expects images, "
+                        "do not pass --vggt_only_eval True."
+                    )
                 action_queue.extend(actions)
 
             action = action_queue.popleft()
