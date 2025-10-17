@@ -35,6 +35,8 @@ IMAGE_HISTORY: deque = deque(maxlen=2)
 PROPRIO_HISTORY: deque = deque(maxlen=2)
 # Add VGGT token history for windowed inputs
 VGGT_HISTORY: deque = deque(maxlen=2)
+# Add PointMap history for windowed inputs
+POINTMAP_HISTORY: deque = deque(maxlen=2)
 
 
 def set_seed_everywhere(seed: int) -> None:
@@ -234,13 +236,15 @@ def get_action(
 
         # Maintain histories sized to the model’s expected window
         from collections import deque
-        global IMAGE_HISTORY, PROPRIO_HISTORY, VGGT_HISTORY
+        global IMAGE_HISTORY, PROPRIO_HISTORY, VGGT_HISTORY, POINTMAP_HISTORY
         if getattr(IMAGE_HISTORY, "maxlen", None) != expected_window:
             IMAGE_HISTORY = deque(list(IMAGE_HISTORY), maxlen=expected_window)
         if getattr(PROPRIO_HISTORY, "maxlen", None) != expected_window:
             PROPRIO_HISTORY = deque(list(PROPRIO_HISTORY), maxlen=expected_window)
         if getattr(VGGT_HISTORY, "maxlen", None) != expected_window:
             VGGT_HISTORY = deque(list(VGGT_HISTORY), maxlen=expected_window)
+        if getattr(POINTMAP_HISTORY, "maxlen", None) != expected_window:
+            POINTMAP_HISTORY = deque(list(POINTMAP_HISTORY), maxlen=expected_window)
 
         # Images (only if expected)
         image = obs["full_image"]
@@ -271,6 +275,17 @@ def get_action(
                 VGGT_HISTORY.append(VGGT_HISTORY[-1])
             vggt_stack = np.stack(list(VGGT_HISTORY), axis=0)  # (T, H, W)
 
+        # Optional PointMap
+        pointmap_stack = None
+        pm_key = getattr(cfg, "pointmap_key", "pointmap")
+        if pm_key in obs and obs[pm_key] is not None:
+            current_pm = np.asarray(obs[pm_key])  # (H, W, 4)
+            if current_pm.ndim == 3 and current_pm.shape[-1] in (1, 3, 4):
+                POINTMAP_HISTORY.append(current_pm)
+                while len(POINTMAP_HISTORY) < expected_window:
+                    POINTMAP_HISTORY.append(POINTMAP_HISTORY[-1])
+                pointmap_stack = np.stack(list(POINTMAP_HISTORY), axis=0)  # (T, H, W, C)
+
         # Build observation dict to match the checkpoint schema
         T = expected_window
         observation = {
@@ -293,6 +308,10 @@ def get_action(
         if vggt_stack is not None:
             observation["vggt_tokens"] = vggt_stack[np.newaxis, ...]  # (1, T, 64, 512) or (1, T, H, W)
             observation["pad_mask_dict"]["vggt_tokens"] = np.ones((1, T), dtype=bool)
+
+        # Conditionally add pointmap
+        if pointmap_stack is not None:
+            observation[pm_key] = pointmap_stack[np.newaxis, ...]  # (1, T, H, W, C)
 
         # Construct task from text without touching its representation
         task = model.create_tasks(texts=[task_label])
