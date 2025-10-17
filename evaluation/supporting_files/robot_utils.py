@@ -246,13 +246,12 @@ def get_action(
         if getattr(POINTMAP_HISTORY, "maxlen", None) != expected_window:
             POINTMAP_HISTORY = deque(list(POINTMAP_HISTORY), maxlen=expected_window)
 
-        # Images (only if expected)
+        # Images: always maintain history and include in observation for robustness
         image = obs["full_image"]
-        if expect_images:
+        IMAGE_HISTORY.append(image)
+        while len(IMAGE_HISTORY) < expected_window:
             IMAGE_HISTORY.append(image)
-            while len(IMAGE_HISTORY) < expected_window:
-                IMAGE_HISTORY.append(image)
-            image_stack = np.stack(list(IMAGE_HISTORY), axis=0)  # (T, H, W, 3)
+        image_stack = np.stack(list(IMAGE_HISTORY), axis=0)  # (T, H, W, 3)
 
         # Proprio (7-D)
         proprio_dim = 7
@@ -299,10 +298,9 @@ def get_action(
             "proprio": proprio_stack[np.newaxis, ...],
         }
 
-        # Conditionally add image_primary
-        if expect_images:
-            observation["image_primary"] = image_stack[np.newaxis, ...]
-            observation["pad_mask_dict"]["image_primary"] = np.ones((1, T), dtype=bool)
+        # Always add image_primary (models trained with images expect it)
+        observation["image_primary"] = image_stack[np.newaxis, ...]
+        observation["pad_mask_dict"]["image_primary"] = np.ones((1, T), dtype=bool)
 
         # Conditionally add vggt_tokens
         if vggt_stack is not None:
