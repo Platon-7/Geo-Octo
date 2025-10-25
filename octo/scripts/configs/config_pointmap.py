@@ -29,20 +29,32 @@ def get_config(config_string="full,multimodal"):
         "num_parallel_calls": 16,
     }
 
-    if mode == "full":
-        frozen_keys = None
-    elif mode == "head_only":
-        frozen_keys = ("octo_transformer.*",)
-    elif mode == "head_mlp_only":
-        frozen_keys = (
-            "octo_transformer.*",
-            "heads_*.map_head.probe",
-            "heads_*.map_head.MultiHeadDotProductAttention_0.*",
-        )
-    else:
-        raise ValueError("Invalid mode")
+    # PointMap finetuning: freeze Octo base (vision encoders, transformer, readout pos embeds, heads)
+    # Keep trainable: octo_transformer.pointmap_encoder, readout_*_pointmap_proj, readout_*_pointmap_gate
+    # We enumerate precise subtrees to avoid freezing the new pointmap modules.
+    frozen_keys = (
+        # Vision tokenizers (encoders)
+        "octo_transformer.observation_tokenizers_*",
+        # Task tokenizers
+        "octo_transformer.task_tokenizers_*",
+        # Language/image task tokenizers
+        "octo_transformer.task_*",
+        # Projections into token dim
+        "octo_transformer.obs_*_projection*",
+        "octo_transformer.task_*_projection*",
+        # Normalization adapters
+        "octo_transformer.obs_*_norm_adapter*",
+        "octo_transformer.task_*_norm_adapter*",
+        "octo_transformer.repeated_*_norm_adapter*",
+        # Transformer backbone
+        "octo_transformer.BlockTransformer_*",
+        # Positional embeddings (keep fixed)
+        "octo_transformer.*_pos_embedding",
+        # Freeze action/value heads per plan
+        # "heads_*",
+    )
 
-    max_steps = FieldReference(200000)
+    max_steps = FieldReference(50000)
     window_size = FieldReference(default=1)
 
     config = dict(
@@ -68,7 +80,7 @@ def get_config(config_string="full,multimodal"):
             learning_rate=dict(
                 name="cosine",
                 init_value=0.0,
-                peak_value=3e-4,
+                peak_value=3e-5,
                 warmup_steps=2000,
                 decay_steps=max_steps,
                 end_value=0.0,
@@ -142,7 +154,7 @@ def get_config(config_string="full,multimodal"):
     config["frame_transform_kwargs"] = frame_transform_kwargs
     config["config_delete_keys"] = {"model": {"observation_tokenizers": {"wrist": True}}}
 
-    # Add pointmap encoder wiring (the module itself is in code; this just documents intent)
+    # Add pointmap wiring only (the encoder spec is created in the finetuning script to match token_embedding_size)
     config["update_config"] = {
         "model": {
             "pointmap_input_key": "pointmap",

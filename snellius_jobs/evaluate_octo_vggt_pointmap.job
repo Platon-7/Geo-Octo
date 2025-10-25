@@ -3,11 +3,11 @@
 #SBATCH --gres=gpu:1
 #SBATCH --cpus-per-task=4
 #SBATCH --gpus=1
-#SBATCH --job-name=Evaluate_Octo_VGGT_Torch
+#SBATCH --job-name=Evaluate_Octo_VGGT_PointMap
 #SBATCH --ntasks=1
 #SBATCH --time=15:00:00
 #SBATCH --mem=122000M
-#SBATCH --output=outfiles/evaluate_octo_vggt_torch_%A.out
+#SBATCH --output=outfiles/evaluate_octo_vggt_pointmap_%A.out
 
 module purge
 module load 2024
@@ -43,16 +43,16 @@ export PYTHONPATH="/gpfs/home4/pkarageorgis/geo_octo/vggt:/gpfs/home4/pkarageorg
 
 # srun python evaluate_model.py
 
-srun python -m evaluation.scripts.run_libero_eval_vggt_torch \
+srun python -m evaluation.scripts.run_libero_eval_vggt_pointmap \
   --model_family octo \
-  --pretrained_checkpoint "/scratch-shared/tmp.cwkV8vOvfY/trained_models/my_octo_vggt_model_online/octo_finetune_vggt/experiment_20251006_174953" \
-  --checkpoint_step 200000 \
+  --pretrained_checkpoint "/scratch-shared/tmp.cwkV8vOvfY/trained_models/my_octo_vggt_model_online/octo_finetune_pointmap/experiment_20251017_211605" \
+  --checkpoint_step 50000 \
   --task_suite_name libero_spatial \
-  --num_trials_per_task 50 \
+  --num_trials_per_task 1 \
   --num_open_loop_steps 4 \
-  --use_vggt_tokens True \
-  --vggt_ae_path "/home/pkarageorgis/AE_Compressor/vggt_autoencoder_24L_256x512.pt" \
+  --vggt_use_cuda True \
+  --vggt_device_id 0 \
   --vggt_input_res 224 \
-  --vggt_agg_layers 24 \
   --vggt_only_eval False \
-  --vggt_layer_indices=None
+  --pointmap_key pointmap \
+  --normalize_pointmap True

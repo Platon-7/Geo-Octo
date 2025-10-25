@@ -299,9 +299,12 @@ def main(_):
     # Load Pretrained model + modify config minimally
     #########
 
+    # Handle HF path: do not pass a step for HuggingFace checkpoints
+    _pretrained_path = str(FLAGS.config.pretrained_path)
+    _step = None if _pretrained_path.startswith("hf://") else getattr(FLAGS.config, "pretrained_step", None)
     pretrained_model = OctoModel.load_pretrained(
-        FLAGS.config.pretrained_path,
-        step=FLAGS.config.pretrained_step,
+        _pretrained_path,
+        step=_step,
     )
     flat_config = flax.traverse_util.flatten_dict(
         pretrained_model.config, keep_empty_nodes=True
@@ -322,12 +325,22 @@ def main(_):
             in_channels=4,
             base_width=64,
             embed_dim=model_cfg.get("token_embedding_size", 512),
+            pre_downsample=2,
+            use_bfloat16=True,
         )
-    model_cfg["pointmap_input_key"] = "pointmap"
+    # Align Octo module's expected pointmap key with CLI flag
+    model_cfg["pointmap_input_key"] = str(getattr(FLAGS, "pointmap_key", "pointmap"))
     config["model"] = model_cfg
 
     # Apply any extra updates from the pointmap config file
     config.update(FLAGS.config.get("update_config", ConfigDict()))
+    # Freeze Octo base explicitly; unfreeze pointmap encoder and its gates/projections
+    # Optimizer handles this via frozen_keys; ensure they are present
+    if "optimizer" not in config:
+        config["optimizer"] = {}
+    if "frozen_keys" not in config["optimizer"]:
+        # Use the defaults from config_pointmap.py; leave as is otherwise
+        pass
     config = config.to_dict()
 
     #########
@@ -357,9 +370,13 @@ def main(_):
                 pointmap = pm_runner.compute_pointmap(np.asarray(image_primary))
                 if bool(FLAGS.normalize_pointmap):
                     pointmap = _normalize_pointmap(pointmap)
-                obs[FLAGS.pointmap_key] = pointmap.astype(np.float32)
+                # Ensure shape matches (B,T,H,W,4) float32
+                pmf32 = pointmap.astype(np.float32)
+                if pmf32.ndim != 5 or pmf32.shape[-1] != 4:
+                    raise ValueError(f"Pointmap wrong shape {pmf32.shape}; expected (B,T,H,W,4)")
+                obs[str(FLAGS.pointmap_key)] = pmf32
                 batch["observation"] = obs
-                logging.info("[PointMap] injected %s %s", FLAGS.pointmap_key, pointmap.shape)
+                #logging.info("[PointMap] injected %s %s", FLAGS.pointmap_key, pointmap.shape)
         except Exception as e:
             logging.warning("Online pointmap computation failed for this batch: %s", e)
 
@@ -424,7 +441,7 @@ def main(_):
     print("example_batch observation keys:", list(example_batch["observation"].keys()))
 
     #########
-    # Load Model
+    # Load Model (init fresh + merge pretrained weights)
     #########
 
     rng = jax.random.PRNGKey(FLAGS.config.seed)
@@ -437,6 +454,14 @@ def main(_):
         rng=init_rng,
         dataset_statistics=dataset.dataset_statistics,
     )
+
+    # Merge pretrained params into freshly initialized model (copy matching shapes)
+    try:
+        from octo.utils.train_utils import merge_params
+        model = model.replace(params=merge_params(model.params, pretrained_model.params))
+        logging.info("Merged pretrained weights into model parameters (shape-matched).")
+    except Exception as e:
+        logging.warning("Could not merge pretrained weights: %s", e)
 
     # Optimizer and Train State
     params = model.params

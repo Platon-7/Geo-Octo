@@ -87,20 +87,18 @@ export JAX_DEFAULT_MATMUL_PRECISION=tensorfloat32
 
 
 srun -u python scripts/finetune_pointmap.py \
-    --config=scripts/configs/config_pointmap.py:full,language_conditioned \
-    --config.pretrained_path=hf://rail-berkeley/octo-base-1.5 \
-    --config.save_dir=/scratch-shared/tmp.cwkV8vOvfY/trained_models/my_octo_vggt_model_online \
-    --config.dataset_kwargs.name=libero_spatial_no_noops \
-    --config.dataset_kwargs.data_dir=/home/pkarageorgis/geo_octo/libero_datasets \
-    --vggt_use_cuda=True \
-    --vggt_device_id=0 \
-    --vggt_input_res=224 \
-    --vggt_eval_batch_size=48 \
-    --jax_use_first_device_only=True \
-    --profile_vggt=True \
-    --profile_vggt_every=20 \
-    --overlap_vggt_with_train=False \
-    --compile_vggt=False \
-    --prefetch_batches=3 \
-    --pointmap_key=pointmap \
-    --normalize_pointmap=True
+  --config=scripts/configs/config_pointmap.py:full,language_conditioned \
+  --config.pretrained_path=hf://rail-berkeley/octo-base-1.5 \
+  --config.save_dir=/scratch-shared/tmp.cwkV8vOvfY/trained_models/my_octo_vggt_model_online \
+  --vggt_use_cuda=True \
+  --vggt_device_id=0 \
+  --vggt_input_res=224 \
+  --vggt_eval_batch_size=32 \
+  --jax_use_first_device_only=True \
+  --profile_vggt=True \
+  --profile_vggt_every=20 \
+  --overlap_vggt_with_train=True \
+  --compile_vggt=False \
+  --prefetch_batches=3 \
+  --pointmap_key=pointmap \
+  --normalize_pointmap=True
