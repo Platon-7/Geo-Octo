@@ -454,6 +454,39 @@ def main(_):
         rng=init_rng,
         dataset_statistics=dataset.dataset_statistics,
     )
+    
+    # ===== Unfreeze last N transformer blocks + obs_* projection/adapter =====
+    unfreeze_last_n = 4  # change to how many tail blocks you want trainable
+
+    # Get total number of blocks from the loaded config
+    num_layers = int(model.config["model"]["transformer_kwargs"]["num_layers"])
+
+    # Start from the config's frozen_keys
+    frozen = list(FLAGS.config.optimizer.frozen_keys)
+
+    # 1) Remove the "freeze all blocks" wildcard
+    frozen = [p for p in frozen if p != "octo_transformer.BlockTransformer_*"]
+
+    # 2) Unfreeze obs_* projections + norm adapters (remove their freeze patterns)
+    frozen = [
+        p for p in frozen
+        if not (p.startswith("octo_transformer.obs_") and
+                ("_projection" in p or "_norm_adapter" in p))
+    ]
+
+    # 3) Freeze only encoder blocks [0 .. num_layers - unfreeze_last_n - 1]
+    early_block_patterns = [
+        f"octo_transformer.BlockTransformer_0.Transformer_0.encoderblock_{i}.*"
+        for i in range(max(0, num_layers - unfreeze_last_n))
+    ]
+
+    # Commit back to flags (used by create_optimizer)
+    FLAGS.config.optimizer.frozen_keys = tuple(frozen + early_block_patterns)
+    print("[FINETUNE] Freezing early blocks:", early_block_patterns)
+    print("[FINETUNE] Final frozen_keys size:", len(FLAGS.config.optimizer.frozen_keys))
+    
+    print("Total Layers")
+    print(model.config["model"]["transformer_kwargs"]["num_layers"])
 
     # Merge pretrained params into freshly initialized model (copy matching shapes)
     try:
@@ -477,6 +510,7 @@ def main(_):
         tx=tx,
         rng=jax.random.PRNGKey(FLAGS.config.seed),
     )
+    print("[FINETUNE] Frozen patterns:", FLAGS.config.optimizer.frozen_keys)
 
     #########
     # Save all metadata

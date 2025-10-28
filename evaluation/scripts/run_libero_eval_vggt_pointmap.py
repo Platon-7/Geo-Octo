@@ -471,7 +471,7 @@ def run_episode(
                 action_queue.extend(actions)
 
             action = action_queue.popleft()
-            action = process_action(action, cfg.model_family, action_mean, action_std)
+            #action = process_action(action, cfg.model_family, action_mean, action_std)
             obs, reward, done, info = env.step(action.tolist())
             if done:
                 success = True
@@ -590,9 +590,14 @@ def eval_libero(cfg: GenerateConfig) -> float:
 
     # Initialize model and components
     model, action_head, proprio_projector, noisy_action_projector, processor = initialize_model(cfg)
+    
 
     try:
         mcfg = model.config
+        
+        # Ensure we use the exact key the checkpoint was trained with
+        cfg.pointmap_key = (mcfg.get("model", {}) or mcfg).get("pointmap_input_key", "pointmap")
+
         obs_tok = mcfg.get("model", {}).get("observation_tokenizers") or mcfg.get("observation_tokenizers")
         heads = mcfg.get("heads") or mcfg.get("model", {}).get("heads")
         act_dim = None

@@ -319,8 +319,25 @@ def get_action(
         task = model.create_tasks(texts=[task_label])
 
         # Sample action
-        action = model.sample_actions(observation, task, rng=jax.random.PRNGKey(0))
+        #action = model.sample_actions(observation, task, rng=jax.random.PRNGKey(0))
+        
+        # Build un-normalization stats from the checkpoint
+        ds = getattr(model, "dataset_statistics", {}).get("action")
+        unnorm_stats = None
+        if ds is not None:
+            action_mean = np.array(ds["mean"], dtype=np.float32)
+            action_std = np.array(ds["std"], dtype=np.float32)
+            unnorm_stats = {"mean": action_mean, "std": action_std}
+            if "mask" in ds:
+                unnorm_stats["mask"] = np.array(ds["mask"], dtype=bool)
 
+        # Sample action; model applies un-normalization
+        action = model.sample_actions(
+            observation,
+            task,
+            unnormalization_statistics=unnorm_stats,
+            rng=jax.random.PRNGKey(0),
+        )
         # Convert to numpy and normalize output to a list of 7D steps
         arr = np.array(action)
         while arr.ndim > 1 and arr.shape[0] == 1:

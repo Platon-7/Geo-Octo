@@ -54,7 +54,7 @@ def get_config(config_string="full,multimodal"):
         # "heads_*",
     )
 
-    max_steps = FieldReference(50000)
+    max_steps = FieldReference(100000)
     window_size = FieldReference(default=1)
 
     config = dict(
@@ -80,7 +80,7 @@ def get_config(config_string="full,multimodal"):
             learning_rate=dict(
                 name="cosine",
                 init_value=0.0,
-                peak_value=3e-5,
+                peak_value=3e-4,
                 warmup_steps=2000,
                 decay_steps=max_steps,
                 end_value=0.0,
