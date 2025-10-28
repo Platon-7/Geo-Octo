@@ -85,8 +85,7 @@ def get_config(config_string="full,multimodal"):
                 # Pointmap encoder
                 "octo_transformer.pointmap_encoder*",
                 # LoRA matrices inside transformer attention/MLP
-                "octo_transformer.BlockTransformer_0.Transformer_0.encoderblock_*.*.lora_A",
-                "octo_transformer.BlockTransformer_0.Transformer_0.encoderblock_*.*.lora_B",
+                "octo_transformer.BlockTransformer_0.Transformer_0.encoderblock_*.*.lora_*.*",
             ),
             grad_accumulation_steps=4,
         ),
