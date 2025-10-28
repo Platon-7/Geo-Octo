@@ -29,29 +29,23 @@ def get_config(config_string="full,multimodal"):
         "num_parallel_calls": 16,
     }
 
-    # PointMap finetuning: freeze Octo base (vision encoders, transformer, readout pos embeds, heads)
-    # Keep trainable: octo_transformer.pointmap_encoder, readout_*_pointmap_proj, readout_*_pointmap_gate
-    # We enumerate precise subtrees to avoid freezing the new pointmap modules.
+    # PointMap finetuning + LoRA: freeze almost all base weights; train heads, pointmap encoder, and LoRA params
     frozen_keys = (
-        # Vision tokenizers (encoders)
+        # Tokenizers and projections/norm adapters
         "octo_transformer.observation_tokenizers_*",
-        # Task tokenizers
         "octo_transformer.task_tokenizers_*",
-        # Language/image task tokenizers
         "octo_transformer.task_*",
-        # Projections into token dim
         "octo_transformer.obs_*_projection*",
         "octo_transformer.task_*_projection*",
-        # Normalization adapters
         "octo_transformer.obs_*_norm_adapter*",
         "octo_transformer.task_*_norm_adapter*",
         "octo_transformer.repeated_*_norm_adapter*",
-        # Transformer backbone
+        # Transformer backbone fully frozen (we'll override LoRA params as trainable)
         "octo_transformer.BlockTransformer_*",
-        # Positional embeddings (keep fixed)
+        # Positional embeddings
         "octo_transformer.*_pos_embedding",
-        # Freeze action/value heads per plan
-        # "heads_*",
+        # Heads (action/value) frozen to honor "no touching pretrained weights"
+        "heads_*",
     )
 
     max_steps = FieldReference(100000)
@@ -88,6 +82,17 @@ def get_config(config_string="full,multimodal"):
             weight_decay=0.01,
             clip_gradient=1.0,
             frozen_keys=frozen_keys,
+            # Ensure LoRA/pointmap stay trainable despite broad freezes
+            trainable_overrides=(
+                # Readout bottleneck fusion + gates for pointmap injection
+                "octo_transformer.readout_*_bottleneck_*",
+                "octo_transformer.readout_*_pointmap_gate",
+                # Pointmap encoder
+                "octo_transformer.pointmap_encoder*",
+                # LoRA matrices inside transformer attention/MLP
+                "octo_transformer.BlockTransformer_0.Transformer_0.encoderblock_*.*.lora_A",
+                "octo_transformer.BlockTransformer_0.Transformer_0.encoderblock_*.*.lora_B",
+            ),
             grad_accumulation_steps=4,
         ),
         val_kwargs=dict(
@@ -158,6 +163,18 @@ def get_config(config_string="full,multimodal"):
     config["update_config"] = {
         "model": {
             "pointmap_input_key": "pointmap",
+            # Enable LoRA in transformer blocks with sensible defaults
+            "transformer_kwargs": {
+                "use_lora_attention": True,
+                "use_lora_mlp": True,
+                "lora_r": 8,
+                "lora_alpha": 16.0,
+                "lora_dropout": 0.0,
+                "lora_attn_q": True,
+                "lora_attn_k": False,
+                "lora_attn_v": True,
+                "lora_attn_out": False,
+            },
         }
     }
 
