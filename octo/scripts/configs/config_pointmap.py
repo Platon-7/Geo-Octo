@@ -29,23 +29,18 @@ def get_config(config_string="full,multimodal"):
         "num_parallel_calls": 16,
     }
 
-    # PointMap finetuning + LoRA: freeze almost all base weights; train heads, pointmap encoder, and LoRA params
+    # PointMap finetuning + LoRA: freeze transformer backbone; unfreeze heads, projections, norm adapters
     frozen_keys = (
         # Tokenizers and projections/norm adapters
         "octo_transformer.observation_tokenizers_*",
         "octo_transformer.task_tokenizers_*",
         "octo_transformer.task_*",
-        "octo_transformer.obs_*_projection*",
-        "octo_transformer.task_*_projection*",
-        "octo_transformer.obs_*_norm_adapter*",
-        "octo_transformer.task_*_norm_adapter*",
-        "octo_transformer.repeated_*_norm_adapter*",
+        # NOTE: Projections and norm adapters are intentionally NOT frozen
         # Transformer backbone fully frozen (we'll override LoRA params as trainable)
         "octo_transformer.BlockTransformer_*",
         # Positional embeddings
         "octo_transformer.*_pos_embedding",
-        # Heads (action/value) frozen to honor "no touching pretrained weights"
-        "heads_*",
+        # Heads are intentionally NOT frozen
     )
 
     max_steps = FieldReference(100000)
@@ -82,7 +77,7 @@ def get_config(config_string="full,multimodal"):
             weight_decay=0.01,
             clip_gradient=1.0,
             frozen_keys=frozen_keys,
-            # Ensure LoRA/pointmap stay trainable despite broad freezes
+            # Ensure LoRA/pointmap stay trainable despite broad freezes (harmless if already unfrozen)
             trainable_overrides=(
                 # Readout bottleneck fusion + gates for pointmap injection
                 "octo_transformer.readout_*_bottleneck_*",
