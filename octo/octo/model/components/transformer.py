@@ -43,44 +43,28 @@ class LoRADenseGeneral(nn.Module):
         if self.lora_r is None or int(self.lora_r) <= 0:
             return base
 
-        # Compute low-rank update
-        # We currently only support axis=-1 for LoRA path (all callers use this)
-        if isinstance(self.axis, (tuple, list)):
-            raise NotImplementedError("LoRADenseGeneral only supports single axis for LoRA path")
-        in_features = inputs.shape[self.axis]
-
-        if isinstance(self.features, int):
-            out_features_total = int(self.features)
-            out_features_shape = (out_features_total,)
-        else:
-            out_features_shape = tuple(self.features)  # e.g., (num_heads, head_dim)
-            out_features_total = int(jnp.prod(jnp.array(out_features_shape)))
-
+        # Low-rank branch implemented as Dense(r) then DenseGeneral(features)
         x = inputs
         if self.lora_dropout and self.lora_dropout > 0.0:
             x = nn.Dropout(rate=self.lora_dropout)(x, deterministic=deterministic)
 
-        lora_a = self.param(
-            "lora_A",
-            # Small init keeps initial delta near zero
-            nn.initializers.normal(stddev=0.01),
-            (in_features, int(self.lora_r)),
-        )
-        lora_b = self.param(
-            "lora_B",
-            # Zero init ensures exact zero delta at init
-            nn.initializers.zeros,
-            (int(self.lora_r), out_features_total),
-        )
-
-        # Project to low rank then back to output space
-        x_flat = x
-        delta = jnp.einsum("...d,dr->...r", x_flat, lora_a)
-        delta = jnp.einsum("...r,rf->...f", delta, lora_b)
+        down = nn.Dense(
+            features=int(self.lora_r),
+            use_bias=False,
+            dtype=self.dtype,
+            kernel_init=nn.initializers.normal(stddev=0.01),
+            name="lora_A",
+        )(x)
+        up = nn.DenseGeneral(
+            features=self.features,
+            axis=self.axis,
+            use_bias=False,
+            dtype=self.dtype,
+            kernel_init=nn.initializers.zeros,
+            name="lora_B",
+        )(down)
         scale = self.lora_alpha / float(self.lora_r)
-        delta = delta * scale
-        # Reshape to DenseGeneral output shape
-        delta = delta.reshape((*inputs.shape[:-1], *out_features_shape))
+        delta = up * scale
         return base + delta.astype(base.dtype)
 
 
@@ -111,24 +95,25 @@ class LoRADense(nn.Module):
         if self.lora_r is None or int(self.lora_r) <= 0:
             return base
 
-        in_features = inputs.shape[-1]
         x = inputs
         if self.lora_dropout and self.lora_dropout > 0.0:
             x = nn.Dropout(rate=self.lora_dropout)(x, deterministic=deterministic)
 
-        lora_a = self.param(
-            "lora_A",
-            nn.initializers.normal(stddev=0.01),
-            (in_features, int(self.lora_r)),
-        )
-        lora_b = self.param(
-            "lora_B",
-            nn.initializers.zeros,
-            (int(self.lora_r), int(self.features)),
-        )
-        delta = jnp.einsum("...d,dr->...r", x, lora_a)
-        delta = jnp.einsum("...r,rf->...f", delta, lora_b)
-        delta = delta * (self.lora_alpha / float(self.lora_r))
+        down = nn.Dense(
+            features=int(self.lora_r),
+            use_bias=False,
+            dtype=self.dtype,
+            kernel_init=nn.initializers.normal(stddev=0.01),
+            name="lora_A",
+        )(x)
+        up = nn.Dense(
+            features=self.features,
+            use_bias=False,
+            dtype=self.dtype,
+            kernel_init=nn.initializers.zeros,
+            name="lora_B",
+        )(down)
+        delta = up * (self.lora_alpha / float(self.lora_r))
         return base + delta.astype(base.dtype)
 
 
