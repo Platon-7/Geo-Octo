@@ -669,22 +669,51 @@ def main(_):
 
     # Wrap the pretrained 'primary' tokenizer with VisionMixer, inheriting its exact spec
     try:
-        obs_toks = config["model"].get("observation_tokenizers", {})
-        old_primary = obs_toks.get("primary")
-        if isinstance(old_primary, dict):
-            obs_toks["primary"] = ModuleSpec.create(
-                "octo.model.components.tokenizers:VisionMixer",
-                patch_tokenizer_spec=old_primary,
-                vggt_tokenizer_spec={
-                    "module": "octo.model.components.tokenizers:VGGTTokenizer",
-                },
-                concat_mode=FLAGS.vggt_concat_mode,
+        obs_toks = dict(config["model"].get("observation_tokenizers", {}))
+
+        if not FLAGS.use_vision_encoder:
+            vg_spec = obs_toks.pop("mixed_vision", None)
+            if vg_spec is None:
+                logging.info(
+                    "No explicit 'mixed_vision' tokenizer found; creating VGGT-only tokenizer for primary observations."
+                )
+                vg_spec = ModuleSpec.create(
+                    "octo.model.components.tokenizers:VGGTTokenizer"
+                )
+            else:
+                logging.info(
+                    "Using existing 'mixed_vision' tokenizer spec as the VGGT-only primary observation tokenizer."
+                )
+
+            obs_toks["primary"] = vg_spec
+            config["model"]["repeat_task_tokens"] = False
+            logging.info(
+                "Configured VGGT-only observation tokenizer because use_vision_encoder=False."
             )
-            config["model"]["observation_tokenizers"] = obs_toks
-            config["model"]["repeat_task_tokens"] = True
-            logging.info("Wrapped 'primary' with VisionMixer, inheriting pretrained encoder spec.")
+        else:
+            # When using the vision encoder, remove any redundant VGGT-only tokenizer entry.
+            if "mixed_vision" in obs_toks:
+                obs_toks.pop("mixed_vision", None)
+                logging.info("Removed redundant 'mixed_vision' tokenizer when VisionMixer is enabled.")
+
+            old_primary = obs_toks.get("primary")
+            if isinstance(old_primary, dict):
+                obs_toks["primary"] = ModuleSpec.create(
+                    "octo.model.components.tokenizers:VisionMixer",
+                    patch_tokenizer_spec=old_primary,
+                    vggt_tokenizer_spec={
+                        "module": "octo.model.components.tokenizers:VGGTTokenizer",
+                    },
+                    concat_mode=FLAGS.vggt_concat_mode,
+                )
+                config["model"]["repeat_task_tokens"] = True
+                logging.info(
+                    "Wrapped 'primary' with VisionMixer, inheriting pretrained encoder spec."
+                )
+
+        config["model"]["observation_tokenizers"] = obs_toks
     except Exception as _e:
-        logging.warning("Could not wrap primary with VisionMixer: %s", _e)
+        logging.warning("Could not configure observation tokenizers: %s", _e)
 
     #########
     # Setup Data Loader
