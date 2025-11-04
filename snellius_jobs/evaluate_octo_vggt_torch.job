@@ -45,10 +45,10 @@ export PYTHONPATH="/gpfs/home4/pkarageorgis/geo_octo/vggt:/gpfs/home4/pkarageorg
 
 srun python -m evaluation.scripts.run_libero_eval_vggt_torch \
   --model_family octo \
-  --pretrained_checkpoint "/scratch-shared/tmp.cwkV8vOvfY/trained_models/my_octo_vggt_model_online/octo_finetune_vggt/experiment_20251006_174953" \
+  --pretrained_checkpoint "/scratch-shared/tmp.cwkV8vOvfY/trained_models/my_octo_vggt_model_online/octo_finetune_vggt/experiment_20251102_141706" \
   --checkpoint_step 200000 \
-  --task_suite_name libero_spatial \
-  --num_trials_per_task 50 \
+  --task_suite_name libero_object \
+  --num_trials_per_task 1 \
   --num_open_loop_steps 4 \
   --use_vggt_tokens True \
   --vggt_ae_path "/home/pkarageorgis/AE_Compressor/vggt_autoencoder_24L_256x512.pt" \
