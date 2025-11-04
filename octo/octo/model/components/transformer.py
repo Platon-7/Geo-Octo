@@ -1,5 +1,5 @@
 # adapted from https://github.com/google-research/vision_transformer/blob/main/vit_jax/models_vit.py
-from typing import Callable, Optional
+from typing import Callable, Optional, Sequence, Union as _Union
 
 import flax.linen as nn
 import jax
@@ -7,6 +7,147 @@ import jax.numpy as jnp
 
 from octo.model.components.base import TokenGroup
 from octo.utils.typing import Dtype, PRNGKey, Shape, Union
+
+
+class LoRADenseGeneral(nn.Module):
+    """DenseGeneral layer with optional LoRA low-rank update.
+
+    When lora_r > 0, the output becomes: y = DenseGeneral(x) + scale * (Dropout(x) @ A @ B),
+    where A in R[in_features, r] and B in R[r, prod(features)].
+    """
+
+    features: _Union[int, Sequence[int]]
+    axis: _Union[int, Sequence[int]] = -1
+    use_bias: bool = True
+    dtype: Dtype = jnp.float32
+    kernel_init: Callable[[PRNGKey, Shape, Dtype], jax.Array] = nn.initializers.xavier_uniform()
+    bias_init: Callable[[PRNGKey, Shape, Dtype], jax.Array] = nn.initializers.normal(stddev=1e-6)
+
+    # LoRA params
+    lora_r: int = 0
+    lora_alpha: float = 1.0
+    lora_dropout: float = 0.0
+
+    @nn.compact
+    def __call__(self, inputs: jax.Array, *, deterministic: bool) -> jax.Array:
+        base = nn.DenseGeneral(
+            features=self.features,
+            axis=self.axis,
+            use_bias=self.use_bias,
+            dtype=self.dtype,
+            kernel_init=self.kernel_init,
+            bias_init=self.bias_init,
+        )(inputs)
+
+        # Fast path when LoRA disabled
+        if self.lora_r is None or int(self.lora_r) <= 0:
+            return base
+
+        # Low-rank branch implemented as Dense(r) then DenseGeneral(features)
+        x = inputs
+        if self.lora_dropout and self.lora_dropout > 0.0:
+            x = nn.Dropout(rate=self.lora_dropout)(x, deterministic=deterministic)
+
+        down = nn.Dense(
+            features=int(self.lora_r),
+            use_bias=False,
+            dtype=self.dtype,
+            kernel_init=nn.initializers.normal(stddev=0.01),
+            name="lora_A",
+        )(x)
+        up = nn.DenseGeneral(
+            features=self.features,
+            axis=self.axis,
+            use_bias=False,
+            dtype=self.dtype,
+            kernel_init=nn.initializers.zeros,
+            name="lora_B",
+        )(down)
+        scale = self.lora_alpha / float(self.lora_r)
+        delta = up * scale
+        return base + delta.astype(base.dtype)
+
+
+class LoRADense(nn.Module):
+    """Dense layer with optional LoRA low-rank update."""
+
+    features: int
+    use_bias: bool = True
+    dtype: Dtype = jnp.float32
+    kernel_init: Callable[[PRNGKey, Shape, Dtype], jax.Array] = nn.initializers.xavier_uniform()
+    bias_init: Callable[[PRNGKey, Shape, Dtype], jax.Array] = nn.initializers.normal(stddev=1e-6)
+
+    # LoRA
+    lora_r: int = 0
+    lora_alpha: float = 1.0
+    lora_dropout: float = 0.0
+
+    @nn.compact
+    def __call__(self, inputs: jax.Array, *, deterministic: bool) -> jax.Array:
+        base = nn.Dense(
+            features=self.features,
+            dtype=self.dtype,
+            use_bias=self.use_bias,
+            kernel_init=self.kernel_init,
+            bias_init=self.bias_init,
+        )(inputs)
+
+        if self.lora_r is None or int(self.lora_r) <= 0:
+            return base
+
+        x = inputs
+        if self.lora_dropout and self.lora_dropout > 0.0:
+            x = nn.Dropout(rate=self.lora_dropout)(x, deterministic=deterministic)
+
+        down = nn.Dense(
+            features=int(self.lora_r),
+            use_bias=False,
+            dtype=self.dtype,
+            kernel_init=nn.initializers.normal(stddev=0.01),
+            name="lora_A",
+        )(x)
+        up = nn.Dense(
+            features=self.features,
+            use_bias=False,
+            dtype=self.dtype,
+            kernel_init=nn.initializers.zeros,
+            name="lora_B",
+        )(down)
+        delta = up * (self.lora_alpha / float(self.lora_r))
+        return base + delta.astype(base.dtype)
+
+
+class ResidualLoRA(nn.Module):
+    """A low-rank residual adapter: delta = scale * up(dropout(down(x)))."""
+
+    features: int
+    dtype: Dtype = jnp.float32
+    lora_r: int = 0
+    lora_alpha: float = 1.0
+    lora_dropout: float = 0.0
+
+    @nn.compact
+    def __call__(self, x: jax.Array, *, deterministic: bool) -> jax.Array:
+        if self.lora_r is None or int(self.lora_r) <= 0:
+            return jnp.zeros_like(x)
+        z = x
+        if self.lora_dropout and self.lora_dropout > 0.0:
+            z = nn.Dropout(rate=self.lora_dropout)(z, deterministic=deterministic)
+        z = nn.Dense(
+            features=int(self.lora_r),
+            use_bias=False,
+            dtype=self.dtype,
+            kernel_init=nn.initializers.normal(stddev=0.01),
+            name="lora_down",
+        )(z)
+        z = nn.Dense(
+            features=self.features,
+            use_bias=False,
+            dtype=self.dtype,
+            kernel_init=nn.initializers.zeros,
+            name="lora_up",
+        )(z)
+        return z * (self.lora_alpha / float(self.lora_r))
 
 
 class AddPositionEmbs(nn.Module):
@@ -51,6 +192,12 @@ class MlpBlock(nn.Module):
         stddev=1e-6
     )
 
+    # LoRA
+    use_lora: bool = False
+    lora_r: int = 0
+    lora_alpha: float = 1.0
+    lora_dropout: float = 0.0
+
     @nn.compact
     def __call__(self, inputs, *, deterministic):
         """Applies Transformer MlpBlock module."""
@@ -60,6 +207,7 @@ class MlpBlock(nn.Module):
             dtype=self.dtype,
             kernel_init=self.kernel_init,
             bias_init=self.bias_init,
+            name="Dense_0",
         )(inputs)
         x = nn.gelu(x)
         x = nn.Dropout(rate=self.dropout_rate)(x, deterministic=deterministic)
@@ -68,7 +216,18 @@ class MlpBlock(nn.Module):
             dtype=self.dtype,
             kernel_init=self.kernel_init,
             bias_init=self.bias_init,
+            name="Dense_1",
         )(x)
+        if self.use_lora and self.lora_r and self.lora_r > 0:
+            # Add residual low-rank adapters on each Dense output without changing base param names
+            output = output + ResidualLoRA(
+                features=actual_out_dim,
+                dtype=self.dtype,
+                lora_r=self.lora_r,
+                lora_alpha=self.lora_alpha,
+                lora_dropout=self.lora_dropout,
+                name="lora_mlp_out",
+            )(x, deterministic=deterministic)
         output = nn.Dropout(rate=self.dropout_rate)(output, deterministic=deterministic)
         return output
 
@@ -141,6 +300,18 @@ class Encoder1DBlock(nn.Module):
     dropout_rate: float = 0.1
     attention_dropout_rate: float = 0.1
 
+    # LoRA controls
+    use_lora_attention: bool = False
+    lora_r: int = 0
+    lora_alpha: float = 1.0
+    lora_dropout: float = 0.0
+    lora_attn_q: bool = True
+    lora_attn_k: bool = False
+    lora_attn_v: bool = True
+    lora_attn_out: bool = False
+
+    use_lora_mlp: bool = False
+
     @nn.compact
     def __call__(self, inputs, attention_mask, *, deterministic):
         """Applies Encoder1DBlock module.
@@ -156,21 +327,41 @@ class Encoder1DBlock(nn.Module):
         # Attention block.
         assert inputs.ndim == 3, f"Expected (batch, seq, hidden) got {inputs.shape}"
         x = nn.LayerNorm(dtype=self.dtype)(inputs)
-        x = nn.MultiHeadDotProductAttention(
+        # Base attention with original parameter names
+        attn_out = nn.MultiHeadDotProductAttention(
             dtype=self.dtype,
             kernel_init=nn.initializers.xavier_uniform(),
             broadcast_dropout=False,
             deterministic=deterministic,
             dropout_rate=self.attention_dropout_rate,
             num_heads=self.num_heads,
+            name="MultiHeadDotProductAttention_0",
         )(x, x, mask=attention_mask)
+        # Optional LoRA on attention output projection only (safe w.r.t. pretrained names)
+        if self.use_lora_attention and self.lora_r and self.lora_r > 0:
+            delta_attn = ResidualLoRA(
+                features=attn_out.shape[-1],
+                dtype=self.dtype,
+                lora_r=self.lora_r,
+                lora_alpha=self.lora_alpha,
+                lora_dropout=self.lora_dropout,
+                name="lora_attn_out",
+            )(x, deterministic=deterministic)
+            attn_out = attn_out + delta_attn
+        x = attn_out
         x = nn.Dropout(rate=self.dropout_rate)(x, deterministic=deterministic)
         x = x + inputs
 
         # MLP block.
         y = nn.LayerNorm(dtype=self.dtype)(x)
         y = MlpBlock(
-            mlp_dim=self.mlp_dim, dtype=self.dtype, dropout_rate=self.dropout_rate
+            mlp_dim=self.mlp_dim,
+            dtype=self.dtype,
+            dropout_rate=self.dropout_rate,
+            use_lora=self.use_lora_mlp,
+            lora_r=self.lora_r,
+            lora_alpha=self.lora_alpha,
+            lora_dropout=self.lora_dropout,
         )(y, deterministic=deterministic)
 
         return x + y
@@ -193,6 +384,17 @@ class Transformer(nn.Module):
     dropout_rate: float = 0.1
     attention_dropout_rate: float = 0.1
     add_position_embedding: bool = False
+
+    # LoRA controls (forwarded to blocks)
+    use_lora_attention: bool = False
+    use_lora_mlp: bool = False
+    lora_r: int = 0
+    lora_alpha: float = 1.0
+    lora_dropout: float = 0.0
+    lora_attn_q: bool = True
+    lora_attn_k: bool = False
+    lora_attn_v: bool = True
+    lora_attn_out: bool = False
 
     @nn.compact
     def __call__(self, x, attention_mask, *, train):
@@ -222,6 +424,16 @@ class Transformer(nn.Module):
                 attention_dropout_rate=self.attention_dropout_rate,
                 name=f"encoderblock_{lyr}",
                 num_heads=self.num_attention_heads,
+                # LoRA
+                use_lora_attention=self.use_lora_attention,
+                use_lora_mlp=self.use_lora_mlp,
+                lora_r=self.lora_r,
+                lora_alpha=self.lora_alpha,
+                lora_dropout=self.lora_dropout,
+                lora_attn_q=self.lora_attn_q,
+                lora_attn_k=self.lora_attn_k,
+                lora_attn_v=self.lora_attn_v,
+                lora_attn_out=self.lora_attn_out,
             )(x, attention_mask, deterministic=not train)
         encoded = nn.LayerNorm(name="encoder_norm")(x)
 

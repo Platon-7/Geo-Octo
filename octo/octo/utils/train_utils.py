@@ -241,6 +241,7 @@ def freeze_weights(
     params_or_params_shape: Params,
     frozen_keys: List[str],
     return_partitions: bool = False,
+    trainable_overrides: Optional[List[str]] = None,
 ):
     """
     Freezes all weights in params_or_params_shape whose keys fnmatch the ones in frozen_keys.
@@ -254,10 +255,19 @@ def freeze_weights(
     }
     # freeze anything that matches fnmatch patterns in `frozen_keys`
     # path is a string of .-separated module names, e.g. ('octo_transformer.BlockTransformer_0...')
+    trainable_overrides = trainable_overrides or []
+
+    def _partition_for(path):
+        dotted = ".".join(path)
+        # Explicit overrides take precedence
+        if any(fnmatch(dotted, key) for key in trainable_overrides):
+            return "trainable"
+        if any(fnmatch(dotted, key) for key in frozen_keys):
+            return "frozen"
+        return "trainable"
+
     param_partitions = flax.traverse_util.path_aware_map(
-        lambda path, v: "frozen"
-        if any([fnmatch(".".join(path), key) for key in frozen_keys])
-        else "trainable",
+        lambda path, v: _partition_for(path),
         params_or_params_shape,
     )
     tx = optax.multi_transform(partition_optimizers, param_partitions)
@@ -302,6 +312,7 @@ def create_optimizer(
 
     clip_gradient = kwargs.pop("clip_gradient", None)
     frozen_keys = kwargs.pop("frozen_keys", None)
+    trainable_overrides = kwargs.pop("trainable_overrides", None)
     grad_accumulation_steps = kwargs.pop("grad_accumulation_steps", None)
 
     wd_mask = jax.tree_util.tree_map_with_path(
@@ -322,7 +333,11 @@ def create_optimizer(
     param_partitions = None
     if frozen_keys:
         tx, param_partitions = freeze_weights(
-            tx, params_or_params_shape, frozen_keys, return_partitions=True
+            tx,
+            params_or_params_shape,
+            frozen_keys,
+            return_partitions=True,
+            trainable_overrides=trainable_overrides,
         )
 
     # 3. Apply gradient accumulation as the final wrapper.

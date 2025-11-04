@@ -45,9 +45,9 @@ export PYTHONPATH="/gpfs/home4/pkarageorgis/geo_octo/vggt:/gpfs/home4/pkarageorg
 
 srun python -m evaluation.scripts.run_libero_eval_vggt_pointmap \
   --model_family octo \
-  --pretrained_checkpoint "/scratch-shared/tmp.cwkV8vOvfY/trained_models/my_octo_vggt_model_online/octo_finetune_pointmap/experiment_20251026_112222" \
-  --checkpoint_step 100000 \
-  --task_suite_name libero_spatial \
+  --pretrained_checkpoint "/scratch-shared/tmp.cwkV8vOvfY/trained_models/my_octo_vggt_model_online/octo_finetune_pointmap/lora_pointmap_20251102_141315" \
+  --checkpoint_step 50000 \
+  --task_suite_name libero_object \
   --num_trials_per_task 1 \
   --num_open_loop_steps 4 \
   --vggt_use_cuda True \

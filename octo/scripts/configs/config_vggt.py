@@ -10,7 +10,7 @@ def get_config(config_string="full,multimodal"):
     assert task in ["image_conditioned", "language_conditioned", "multimodal"]
     assert mode in ["full", "head_only", "head_mlp_only"]
 
-    UNIFIED_STATS_PATH = "/home/pkarageorgis/geo_octo/libero_datasets/unified_stats/unified_dataset_statistics_libero_spatial_no_vggt.json"
+    UNIFIED_STATS_PATH = "/home/pkarageorgis/geo_octo/libero_datasets/unified_stats/unified_dataset_statistics_libero_object_no_vggt.json"
 
     # Fill this in for your own dataset!
 
@@ -19,7 +19,7 @@ def get_config(config_string="full,multimodal"):
     # and second image key should be the wrist view (None if not used)
 
     FINETUNING_KWARGS = {
-        "name": "libero_spatial_no_noops",
+        "name": "libero_object_no_noops",
         "data_dir": "/home/pkarageorgis/geo_octo/libero_datasets",
         "dataset_statistics": UNIFIED_STATS_PATH,
         "image_obs_keys": {"primary": "image_primary"},
@@ -166,18 +166,18 @@ def get_config(config_string="full,multimodal"):
     }
     
 
-#     # VGGT ONLY VERSION
-#     config['update_config'] = {
-#     "model": {
-#         "observation_tokenizers": {
-#             # Keep the same key so downstream code keeps working
-#             "mixed_vision": ModuleSpec.create(
-#                 "octo.model.components.tokenizers:VGGTTokenizer"
-#             ),
-#         },
-#         "repeat_task_tokens": False,
-#     }
-# }
+    # VGGT ONLY VERSION
+    config['update_config'] = {
+    "model": {
+        "observation_tokenizers": {
+            # Keep the same key so downstream code keeps working
+            "mixed_vision": ModuleSpec.create(
+                "octo.model.components.tokenizers:VGGTTokenizer"
+            ),
+        },
+        "repeat_task_tokens": False,
+    }
+}
 
     
     return ConfigDict(config)

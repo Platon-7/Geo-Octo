@@ -11,10 +11,10 @@ def get_config(config_string="full,multimodal"):
 
     UNIFIED_STATS_PATH = \
         "/home/pkarageorgis/geo_octo/libero_datasets/unified_stats/" \
-        "unified_dataset_statistics_libero_spatial_no_vggt.json"
+        "unified_dataset_statistics_libero_object_no_vggt.json"
 
     FINETUNING_KWARGS = {
-        "name": "libero_spatial_no_noops",
+        "name": "libero_object_no_noops",
         "data_dir": "/home/pkarageorgis/geo_octo/libero_datasets",
         "dataset_statistics": UNIFIED_STATS_PATH,
         "image_obs_keys": {"primary": "image_primary"},
@@ -29,32 +29,21 @@ def get_config(config_string="full,multimodal"):
         "num_parallel_calls": 16,
     }
 
-    # PointMap finetuning: freeze Octo base (vision encoders, transformer, readout pos embeds, heads)
-    # Keep trainable: octo_transformer.pointmap_encoder, readout_*_pointmap_proj, readout_*_pointmap_gate
-    # We enumerate precise subtrees to avoid freezing the new pointmap modules.
+    # PointMap finetuning + LoRA: freeze transformer backbone; unfreeze heads, projections, norm adapters
     frozen_keys = (
-        # Vision tokenizers (encoders)
+        # Tokenizers and projections/norm adapters
         "octo_transformer.observation_tokenizers_*",
-        # Task tokenizers
         "octo_transformer.task_tokenizers_*",
-        # Language/image task tokenizers
         "octo_transformer.task_*",
-        # Projections into token dim
-        "octo_transformer.obs_*_projection*",
-        "octo_transformer.task_*_projection*",
-        # Normalization adapters
-        "octo_transformer.obs_*_norm_adapter*",
-        "octo_transformer.task_*_norm_adapter*",
-        "octo_transformer.repeated_*_norm_adapter*",
-        # Transformer backbone
+        # NOTE: Projections and norm adapters are intentionally NOT frozen
+        # Transformer backbone fully frozen (we'll override LoRA params as trainable)
         "octo_transformer.BlockTransformer_*",
-        # Positional embeddings (keep fixed)
+        # Positional embeddings
         "octo_transformer.*_pos_embedding",
-        # Freeze action/value heads per plan
-        # "heads_*",
+        # Heads are intentionally NOT frozen
     )
 
-    max_steps = FieldReference(100000)
+    max_steps = FieldReference(50000)
     window_size = FieldReference(default=1)
 
     config = dict(
@@ -80,7 +69,7 @@ def get_config(config_string="full,multimodal"):
             learning_rate=dict(
                 name="cosine",
                 init_value=0.0,
-                peak_value=3e-4,
+                peak_value=1e-4,
                 warmup_steps=2000,
                 decay_steps=max_steps,
                 end_value=0.0,
@@ -88,6 +77,16 @@ def get_config(config_string="full,multimodal"):
             weight_decay=0.01,
             clip_gradient=1.0,
             frozen_keys=frozen_keys,
+            # Ensure LoRA/pointmap stay trainable despite broad freezes (harmless if already unfrozen)
+            trainable_overrides=(
+                # Readout bottleneck fusion + gates for pointmap injection
+                "octo_transformer.readout_*_bottleneck_*",
+                "octo_transformer.readout_*_pointmap_gate",
+                # Pointmap encoder
+                "octo_transformer.pointmap_encoder*",
+                # LoRA matrices inside transformer attention/MLP
+                "octo_transformer.BlockTransformer_0.Transformer_0.encoderblock_*.*.lora_*.*",
+            ),
             grad_accumulation_steps=4,
         ),
         val_kwargs=dict(
@@ -158,6 +157,18 @@ def get_config(config_string="full,multimodal"):
     config["update_config"] = {
         "model": {
             "pointmap_input_key": "pointmap",
+            # Enable LoRA in transformer blocks with sensible defaults
+            "transformer_kwargs": {
+                "use_lora_attention": True,
+                "use_lora_mlp": True,
+                "lora_r": 8,
+                "lora_alpha": 16.0,
+                "lora_dropout": 0.0,
+                "lora_attn_q": True,
+                "lora_attn_k": False,
+                "lora_attn_v": True,
+                "lora_attn_out": False,
+            },
         }
     }
 

@@ -15,7 +15,7 @@ except ImportError:
 warnings.filterwarnings("ignore", category=DeprecationWarning, module="transformers")
 
 # 1. Load the statistics
-stats_path = "/home/pkarageorgis/geo_octo/libero_datasets/unified_stats/unified_dataset_statistics_libero_spatial_no_vggt.json"
+stats_path = "/home/pkarageorgis/geo_octo/libero_datasets/unified_stats/unified_dataset_statistics_libero_object_no_vggt.json"
 with open(stats_path, 'r') as f:
     dataset_statistics = json.load(f)
 

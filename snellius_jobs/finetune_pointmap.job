@@ -90,6 +90,7 @@ srun -u python scripts/finetune_pointmap.py \
   --config=scripts/configs/config_pointmap.py:full,language_conditioned \
   --config.pretrained_path=hf://rail-berkeley/octo-base-1.5 \
   --config.save_dir=/scratch-shared/tmp.cwkV8vOvfY/trained_models/my_octo_vggt_model_online \
+  --name=lora_pointmap \
   --vggt_use_cuda=True \
   --vggt_device_id=0 \
   --vggt_input_res=224 \

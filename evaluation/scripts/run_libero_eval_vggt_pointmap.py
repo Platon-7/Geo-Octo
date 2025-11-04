@@ -15,7 +15,7 @@ except ImportError:
 warnings.filterwarnings("ignore", category=DeprecationWarning, module="transformers")
 
 # 1. Load the statistics (match finetune_pointmap config)
-STATS_PATH = "/home/pkarageorgis/geo_octo/libero_datasets/unified_stats/unified_dataset_statistics_libero_spatial_no_vggt.json"
+STATS_PATH = "/home/pkarageorgis/geo_octo/libero_datasets/unified_stats/unified_dataset_statistics_libero_object_no_vggt.json"
 try:
     with open(STATS_PATH, 'r') as f:
         dataset_statistics = json.load(f)

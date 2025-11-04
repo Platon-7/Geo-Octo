@@ -333,7 +333,24 @@ def main(_):
     config["model"] = model_cfg
 
     # Apply any extra updates from the pointmap config file
-    config.update(FLAGS.config.get("update_config", ConfigDict()))
+    # But ensure we deep-merge transformer_kwargs to avoid overwriting required keys
+    _update_cfg = FLAGS.config.get("update_config", ConfigDict())
+    try:
+        extra_tkw = (
+            _update_cfg.get("model", ConfigDict()).get("transformer_kwargs", ConfigDict())
+        )
+        if extra_tkw:
+            base_tkw = model_cfg.get("transformer_kwargs", {})
+            # Merge LoRA flags into existing transformer kwargs
+            for k, v in extra_tkw.items():
+                base_tkw[k] = v
+            model_cfg["transformer_kwargs"] = base_tkw
+            config["model"] = model_cfg
+        # Now shallow-merge the rest
+        config.update(_update_cfg)
+    except Exception:
+        # Fallback to previous behavior
+        config.update(_update_cfg)
     # Freeze Octo base explicitly; unfreeze pointmap encoder and its gates/projections
     # Optimizer handles this via frozen_keys; ensure they are present
     if "optimizer" not in config:
@@ -455,38 +472,13 @@ def main(_):
         dataset_statistics=dataset.dataset_statistics,
     )
     
-    # ===== Unfreeze last N transformer blocks + obs_* projection/adapter =====
-    unfreeze_last_n = 4  # change to how many tail blocks you want trainable
-
-    # Get total number of blocks from the loaded config
-    num_layers = int(model.config["model"]["transformer_kwargs"]["num_layers"])
-
-    # Start from the config's frozen_keys
-    frozen = list(FLAGS.config.optimizer.frozen_keys)
-
-    # 1) Remove the "freeze all blocks" wildcard
-    frozen = [p for p in frozen if p != "octo_transformer.BlockTransformer_*"]
-
-    # 2) Unfreeze obs_* projections + norm adapters (remove their freeze patterns)
-    frozen = [
-        p for p in frozen
-        if not (p.startswith("octo_transformer.obs_") and
-                ("_projection" in p or "_norm_adapter" in p))
-    ]
-
-    # 3) Freeze only encoder blocks [0 .. num_layers - unfreeze_last_n - 1]
-    early_block_patterns = [
-        f"octo_transformer.BlockTransformer_0.Transformer_0.encoderblock_{i}.*"
-        for i in range(max(0, num_layers - unfreeze_last_n))
-    ]
-
-    # Commit back to flags (used by create_optimizer)
-    FLAGS.config.optimizer.frozen_keys = tuple(frozen + early_block_patterns)
-    print("[FINETUNE] Freezing early blocks:", early_block_patterns)
-    print("[FINETUNE] Final frozen_keys size:", len(FLAGS.config.optimizer.frozen_keys))
-    
-    print("Total Layers")
-    print(model.config["model"]["transformer_kwargs"]["num_layers"])
+    # ===== LoRA finetuning: keep transformer weights frozen; train LoRA + heads (+ pointmap) =====
+    # Use frozen_keys specified in config (already freezes BlockTransformer_*). We only ensure they are set.
+    if not FLAGS.config.optimizer.get("frozen_keys", None):
+        FLAGS.config.optimizer.frozen_keys = (
+            "octo_transformer.BlockTransformer_*",
+        )
+    print("[FINETUNE] Using frozen_keys:", FLAGS.config.optimizer.frozen_keys)
 
     # Merge pretrained params into freshly initialized model (copy matching shapes)
     try:
