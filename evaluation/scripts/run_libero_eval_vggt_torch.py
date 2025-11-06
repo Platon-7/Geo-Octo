@@ -317,14 +317,8 @@ def process_action(action, model_family, action_mean=None, action_std=None):
         action = invert_gripper_action(action)
     # change the octo branch in process_action:
     elif model_family == "octo":
-        if action_mean is None or action_std is None:
-            raise ValueError("Action statistics (mean, std) must be provided for Octo model evaluation!")
-        action_mean = action_mean[:action.shape[-1]]
-        action_std = action_std[:action.shape[-1]]
-        if action_mask is not None:
-            mask = action_mask[:action.shape[-1]]
-            return np.where(mask, (action * action_std) + action_mean, action)
-        return (action * action_std) + action_mean
+        # Octo actions are already unnormalized in robot_utils.get_action
+        return np.asarray(action, dtype=np.float32)
     else:
         return np.clip(np.asarray(action, dtype=np.float32), -1.0, 1.0)
 
