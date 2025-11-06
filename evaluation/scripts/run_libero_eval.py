@@ -326,16 +326,8 @@ def process_action(action, model_family, action_mean=None, action_std=None):
         action = normalize_gripper_action(action, binarize=True)
         action = invert_gripper_action(action)
     elif model_family == "octo":
-        if action_mean is None or action_std is None:
-            raise ValueError("Action statistics (mean, std) must be provided for Octo model evaluation!")
-            
-        # The model outputs a normalized action. Let's un-normalize it.
-        # Make sure the shapes match. The stats are for 7-dim actions.
-        action_mean = action_mean[:action.shape[-1]]
-        action_std = action_std[:action.shape[-1]]
-        
-        unnormalized_action = (action * action_std) + action_mean
-        return unnormalized_action
+        # Octo actions are already unnormalized in robot_utils.get_action
+        return np.asarray(action, dtype=np.float32)
     
     else:
         # Fallback for other models if needed
