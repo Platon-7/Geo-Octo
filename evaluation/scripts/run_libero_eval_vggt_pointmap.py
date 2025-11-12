@@ -32,7 +32,7 @@ from collections import deque
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Optional, Union
+from typing import Optional, Union, Tuple
 
 import draccus
 import tqdm
@@ -189,6 +189,15 @@ class GenerateConfig:
     vggt_device_id: int = 0                          # CUDA device index
 
     vggt_only_eval: bool = False                     # Used when finetuning removed vision encoder completely
+
+    #################################################################################################################
+    # Snapshot controls (for visualization / analysis)
+    #################################################################################################################
+    snapshot_enable: bool = False                    # If True, capture RGB/pointmap snapshot during evaluation
+    snapshot_task_name: Optional[str] = None         # Human-readable LIBERO task description to monitor (exact match)
+    snapshot_episode_index: int = 0                  # Episode index (per-task) to capture
+    snapshot_step_index: int = 0                     # Policy step index (after warmup) to capture
+    snapshot_output_dir: Optional[str] = None        # Where to save snapshot files
 
     #################################################################################################################
     # Utils
@@ -381,7 +390,12 @@ def _normalize_pointmap(pm: np.ndarray, keep_conf: bool = True) -> np.ndarray:
         return (x - mean) / std
 
 
-def compute_pointmap_for_image(image: np.ndarray, pm_ctx: dict) -> Optional[np.ndarray]:
+def compute_pointmap_for_image(
+    image: np.ndarray,
+    pm_ctx: dict,
+    *,
+    return_raw: bool = False,
+) -> Optional[Union[np.ndarray, Tuple[np.ndarray, np.ndarray]]]:
     if pm_ctx is None:
         return None
 
@@ -393,11 +407,18 @@ def compute_pointmap_for_image(image: np.ndarray, pm_ctx: dict) -> Optional[np.n
 
     # Preprocess to CHW float32 in [0,1]
     pre = load_and_preprocess_images([image], target_size=cfg.vggt_input_res)  # (1,3,H,W)
-    pm = extractor.compute_pointmap(pre)[0]  # (H',W',4)
+    pm_raw = extractor.compute_pointmap(pre)[0]  # (H',W',4)
+
     if cfg.normalize_pointmap:
-        pm = _normalize_pointmap(pm[np.newaxis, ...])[0]
-    # Match finetune_pointmap: use float32 for JAX stability
-    return pm.astype(np.float32)
+        pm_norm = _normalize_pointmap(pm_raw[np.newaxis, ...])[0]
+    else:
+        pm_norm = pm_raw
+
+    pm_norm = pm_norm.astype(np.float32)
+
+    if return_raw:
+        return pm_norm, pm_raw.astype(np.float32)
+    return pm_norm
 
 
 def run_episode(
@@ -412,6 +433,9 @@ def run_episode(
     initial_state=None,
     log_file=None,
     pm_ctx: Optional[dict] = None,
+    *,
+    episode_index: int,
+    snapshot_state: dict,
 ):
     env.reset()
     if initial_state is not None:
@@ -436,13 +460,50 @@ def run_episode(
                 obs, reward, done, info = env.step(get_libero_dummy_action(cfg.model_family))
                 t += 1
                 continue
-
+            # Determine whether to capture snapshots this step
+            should_capture = (
+                cfg.snapshot_enable
+                and not snapshot_state.get("captured", False)
+                and (
+                    cfg.snapshot_task_name is None
+                    or cfg.snapshot_task_name == task_description
+                )
+                and episode_index == cfg.snapshot_episode_index
+                and (t - cfg.num_steps_wait) == cfg.snapshot_step_index
+            )
             observation, img = prepare_observation(obs)
 
             if cfg.model_family == "octo" and cfg.use_pointmap and pm_ctx is not None:
                 try:
-                    pm = compute_pointmap_for_image(img, pm_ctx)
+                    pm_result = compute_pointmap_for_image(
+                        img,
+                        pm_ctx,
+                        return_raw=should_capture,
+                    )
+                    if isinstance(pm_result, tuple):
+                        pm, pm_raw = pm_result
+                    else:
+                        pm, pm_raw = pm_result, None
                     observation[cfg.pointmap_key] = pm
+                    if should_capture:
+                        snapshot_output_dir = cfg.snapshot_output_dir or "./eval_snapshots"
+                        os.makedirs(snapshot_output_dir, exist_ok=True)
+                        snapshot_path = os.path.join(
+                            snapshot_output_dir,
+                            f"snapshot_task-{task_description.replace(' ', '_')}_ep{episode_index:02d}_step{cfg.snapshot_step_index:03d}.npz",
+                        )
+                        np.savez_compressed(
+                            snapshot_path,
+                            rgb=img,
+                            pointmap_normalized=pm,
+                            pointmap_raw=pm_raw if pm_raw is not None else pm,
+                            task_description=task_description,
+                            episode_index=episode_index,
+                            step_index=cfg.snapshot_step_index,
+                            time_index_policy=t,
+                        )
+                        log_message(f"[SNAPSHOT] Saved RGB + pointmap to {snapshot_path}", log_file)
+                        snapshot_state["captured"] = True
                 except Exception as _e:
                     log_message(f"[VGGT] Failed to compute pointmap at t={t}: {_e}", log_file)
 
@@ -497,6 +558,7 @@ def run_task(
     total_successes=0,
     log_file=None,
     pm_ctx: Optional[dict] = None,
+    snapshot_state: Optional[dict] = None,
 ):
     task = task_suite.get_task(task_id)
     initial_states, all_initial_states = load_initial_states(cfg, task_suite, task_id, log_file)
@@ -530,6 +592,8 @@ def run_task(
             initial_state,
             log_file,
             pm_ctx=pm_ctx,
+            episode_index=episode_idx,
+            snapshot_state=snapshot_state or {},
         )
 
         task_episodes += 1
@@ -622,6 +686,10 @@ def eval_libero(cfg: GenerateConfig) -> float:
 
     log_message(f"Task suite: {cfg.task_suite_name}", log_file)
 
+    if cfg.snapshot_enable:
+        os.makedirs(cfg.snapshot_output_dir or "./eval_snapshots", exist_ok=True)
+
+    snapshot_state = {"captured": False}
     total_episodes, total_successes = 0, 0
     for task_id in tqdm.tqdm(range(num_tasks)):
         total_episodes, total_successes = run_task(
@@ -637,6 +705,7 @@ def eval_libero(cfg: GenerateConfig) -> float:
             total_successes,
             log_file,
             pm_ctx=pm_ctx,
+            snapshot_state=snapshot_state,
         )
 
     final_success_rate = float(total_successes) / float(total_episodes) if total_episodes > 0 else 0
