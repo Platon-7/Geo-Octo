@@ -33,66 +33,86 @@ def _downsample(pointmap: np.ndarray, stride: int) -> Tuple[np.ndarray, np.ndarr
     return xs, ys, zs
 
 
-def plot_snapshot(path: str, stride: int = 4, output: Optional[str] = None, show_confidence: bool = False) -> None:
+def plot_snapshot(
+    path: str,
+    stride: int = 4,
+    output: Optional[str] = None,
+    show_confidence: bool = False,
+    confidence_threshold: Optional[float] = None,
+    use_normalized: bool = False,
+    invert_z: bool = False,
+) -> None:
     data = np.load(path)
     rgb = data["rgb"]
-    if "rgb_preprocessed" not in data:
-        print("[WARN] Snapshot missing 'rgb_preprocessed'; using raw RGB colours.")
-    else:
-        rgb_pre = data["rgb_preprocessed"]
-        print(
-            f"[DEBUG] snapshot={path}\n"
-            f"  rgb.shape={rgb.shape} dtype={rgb.dtype} min={rgb.min()} max={rgb.max()}\n"
-            f"  rgb_preprocessed.shape={rgb_pre.shape} dtype={rgb_pre.dtype} min={rgb_pre.min():.4f} max={rgb_pre.max():.4f}"
-        )
-    if "pointmap_raw" in data:
-        print(
-            f"  pointmap_raw.shape={data['pointmap_raw'].shape} "
-            f"min={float(np.nanmin(data['pointmap_raw'])):.4f} max={float(np.nanmax(data['pointmap_raw'])):.4f}"
-        )
-    if "pointmap_normalized" in data:
-        pmn = data["pointmap_normalized"]
-        print(
-            f"  pointmap_normalized.shape={pmn.shape} "
-            f"min={float(np.nanmin(pmn)):.4f} max={float(np.nanmax(pmn)):.4f}"
-        )
+    rgb_pre = data.get("rgb_preprocessed", rgb).astype(np.float32)
+    if rgb_pre.max() > 1.0:
+        rgb_pre /= 255.0
+    rgb_pre = np.clip(rgb_pre, 0.0, 1.0)
 
-    if "pointmap_raw" in data:
-        pointmap = data["pointmap_raw"]
-    else:
-        pointmap = data["pointmap_normalized"]
+    print(
+        f"[DEBUG] snapshot={path}\n"
+        f"  rgb.shape={rgb.shape} dtype={rgb.dtype} min={rgb.min()} max={rgb.max()}\n"
+        f"  rgb_preprocessed.shape={rgb_pre.shape} dtype={rgb_pre.dtype} "
+        f"min={rgb_pre.min():.4f} max={rgb_pre.max():.4f}"
+    )
+
+    pointmap_key = "pointmap_normalized" if use_normalized else "pointmap_raw"
+    if pointmap_key not in data:
+        raise ValueError(f"{pointmap_key} not found in snapshot.")
+    pointmap = data[pointmap_key].astype(np.float32)
+
+    print(
+        f"  {pointmap_key}.shape={pointmap.shape} "
+        f"min={float(np.nanmin(pointmap)):.4f} max={float(np.nanmax(pointmap)):.4f}"
+    )
 
     xs, ys, zs = _downsample(pointmap, stride)
+    if invert_z:
+        zs = -zs
     n_points = xs.shape[0]
 
+    conf = pointmap[..., 3]
+    if confidence_threshold is not None:
+        conf_ds = conf[::stride, ::stride].reshape(-1)[:n_points]
+        mask = conf_ds >= confidence_threshold
+        xs, ys, zs = xs[mask], ys[mask], zs[mask]
+        n_points = xs.shape[0]
+        print(f"  confidence threshold {confidence_threshold}: kept {n_points} points")
+        if n_points == 0:
+            raise ValueError("All points filtered out by confidence threshold.")
+    else:
+        mask = slice(None)
+
     if show_confidence:
-        payload = data.get("pointmap_raw", pointmap)[::stride, ::stride, 3].reshape(-1)
-        payload = payload[:n_points]
-        colors = payload
+        colors = conf[::stride, ::stride].reshape(-1)[:n_points]
+        cmap = cm.viridis
         colorbar_label = "confidence"
     else:
-        # Colour points by RGB. Prefer the preprocessed VGGT input (expects float32 in [0,1]).
-        rgb_for_coloring = data.get("rgb_preprocessed", rgb).astype(np.float32)
-        if rgb_for_coloring.max() > 1.0:
-            rgb_for_coloring = rgb_for_coloring / 255.0
-        rgb_for_coloring = np.clip(rgb_for_coloring, 0.0, 1.0)
-        colors = rgb_for_coloring[::stride, ::stride, :].reshape(-1, 3)
-        colors = colors[:n_points]
-        payload = None
+        colors = rgb_pre[::stride, ::stride, :].reshape(-1, 3)[:n_points]
+        cmap = None
         colorbar_label = None
 
-    fig = plt.figure(figsize=(10, 4.5))
+    fig = plt.figure(figsize=(14, 5))
 
-    ax_rgb = fig.add_subplot(1, 2, 1)
+    ax_rgb = fig.add_subplot(1, 3, 1)
     ax_rgb.imshow(rgb)
     ax_rgb.set_title("Policy RGB input")
     ax_rgb.axis("off")
 
-    ax_3d = fig.add_subplot(1, 2, 2, projection="3d")
+    ax_depth = fig.add_subplot(1, 3, 2)
+    depth_map = pointmap[..., 2]
+    if invert_z:
+        depth_map = -depth_map
+    im_depth = ax_depth.imshow(depth_map, cmap="viridis")
+    ax_depth.set_title("VGGT depth map")
+    ax_depth.axis("off")
+    fig.colorbar(im_depth, ax=ax_depth, fraction=0.046, pad=0.04, label="z")
+
+    ax_3d = fig.add_subplot(1, 3, 3, projection="3d")
     scatter_kwargs = dict(s=4, alpha=0.85, depthshade=False)
     if show_confidence:
-        scatter = ax_3d.scatter(xs, ys, zs, c=colors, cmap=cm.viridis, **scatter_kwargs)
-        fig.colorbar(scatter, ax=ax_3d, shrink=0.6, pad=0.1, label=colorbar_label)
+        scatter = ax_3d.scatter(xs, ys, zs, c=colors, cmap=cmap, **scatter_kwargs)
+        fig.colorbar(scatter, ax=ax_3d, fraction=0.046, pad=0.04, label=colorbar_label)
     else:
         scatter = ax_3d.scatter(xs, ys, zs, c=colors, **scatter_kwargs)
 
@@ -101,6 +121,11 @@ def plot_snapshot(path: str, stride: int = 4, output: Optional[str] = None, show
     ax_3d.set_ylabel("Y")
     ax_3d.set_zlabel("Z")
     ax_3d.view_init(elev=30.0, azim=-60.0)
+
+    x_range = xs.max() - xs.min()
+    y_range = ys.max() - ys.min()
+    z_range = zs.max() - zs.min()
+    ax_3d.set_box_aspect((x_range, y_range, z_range if z_range > 0 else 1.0))
 
     plt.tight_layout()
     if output:
@@ -121,9 +146,33 @@ def main():
         action="store_true",
         help="Colour scatter points with confidence instead of depth.",
     )
+    parser.add_argument(
+        "--confidence-threshold",
+        type=float,
+        default=None,
+        help="Only plot points with confidence >= threshold.",
+    )
+    parser.add_argument(
+        "--use-normalized",
+        action="store_true",
+        help="Use normalized pointmap instead of raw.",
+    )
+    parser.add_argument(
+        "--invert-z",
+        action="store_true",
+        help="Flip the sign of the z-axis (for alternative camera conventions).",
+    )
     args = parser.parse_args()
 
-    plot_snapshot(args.snapshot, stride=args.stride, output=args.output, show_confidence=args.colour_by_confidence)
+    plot_snapshot(
+        args.snapshot,
+        stride=args.stride,
+        output=args.output,
+        show_confidence=args.colour_by_confidence,
+        confidence_threshold=args.confidence_threshold,
+        use_normalized=args.use_normalized,
+        invert_z=args.invert_z,
+    )
 
 
 if __name__ == "__main__":
