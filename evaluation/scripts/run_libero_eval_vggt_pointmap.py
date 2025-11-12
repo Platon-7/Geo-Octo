@@ -395,7 +395,7 @@ def compute_pointmap_for_image(
     pm_ctx: dict,
     *,
     return_raw: bool = False,
-) -> Optional[Union[np.ndarray, Tuple[np.ndarray, np.ndarray]]]:
+) -> Optional[Union[np.ndarray, Tuple[np.ndarray, np.ndarray, np.ndarray]]]:
     if pm_ctx is None:
         return None
 
@@ -415,9 +415,10 @@ def compute_pointmap_for_image(
         pm_norm = pm_raw
 
     pm_norm = pm_norm.astype(np.float32)
+    rgb_pre = np.transpose(pre[0], (1, 2, 0)).astype(np.float32)
 
     if return_raw:
-        return pm_norm, pm_raw.astype(np.float32)
+        return pm_norm, pm_raw.astype(np.float32), rgb_pre
     return pm_norm
 
 
@@ -481,9 +482,9 @@ def run_episode(
                         return_raw=should_capture,
                     )
                     if isinstance(pm_result, tuple):
-                        pm, pm_raw = pm_result
+                        pm, pm_raw, rgb_pre = pm_result
                     else:
-                        pm, pm_raw = pm_result, None
+                        pm, pm_raw, rgb_pre = pm_result, None, None
                     observation[cfg.pointmap_key] = pm
                     if should_capture:
                         snapshot_output_dir = cfg.snapshot_output_dir or "./eval_snapshots"
@@ -492,11 +493,9 @@ def run_episode(
                             snapshot_output_dir,
                             f"snapshot_task-{task_description.replace(' ', '_')}_ep{episode_index:02d}_step{cfg.snapshot_step_index:03d}.npz",
                         )
-                        # Store original and VGGT-preprocessed RGB frames for downstream visualisation
-                        if "rgb_preprocessed" in observation:
-                            rgb_pre = observation.pop("rgb_preprocessed")
-                        else:
-                            rgb_pre = load_and_preprocess_images([img], target_size=cfg.vggt_input_res)[0].transpose(1, 2, 0)
+                        if rgb_pre is None:
+                            rgb_pre = load_and_preprocess_images([img], target_size=cfg.vggt_input_res)[0]
+                            rgb_pre = np.transpose(rgb_pre, (1, 2, 0)).astype(np.float32)
                         if rgb_pre.max() > 1.0:
                             rgb_pre = rgb_pre / 255.0
                         np.savez_compressed(

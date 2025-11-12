@@ -36,6 +36,8 @@ def _downsample(pointmap: np.ndarray, stride: int) -> Tuple[np.ndarray, np.ndarr
 def plot_snapshot(path: str, stride: int = 4, output: Optional[str] = None, show_confidence: bool = False) -> None:
     data = np.load(path)
     rgb = data["rgb"]
+    if "rgb_preprocessed" not in data:
+        print("[WARN] Snapshot missing 'rgb_preprocessed'; using raw RGB colours.")
 
     if "pointmap_raw" in data:
         pointmap = data["pointmap_raw"]
@@ -55,6 +57,7 @@ def plot_snapshot(path: str, stride: int = 4, output: Optional[str] = None, show
         rgb_for_coloring = data.get("rgb_preprocessed", rgb).astype(np.float32)
         if rgb_for_coloring.max() > 1.0:
             rgb_for_coloring = rgb_for_coloring / 255.0
+        rgb_for_coloring = np.clip(rgb_for_coloring, 0.0, 1.0)
         colors = rgb_for_coloring[::stride, ::stride, :].reshape(-1, 3)
         colors = colors[:n_points]
         payload = None
@@ -68,7 +71,7 @@ def plot_snapshot(path: str, stride: int = 4, output: Optional[str] = None, show
     ax_rgb.axis("off")
 
     ax_3d = fig.add_subplot(1, 2, 2, projection="3d")
-    scatter_kwargs = dict(s=4, alpha=0.85)
+    scatter_kwargs = dict(s=4, alpha=0.85, depthshade=False)
     if show_confidence:
         scatter = ax_3d.scatter(xs, ys, zs, c=colors, cmap=cm.viridis, **scatter_kwargs)
         fig.colorbar(scatter, ax=ax_3d, shrink=0.6, pad=0.1, label=colorbar_label)
