@@ -498,6 +498,13 @@ def run_episode(
                             rgb_pre = np.transpose(rgb_pre, (1, 2, 0)).astype(np.float32)
                         if rgb_pre.max() > 1.0:
                             rgb_pre = rgb_pre / 255.0
+                        if cfg.snapshot_enable:
+                            log_message(
+                                "[SNAPSHOT DEBUG] Saving snapshot "
+                                f"rgb_preprocessed.shape={rgb_pre.shape} min={float(rgb_pre.min()):.3f} max={float(rgb_pre.max()):.3f} "
+                                f"pointmap.shape={pm.shape} raw_shape={(pm_raw.shape if pm_raw is not None else None)}",
+                                log_file,
+                            )
                         np.savez_compressed(
                             snapshot_path,
                             rgb=img,

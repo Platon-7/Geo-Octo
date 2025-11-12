@@ -38,6 +38,24 @@ def plot_snapshot(path: str, stride: int = 4, output: Optional[str] = None, show
     rgb = data["rgb"]
     if "rgb_preprocessed" not in data:
         print("[WARN] Snapshot missing 'rgb_preprocessed'; using raw RGB colours.")
+    else:
+        rgb_pre = data["rgb_preprocessed"]
+        print(
+            f"[DEBUG] snapshot={path}\n"
+            f"  rgb.shape={rgb.shape} dtype={rgb.dtype} min={rgb.min()} max={rgb.max()}\n"
+            f"  rgb_preprocessed.shape={rgb_pre.shape} dtype={rgb_pre.dtype} min={rgb_pre.min():.4f} max={rgb_pre.max():.4f}"
+        )
+    if "pointmap_raw" in data:
+        print(
+            f"  pointmap_raw.shape={data['pointmap_raw'].shape} "
+            f"min={float(np.nanmin(data['pointmap_raw'])):.4f} max={float(np.nanmax(data['pointmap_raw'])):.4f}"
+        )
+    if "pointmap_normalized" in data:
+        pmn = data["pointmap_normalized"]
+        print(
+            f"  pointmap_normalized.shape={pmn.shape} "
+            f"min={float(np.nanmin(pmn)):.4f} max={float(np.nanmax(pmn)):.4f}"
+        )
 
     if "pointmap_raw" in data:
         pointmap = data["pointmap_raw"]
