@@ -460,17 +460,17 @@ def run_episode(
                 obs, reward, done, info = env.step(get_libero_dummy_action(cfg.model_family))
                 t += 1
                 continue
-            # Determine whether to capture snapshots this step
-            should_capture = (
-                cfg.snapshot_enable
-                and not snapshot_state.get("captured", False)
-                and (
-                    cfg.snapshot_task_name is None
-                    or cfg.snapshot_task_name == task_description
-                )
-                and episode_index == cfg.snapshot_episode_index
-                and (t - cfg.num_steps_wait) == cfg.snapshot_step_index
-            )
+            # Determine whether to capture snapshots this step (case-insensitive substring match)
+            should_capture = False
+            if cfg.snapshot_enable and not snapshot_state.get("captured", False):
+                if cfg.snapshot_task_name is None or cfg.snapshot_task_name.strip() == "":
+                    task_match = True
+                else:
+                    task_match = cfg.snapshot_task_name.lower() in task_description.lower()
+                if task_match and episode_index == cfg.snapshot_episode_index:
+                    decision_step = t - cfg.num_steps_wait
+                    if decision_step == cfg.snapshot_step_index:
+                        should_capture = True
             observation, img = prepare_observation(obs)
 
             if cfg.model_family == "octo" and cfg.use_pointmap and pm_ctx is not None:
