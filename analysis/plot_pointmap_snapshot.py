@@ -32,6 +32,8 @@ def plot_snapshot(
     use_normalized: bool = False,
     invert_z: bool = False,
     flip_pc1: bool = False,
+    flip_pc2: bool = False,
+    flip_pc3: bool = False,
 ) -> None:
     data = np.load(path)
     rgb = data["rgb"]
@@ -73,6 +75,12 @@ def plot_snapshot(
     if flip_pc1:
         coords_rot_flat[:, 1] *= -1.0
         coords_rot_flat[:, 2] *= -1.0
+    if flip_pc2:
+        coords_rot_flat[:, 0] *= -1.0
+        coords_rot_flat[:, 2] *= -1.0
+    if flip_pc3:
+        coords_rot_flat[:, 0] *= -1.0
+        coords_rot_flat[:, 1] *= -1.0
     coords_rot = coords_rot_flat.reshape(h, w, 3)
 
     depth_map = coords_rot[:, :, 2]
@@ -200,6 +208,16 @@ def main():
         action="store_true",
         help="Rotate 180 degrees around the first PCA axis (flips PC2/PC3).",
     )
+    parser.add_argument(
+        "--flip-pc2",
+        action="store_true",
+        help="Rotate 180 degrees around the second PCA axis (flips PC1/PC3).",
+    )
+    parser.add_argument(
+        "--flip-pc3",
+        action="store_true",
+        help="Rotate 180 degrees around the third PCA axis (flips PC1/PC2).",
+    )
     args = parser.parse_args()
 
     plot_snapshot(
@@ -211,6 +229,8 @@ def main():
         use_normalized=args.use_normalized,
         invert_z=args.invert_z,
         flip_pc1=args.flip_pc1,
+        flip_pc2=args.flip_pc2,
+        flip_pc3=args.flip_pc3,
     )
 
 
