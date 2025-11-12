@@ -15,12 +15,22 @@ Example:
 
 import argparse
 import os
-from typing import Optional
+from typing import Optional, Tuple
 
 import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib import cm
 from mpl_toolkits.mplot3d import Axes3D  # noqa: F401  (import registers 3D projection)
+
+
+def _downsample(pointmap: np.ndarray, stride: int) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Return strided xyz coordinates for plotting."""
+    xyz = pointmap[..., :3]
+    xyz = xyz[::stride, ::stride, :]
+    xs = xyz[..., 0].reshape(-1)
+    ys = xyz[..., 1].reshape(-1)
+    zs = xyz[..., 2].reshape(-1)
+    return xs, ys, zs
 
 
 def plot_snapshot(
@@ -31,9 +41,9 @@ def plot_snapshot(
     confidence_threshold: Optional[float] = None,
     use_normalized: bool = False,
     invert_z: bool = False,
-    flip_pc1: bool = False,
-    flip_pc2: bool = False,
-    flip_pc3: bool = False,
+    flip_x: bool = False,
+    flip_y: bool = False,
+    flip_z: bool = False,
 ) -> None:
     data = np.load(path)
     rgb = data["rgb"]
@@ -59,59 +69,44 @@ def plot_snapshot(
         f"min={float(np.nanmin(pointmap)):.4f} max={float(np.nanmax(pointmap)):.4f}"
     )
 
-    coords = pointmap[..., :3]
-    conf_map = pointmap[..., 3]
-    h, w, _ = coords.shape
-
-    coords_flat = coords.reshape(-1, 3)
-    center = coords_flat.mean(axis=0, keepdims=True)
-    coords_centered = coords_flat - center
-    _, _, Vt = np.linalg.svd(coords_centered, full_matrices=False)
-    coords_rot_flat = coords_centered @ Vt.T
-    if coords_rot_flat[:, 2].mean() < 0:
-        coords_rot_flat[:, 2] *= -1.0
+    xs, ys, zs = _downsample(pointmap, stride)
     if invert_z:
-        coords_rot_flat[:, 2] *= -1.0
-    if flip_pc1:
-        coords_rot_flat[:, 1] *= -1.0
-        coords_rot_flat[:, 2] *= -1.0
-    if flip_pc2:
-        coords_rot_flat[:, 0] *= -1.0
-        coords_rot_flat[:, 2] *= -1.0
-    if flip_pc3:
-        coords_rot_flat[:, 0] *= -1.0
-        coords_rot_flat[:, 1] *= -1.0
-    coords_rot = coords_rot_flat.reshape(h, w, 3)
+        zs = -zs
+    if flip_x:
+        xs = -xs
+    if flip_y:
+        ys = -ys
+    if flip_z:
+        zs = -zs
+    n_points = xs.shape[0]
 
-    depth_map = coords_rot[:, :, 2]
-
-    coords_ds = coords_rot[::stride, ::stride, :]
-    xs = coords_ds[..., 0].reshape(-1)
-    ys = coords_ds[..., 1].reshape(-1)
-    zs = coords_ds[..., 2].reshape(-1)
-    conf_ds = conf_map[::stride, ::stride].reshape(-1)
-
+    conf = pointmap[..., 3]
     if confidence_threshold is not None:
+        conf_ds = conf[::stride, ::stride].reshape(-1)[:n_points]
         mask = conf_ds >= confidence_threshold
         xs, ys, zs = xs[mask], ys[mask], zs[mask]
         conf_ds = conf_ds[mask]
-        print(f"  confidence threshold {confidence_threshold}: kept {xs.shape[0]} points")
-        if xs.size == 0:
+        n_points = xs.shape[0]
+        print(f"  confidence threshold {confidence_threshold}: kept {n_points} points")
+        if n_points == 0:
             raise ValueError("All points filtered out by confidence threshold.")
     else:
         mask = slice(None)
 
     if show_confidence:
-        colors = conf_ds
+        colors = conf[::stride, ::stride].reshape(-1)[:n_points]
+        if isinstance(mask, np.ndarray):
+            colors = colors[mask]
         cmap = cm.viridis
         colorbar_label = "confidence"
     else:
-        colors_full = rgb_pre[::stride, ::stride, :].reshape(-1, 3)
-        colors = colors_full[mask] if isinstance(mask, np.ndarray) else colors_full
+        colors = rgb_pre[::stride, ::stride, :].reshape(-1, 3)[:n_points]
+        if isinstance(mask, np.ndarray):
+            colors = colors[mask]
         cmap = None
         colorbar_label = None
 
-    fig = plt.figure(figsize=(15, 5))
+    fig = plt.figure(figsize=(14, 5))
 
     ax_rgb = fig.add_subplot(1, 3, 1)
     ax_rgb.imshow(rgb)
@@ -119,60 +114,38 @@ def plot_snapshot(
     ax_rgb.axis("off")
 
     ax_depth = fig.add_subplot(1, 3, 2)
+    depth_map = pointmap[..., 2]
+    if invert_z or flip_z:
+        depth_map = -depth_map
     im_depth = ax_depth.imshow(depth_map, cmap="viridis")
-    ax_depth.set_title("VGGT depth map (after PCA alignment)")
+    ax_depth.set_title("VGGT depth map")
     ax_depth.axis("off")
-    fig.colorbar(im_depth, ax=ax_depth, fraction=0.046, pad=0.04, label="PC3 height")
+    fig.colorbar(im_depth, ax=ax_depth, fraction=0.046, pad=0.04, label="z")
 
     ax_3d = fig.add_subplot(1, 3, 3, projection="3d")
-    scatter_kwargs = dict(s=6, alpha=0.9, depthshade=False)
+    scatter_kwargs = dict(s=4, alpha=0.85, depthshade=False)
     if show_confidence:
         scatter = ax_3d.scatter(xs, ys, zs, c=colors, cmap=cmap, **scatter_kwargs)
         fig.colorbar(scatter, ax=ax_3d, fraction=0.046, pad=0.04, label=colorbar_label)
     else:
         scatter = ax_3d.scatter(xs, ys, zs, c=colors, **scatter_kwargs)
 
-    ax_3d.set_title("VGGT pointmap (PCA-aligned)" if not show_confidence else "VGGT pointmap (confidence)")
-    ax_3d.set_xlabel("PC1 (plane axis)")
-    ax_3d.set_ylabel("PC2 (plane axis)")
-    ax_3d.set_zlabel("PC3 (height)")
+    ax_3d.set_title("VGGT pointmap (RGB-coloured)" if not show_confidence else "VGGT pointmap (confidence)")
+    ax_3d.set_xlabel("X")
+    ax_3d.set_ylabel("Y")
+    ax_3d.set_zlabel("Z")
     ax_3d.view_init(elev=40.0, azim=-45.0)
 
-    x_range = xs.max() - xs.min() if xs.size else 1.0
-    y_range = ys.max() - ys.min() if ys.size else 1.0
-    z_range = max(zs.max() - zs.min(), 1e-5) if zs.size else 1.0
-    ax_3d.set_box_aspect((x_range, y_range, z_range * 2.0))
+    x_range = xs.max() - xs.min() if n_points else 1.0
+    y_range = ys.max() - ys.min() if n_points else 1.0
+    z_range = zs.max() - zs.min() if n_points else 1.0
+    ax_3d.set_box_aspect((x_range, y_range, z_range if z_range > 0 else 1.0))
 
     plt.tight_layout()
     if output:
         os.makedirs(os.path.dirname(output) or ".", exist_ok=True)
         fig.savefig(output, dpi=200, bbox_inches="tight")
         print(f"[INFO] Saved figure to {output}")
-    else:
-        plt.show()
-
-    # Optional: scatter points on a "sphere" view (e.g., onto the unit sphere for intuition)
-    projected = coords_rot_flat / (np.linalg.norm(coords_rot_flat, axis=1, keepdims=True) + 1e-8)
-    projected = projected.reshape(h, w, 3)
-    sphere_ds = projected[::stride, ::stride, :]
-    xs_s, ys_s, zs_s = sphere_ds[..., 0].reshape(-1), sphere_ds[..., 1].reshape(-1), sphere_ds[..., 2].reshape(-1)
-    if show_confidence:
-        colors_s = conf_ds if isinstance(conf_ds, np.ndarray) else conf_ds
-    else:
-        colors_s = colors
-
-    fig_sphere = plt.figure(figsize=(6, 6))
-    ax_sphere = fig_sphere.add_subplot(1, 1, 1, projection="3d")
-    scatter_s = ax_sphere.scatter(xs_s, ys_s, zs_s, c=colors_s, s=4, alpha=0.7, depthshade=False)
-    ax_sphere.set_title("Spherical projection of VGGT geometry")
-    ax_sphere.set_axis_off()
-    ax_sphere.set_box_aspect((1, 1, 1))
-    ax_sphere.view_init(elev=30.0, azim=-45.0)
-    if output:
-        base, ext = os.path.splitext(output)
-        sphere_path = f"{base}_sphere{ext}"
-        fig_sphere.savefig(sphere_path, dpi=200, bbox_inches="tight")
-        print(f"[INFO] Saved spherical projection to {sphere_path}")
     else:
         plt.show()
 
@@ -201,23 +174,11 @@ def main():
     parser.add_argument(
         "--invert-z",
         action="store_true",
-        help="Flip the sign of the z-axis (for alternative camera conventions).",
+        help="Flip the sign of the z-axis.",
     )
-    parser.add_argument(
-        "--flip-pc1",
-        action="store_true",
-        help="Rotate 180 degrees around the first PCA axis (flips PC2/PC3).",
-    )
-    parser.add_argument(
-        "--flip-pc2",
-        action="store_true",
-        help="Rotate 180 degrees around the second PCA axis (flips PC1/PC3).",
-    )
-    parser.add_argument(
-        "--flip-pc3",
-        action="store_true",
-        help="Rotate 180 degrees around the third PCA axis (flips PC1/PC2).",
-    )
+    parser.add_argument("--flip-x", action="store_true", help="Flip the plotted X axis.")
+    parser.add_argument("--flip-y", action="store_true", help="Flip the plotted Y axis.")
+    parser.add_argument("--flip-z", action="store_true", help="Flip the plotted Z axis.")
     args = parser.parse_args()
 
     plot_snapshot(
@@ -228,9 +189,9 @@ def main():
         confidence_threshold=args.confidence_threshold,
         use_normalized=args.use_normalized,
         invert_z=args.invert_z,
-        flip_pc1=args.flip_pc1,
-        flip_pc2=args.flip_pc2,
-        flip_pc3=args.flip_pc3,
+        flip_x=args.flip_x,
+        flip_y=args.flip_y,
+        flip_z=args.flip_z,
     )
 
 
