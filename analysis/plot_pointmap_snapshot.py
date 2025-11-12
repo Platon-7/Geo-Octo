@@ -15,22 +15,12 @@ Example:
 
 import argparse
 import os
-from typing import Optional, Tuple
+from typing import Optional
 
 import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib import cm
 from mpl_toolkits.mplot3d import Axes3D  # noqa: F401  (import registers 3D projection)
-
-
-def _downsample(pointmap: np.ndarray, stride: int) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Return strided xyz coordinates for plotting."""
-    xyz = pointmap[..., :3]
-    xyz = xyz[::stride, ::stride, :]
-    xs = xyz[..., 0].reshape(-1)
-    ys = xyz[..., 1].reshape(-1)
-    zs = xyz[..., 2].reshape(-1)
-    return xs, ys, zs
 
 
 def plot_snapshot(
@@ -66,33 +56,50 @@ def plot_snapshot(
         f"min={float(np.nanmin(pointmap)):.4f} max={float(np.nanmax(pointmap)):.4f}"
     )
 
-    xs, ys, zs = _downsample(pointmap, stride)
-    if invert_z:
-        zs = -zs
-    n_points = xs.shape[0]
+    coords = pointmap[..., :3]
+    conf_map = pointmap[..., 3]
+    h, w, _ = coords.shape
 
-    conf = pointmap[..., 3]
+    coords_flat = coords.reshape(-1, 3)
+    center = coords_flat.mean(axis=0, keepdims=True)
+    coords_centered = coords_flat - center
+    _, _, Vt = np.linalg.svd(coords_centered, full_matrices=False)
+    coords_rot_flat = coords_centered @ Vt.T
+    if coords_rot_flat[:, 2].mean() < 0:
+        coords_rot_flat[:, 2] *= -1.0
+    if invert_z:
+        coords_rot_flat[:, 2] *= -1.0
+    coords_rot = coords_rot_flat.reshape(h, w, 3)
+
+    depth_map = coords_rot[:, :, 2]
+
+    coords_ds = coords_rot[::stride, ::stride, :]
+    xs = coords_ds[..., 0].reshape(-1)
+    ys = coords_ds[..., 1].reshape(-1)
+    zs = coords_ds[..., 2].reshape(-1)
+    conf_ds = conf_map[::stride, ::stride].reshape(-1)
+
     if confidence_threshold is not None:
-        conf_ds = conf[::stride, ::stride].reshape(-1)[:n_points]
         mask = conf_ds >= confidence_threshold
         xs, ys, zs = xs[mask], ys[mask], zs[mask]
-        n_points = xs.shape[0]
-        print(f"  confidence threshold {confidence_threshold}: kept {n_points} points")
-        if n_points == 0:
+        conf_ds = conf_ds[mask]
+        print(f"  confidence threshold {confidence_threshold}: kept {xs.shape[0]} points")
+        if xs.size == 0:
             raise ValueError("All points filtered out by confidence threshold.")
     else:
         mask = slice(None)
 
     if show_confidence:
-        colors = conf[::stride, ::stride].reshape(-1)[:n_points]
+        colors = conf_ds
         cmap = cm.viridis
         colorbar_label = "confidence"
     else:
-        colors = rgb_pre[::stride, ::stride, :].reshape(-1, 3)[:n_points]
+        colors_full = rgb_pre[::stride, ::stride, :].reshape(-1, 3)
+        colors = colors_full[mask] if isinstance(mask, np.ndarray) else colors_full
         cmap = None
         colorbar_label = None
 
-    fig = plt.figure(figsize=(14, 5))
+    fig = plt.figure(figsize=(15, 5))
 
     ax_rgb = fig.add_subplot(1, 3, 1)
     ax_rgb.imshow(rgb)
@@ -100,32 +107,29 @@ def plot_snapshot(
     ax_rgb.axis("off")
 
     ax_depth = fig.add_subplot(1, 3, 2)
-    depth_map = pointmap[..., 2]
-    if invert_z:
-        depth_map = -depth_map
     im_depth = ax_depth.imshow(depth_map, cmap="viridis")
-    ax_depth.set_title("VGGT depth map")
+    ax_depth.set_title("VGGT depth map (after PCA alignment)")
     ax_depth.axis("off")
-    fig.colorbar(im_depth, ax=ax_depth, fraction=0.046, pad=0.04, label="z")
+    fig.colorbar(im_depth, ax=ax_depth, fraction=0.046, pad=0.04, label="PC3 height")
 
     ax_3d = fig.add_subplot(1, 3, 3, projection="3d")
-    scatter_kwargs = dict(s=4, alpha=0.85, depthshade=False)
+    scatter_kwargs = dict(s=6, alpha=0.9, depthshade=False)
     if show_confidence:
         scatter = ax_3d.scatter(xs, ys, zs, c=colors, cmap=cmap, **scatter_kwargs)
         fig.colorbar(scatter, ax=ax_3d, fraction=0.046, pad=0.04, label=colorbar_label)
     else:
         scatter = ax_3d.scatter(xs, ys, zs, c=colors, **scatter_kwargs)
 
-    ax_3d.set_title("VGGT pointmap (RGB-coloured)" if not show_confidence else "VGGT pointmap (confidence)")
-    ax_3d.set_xlabel("Y")
-    ax_3d.set_ylabel("Z")
-    ax_3d.set_zlabel("X")
+    ax_3d.set_title("VGGT pointmap (PCA-aligned)" if not show_confidence else "VGGT pointmap (confidence)")
+    ax_3d.set_xlabel("PC1 (plane axis)")
+    ax_3d.set_ylabel("PC2 (plane axis)")
+    ax_3d.set_zlabel("PC3 (height)")
     ax_3d.view_init(elev=40.0, azim=-45.0)
 
-    x_range = xs.max() - xs.min()
-    y_range = ys.max() - ys.min()
-    z_range = zs.max() - zs.min()
-    ax_3d.set_box_aspect((x_range, y_range, z_range if z_range > 0 else 1.0))
+    x_range = xs.max() - xs.min() if xs.size else 1.0
+    y_range = ys.max() - ys.min() if ys.size else 1.0
+    z_range = max(zs.max() - zs.min(), 1e-5) if zs.size else 1.0
+    ax_3d.set_box_aspect((x_range, y_range, z_range * 2.0))
 
     plt.tight_layout()
     if output:
