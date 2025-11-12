@@ -44,6 +44,7 @@ def plot_snapshot(
     rotate_x: float = 0.0,
     rotate_y: float = 0.0,
     rotate_z: float = 0.0,
+    zoom: float = 1.0,
 ) -> None:
     data = np.load(path)
     rgb = data["rgb"]
@@ -167,6 +168,18 @@ def plot_snapshot(
     x_range = xs.max() - xs.min() if n_points else 1.0
     y_range = ys.max() - ys.min() if n_points else 1.0
     z_range = zs.max() - zs.min() if n_points else 1.0
+
+    if zoom <= 0:
+        raise ValueError("zoom must be > 0")
+    zoom = min(zoom, 1.0)
+    if zoom < 1.0 and n_points:
+        cx = 0.5 * (xs.max() + xs.min())
+        cy = 0.5 * (ys.max() + ys.min())
+        cz = 0.5 * (zs.max() + zs.min())
+        ax_3d.set_xlim(cx - (x_range * zoom) / 2, cx + (x_range * zoom) / 2)
+        ax_3d.set_ylim(cy - (y_range * zoom) / 2, cy + (y_range * zoom) / 2)
+        ax_3d.set_zlim(cz - (z_range * zoom) / 2, cz + (z_range * zoom) / 2)
+
     ax_3d.set_box_aspect((x_range, y_range, z_range if z_range > 0 else 1.0))
 
     plt.tight_layout()
@@ -207,6 +220,12 @@ def main():
     parser.add_argument("--rotate-x", type=float, default=0.0, help="Rotate around the X axis (degrees).")
     parser.add_argument("--rotate-y", type=float, default=0.0, help="Rotate around the Y axis (degrees).")
     parser.add_argument("--rotate-z", type=float, default=0.0, help="Rotate around the Z axis (degrees).")
+    parser.add_argument(
+        "--zoom",
+        type=float,
+        default=1.0,
+        help="Fraction of the axis range to keep centered on the point cloud (0 < zoom <= 1).",
+    )
     args = parser.parse_args()
 
     plot_snapshot(
@@ -220,6 +239,7 @@ def main():
         rotate_x=args.rotate_x,
         rotate_y=args.rotate_y,
         rotate_z=args.rotate_z,
+        zoom=args.zoom,
     )
 
 
