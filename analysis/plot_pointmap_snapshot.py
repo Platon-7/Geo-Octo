@@ -117,10 +117,10 @@ def plot_snapshot(
         scatter = ax_3d.scatter(xs, ys, zs, c=colors, **scatter_kwargs)
 
     ax_3d.set_title("VGGT pointmap (RGB-coloured)" if not show_confidence else "VGGT pointmap (confidence)")
-    ax_3d.set_xlabel("X")
-    ax_3d.set_ylabel("Y")
-    ax_3d.set_zlabel("Z")
-    ax_3d.view_init(elev=30.0, azim=-60.0)
+    ax_3d.set_xlabel("Y")
+    ax_3d.set_ylabel("Z")
+    ax_3d.set_zlabel("X")
+    ax_3d.view_init(elev=40.0, azim=-45.0)
 
     x_range = xs.max() - xs.min()
     y_range = ys.max() - ys.min()
