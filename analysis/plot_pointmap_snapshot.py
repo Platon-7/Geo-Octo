@@ -41,9 +41,9 @@ def plot_snapshot(
     confidence_threshold: Optional[float] = None,
     use_normalized: bool = False,
     invert_z: bool = False,
-    flip_x: bool = False,
-    flip_y: bool = False,
-    flip_z: bool = False,
+    rotate_x: float = 0.0,
+    rotate_y: float = 0.0,
+    rotate_z: float = 0.0,
 ) -> None:
     data = np.load(path)
     rgb = data["rgb"]
@@ -72,12 +72,40 @@ def plot_snapshot(
     xs, ys, zs = _downsample(pointmap, stride)
     if invert_z:
         zs = -zs
-    if flip_x:
-        xs = -xs
-    if flip_y:
-        ys = -ys
-    if flip_z:
-        zs = -zs
+    theta_x = np.deg2rad(rotate_x)
+    theta_y = np.deg2rad(rotate_y)
+    theta_z = np.deg2rad(rotate_z)
+
+    if theta_x != 0.0:
+        rot_x = np.array(
+            [
+                [1, 0, 0],
+                [0, np.cos(theta_x), -np.sin(theta_x)],
+                [0, np.sin(theta_x), np.cos(theta_x)],
+            ]
+        )
+        coords_rot = np.stack([xs, ys, zs], axis=1) @ rot_x.T
+        xs, ys, zs = coords_rot[:, 0], coords_rot[:, 1], coords_rot[:, 2]
+    if theta_y != 0.0:
+        rot_y = np.array(
+            [
+                [np.cos(theta_y), 0, np.sin(theta_y)],
+                [0, 1, 0],
+                [-np.sin(theta_y), 0, np.cos(theta_y)],
+            ]
+        )
+        coords_rot = np.stack([xs, ys, zs], axis=1) @ rot_y.T
+        xs, ys, zs = coords_rot[:, 0], coords_rot[:, 1], coords_rot[:, 2]
+    if theta_z != 0.0:
+        rot_z = np.array(
+            [
+                [np.cos(theta_z), -np.sin(theta_z), 0],
+                [np.sin(theta_z), np.cos(theta_z), 0],
+                [0, 0, 1],
+            ]
+        )
+        coords_rot = np.stack([xs, ys, zs], axis=1) @ rot_z.T
+        xs, ys, zs = coords_rot[:, 0], coords_rot[:, 1], coords_rot[:, 2]
     n_points = xs.shape[0]
 
     conf = pointmap[..., 3]
@@ -176,9 +204,9 @@ def main():
         action="store_true",
         help="Flip the sign of the z-axis.",
     )
-    parser.add_argument("--flip-x", action="store_true", help="Flip the plotted X axis.")
-    parser.add_argument("--flip-y", action="store_true", help="Flip the plotted Y axis.")
-    parser.add_argument("--flip-z", action="store_true", help="Flip the plotted Z axis.")
+    parser.add_argument("--rotate-x", type=float, default=0.0, help="Rotate around the X axis (degrees).")
+    parser.add_argument("--rotate-y", type=float, default=0.0, help="Rotate around the Y axis (degrees).")
+    parser.add_argument("--rotate-z", type=float, default=0.0, help="Rotate around the Z axis (degrees).")
     args = parser.parse_args()
 
     plot_snapshot(
@@ -189,9 +217,9 @@ def main():
         confidence_threshold=args.confidence_threshold,
         use_normalized=args.use_normalized,
         invert_z=args.invert_z,
-        flip_x=args.flip_x,
-        flip_y=args.flip_y,
-        flip_z=args.flip_z,
+        rotate_x=args.rotate_x,
+        rotate_y=args.rotate_y,
+        rotate_z=args.rotate_z,
     )
 
 
