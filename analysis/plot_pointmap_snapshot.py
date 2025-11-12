@@ -15,7 +15,7 @@ Example:
 
 import argparse
 import os
-from typing import Tuple
+from typing import Optional, Tuple
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -33,7 +33,7 @@ def _downsample_pointmap(pointmap: np.ndarray, stride: int) -> Tuple[np.ndarray,
     return xs, ys, zs
 
 
-def plot_snapshot(path: str, stride: int = 4, output: str | None = None, show_confidence: bool = False) -> None:
+def plot_snapshot(path: str, stride: int = 4, output: Optional[str] = None, show_confidence: bool = False) -> None:
     data = np.load(path)
     rgb = data["rgb"]
 

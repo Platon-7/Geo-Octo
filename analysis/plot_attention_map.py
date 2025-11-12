@@ -20,6 +20,7 @@ Example:
 
 import argparse
 import os
+from typing import Optional
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -35,7 +36,7 @@ def _cosine_heatmap(obs_tokens: np.ndarray, readout_token: np.ndarray) -> np.nda
     return cos.reshape(side, side)
 
 
-def plot(snapshot_path: str, output: str | None = None, cmap: str = "inferno") -> None:
+def plot(snapshot_path: str, output: Optional[str] = None, cmap: str = "inferno") -> None:
     data = np.load(snapshot_path, allow_pickle=True)
 
     rgb = data["rgb"]
