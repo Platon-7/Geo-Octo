@@ -139,6 +139,28 @@ def plot_snapshot(
     else:
         plt.show()
 
+    # Optional: scatter points on a "sphere" view (e.g., onto the unit sphere for intuition)
+    projected = coords_rot_flat / (np.linalg.norm(coords_rot_flat, axis=1, keepdims=True) + 1e-8)
+    projected = projected.reshape(h, w, 3)
+    sphere_ds = projected[::stride, ::stride, :]
+    xs_s, ys_s, zs_s = sphere_ds[..., 0].reshape(-1), sphere_ds[..., 1].reshape(-1), sphere_ds[..., 2].reshape(-1)
+    colors_s = colors_full[mask] if not show_confidence else conf_ds
+
+    fig_sphere = plt.figure(figsize=(6, 6))
+    ax_sphere = fig_sphere.add_subplot(1, 1, 1, projection="3d")
+    scatter_s = ax_sphere.scatter(xs_s, ys_s, zs_s, c=colors_s, s=4, alpha=0.7, depthshade=False)
+    ax_sphere.set_title("Spherical projection of VGGT geometry")
+    ax_sphere.set_axis_off()
+    ax_sphere.set_box_aspect((1, 1, 1))
+    ax_sphere.view_init(elev=30.0, azim=-45.0)
+    if output:
+        base, ext = os.path.splitext(output)
+        sphere_path = f"{base}_sphere{ext}"
+        fig_sphere.savefig(sphere_path, dpi=200, bbox_inches="tight")
+        print(f"[INFO] Saved spherical projection to {sphere_path}")
+    else:
+        plt.show()
+
 
 def main():
     parser = argparse.ArgumentParser(description="Plot RGB & pointmap snapshot.")
