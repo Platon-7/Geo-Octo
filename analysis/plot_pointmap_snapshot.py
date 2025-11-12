@@ -31,6 +31,7 @@ def plot_snapshot(
     confidence_threshold: Optional[float] = None,
     use_normalized: bool = False,
     invert_z: bool = False,
+    flip_pc1: bool = False,
 ) -> None:
     data = np.load(path)
     rgb = data["rgb"]
@@ -68,6 +69,9 @@ def plot_snapshot(
     if coords_rot_flat[:, 2].mean() < 0:
         coords_rot_flat[:, 2] *= -1.0
     if invert_z:
+        coords_rot_flat[:, 2] *= -1.0
+    if flip_pc1:
+        coords_rot_flat[:, 1] *= -1.0
         coords_rot_flat[:, 2] *= -1.0
     coords_rot = coords_rot_flat.reshape(h, w, 3)
 
@@ -144,7 +148,10 @@ def plot_snapshot(
     projected = projected.reshape(h, w, 3)
     sphere_ds = projected[::stride, ::stride, :]
     xs_s, ys_s, zs_s = sphere_ds[..., 0].reshape(-1), sphere_ds[..., 1].reshape(-1), sphere_ds[..., 2].reshape(-1)
-    colors_s = colors_full[mask] if not show_confidence else conf_ds
+    if show_confidence:
+        colors_s = conf_ds if isinstance(conf_ds, np.ndarray) else conf_ds
+    else:
+        colors_s = colors
 
     fig_sphere = plt.figure(figsize=(6, 6))
     ax_sphere = fig_sphere.add_subplot(1, 1, 1, projection="3d")
@@ -188,6 +195,11 @@ def main():
         action="store_true",
         help="Flip the sign of the z-axis (for alternative camera conventions).",
     )
+    parser.add_argument(
+        "--flip-pc1",
+        action="store_true",
+        help="Rotate 180 degrees around the first PCA axis (flips PC2/PC3).",
+    )
     args = parser.parse_args()
 
     plot_snapshot(
@@ -198,6 +210,7 @@ def main():
         confidence_threshold=args.confidence_threshold,
         use_normalized=args.use_normalized,
         invert_z=args.invert_z,
+        flip_pc1=args.flip_pc1,
     )
 
 
