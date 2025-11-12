@@ -23,7 +23,7 @@ from matplotlib import cm
 from mpl_toolkits.mplot3d import Axes3D  # noqa: F401  (import registers 3D projection)
 
 
-def _downsample_pointmap(pointmap: np.ndarray, stride: int) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+def _downsample(pointmap: np.ndarray, stride: int) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Return strided xyz coordinates for plotting."""
     xyz = pointmap[..., :3]
     xyz = xyz[::stride, ::stride, :]
@@ -42,10 +42,12 @@ def plot_snapshot(path: str, stride: int = 4, output: Optional[str] = None, show
     else:
         pointmap = data["pointmap_normalized"]
 
-    xs, ys, zs = _downsample_pointmap(pointmap, stride)
+    xs, ys, zs = _downsample(pointmap, stride)
+    n_points = xs.shape[0]
 
     if show_confidence:
         payload = data.get("pointmap_raw", pointmap)[::stride, ::stride, 3].reshape(-1)
+        payload = payload[:n_points]
         colors = payload
         colorbar_label = "confidence"
     else:
@@ -54,6 +56,7 @@ def plot_snapshot(path: str, stride: int = 4, output: Optional[str] = None, show
         if rgb_for_coloring.max() > 1.0:
             rgb_for_coloring = rgb_for_coloring / 255.0
         colors = rgb_for_coloring[::stride, ::stride, :].reshape(-1, 3)
+        colors = colors[:n_points]
         payload = None
         colorbar_label = None
 
