@@ -135,23 +135,28 @@ def plot_snapshot(
         cmap = None
         colorbar_label = None
 
-    fig = plt.figure(figsize=(14, 5))
+    fig = plt.figure(figsize=(18, 5))
 
-    ax_rgb = fig.add_subplot(1, 3, 1)
+    ax_rgb = fig.add_subplot(1, 4, 1)
     ax_rgb.imshow(rgb)
     ax_rgb.set_title("Policy RGB input")
     ax_rgb.axis("off")
 
-    ax_depth = fig.add_subplot(1, 3, 2)
-    depth_map = pointmap[..., 2]
-    if invert_z or flip_z:
-        depth_map = -depth_map
+    depth_map = np.linalg.norm(pointmap[..., :3], axis=-1)
+
+    ax_depth = fig.add_subplot(1, 4, 2)
     im_depth = ax_depth.imshow(depth_map, cmap="viridis")
     ax_depth.set_title("VGGT depth map")
     ax_depth.axis("off")
     fig.colorbar(im_depth, ax=ax_depth, fraction=0.046, pad=0.04, label="z")
 
-    ax_3d = fig.add_subplot(1, 3, 3, projection="3d")
+    ax_overlay = fig.add_subplot(1, 4, 3)
+    ax_overlay.imshow(rgb)
+    ax_overlay.imshow(depth_map, cmap="viridis", alpha=0.5)
+    ax_overlay.set_title("RGB + depth overlay")
+    ax_overlay.axis("off")
+
+    ax_3d = fig.add_subplot(1, 4, 4, projection="3d")
     scatter_kwargs = dict(s=4, alpha=0.85, depthshade=False)
     if show_confidence:
         scatter = ax_3d.scatter(xs, ys, zs, c=colors, cmap=cmap, **scatter_kwargs)
@@ -163,7 +168,7 @@ def plot_snapshot(
     ax_3d.set_xlabel("X")
     ax_3d.set_ylabel("Y")
     ax_3d.set_zlabel("Z")
-    ax_3d.view_init(elev=40.0, azim=-45.0)
+    ax_3d.view_init(elev=0.0, azim=-90.0)
 
     x_range = xs.max() - xs.min() if n_points else 1.0
     y_range = ys.max() - ys.min() if n_points else 1.0
