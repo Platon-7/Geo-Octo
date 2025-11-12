@@ -44,7 +44,18 @@ def plot_snapshot(path: str, stride: int = 4, output: Optional[str] = None, show
 
     xs, ys, zs = _downsample_pointmap(pointmap, stride)
 
-    conf = data.get("pointmap_raw", pointmap)[::stride, ::stride, 3].reshape(-1) if show_confidence else None
+    if show_confidence:
+        payload = data.get("pointmap_raw", pointmap)[::stride, ::stride, 3].reshape(-1)
+        colors = payload
+        colorbar_label = "confidence"
+    else:
+        # Colour points by RGB. Prefer the preprocessed VGGT input (expects float32 in [0,1]).
+        rgb_for_coloring = data.get("rgb_preprocessed", rgb).astype(np.float32)
+        if rgb_for_coloring.max() > 1.0:
+            rgb_for_coloring = rgb_for_coloring / 255.0
+        colors = rgb_for_coloring[::stride, ::stride, :].reshape(-1, 3)
+        payload = None
+        colorbar_label = None
 
     fig = plt.figure(figsize=(10, 4.5))
 
@@ -54,14 +65,18 @@ def plot_snapshot(path: str, stride: int = 4, output: Optional[str] = None, show
     ax_rgb.axis("off")
 
     ax_3d = fig.add_subplot(1, 2, 2, projection="3d")
-    colour_payload = conf if show_confidence else zs
-    scatter = ax_3d.scatter(xs, ys, zs, c=colour_payload, cmap=cm.viridis, s=6, alpha=0.8)
-    label = "confidence" if show_confidence else "depth (z)"
-    fig.colorbar(scatter, ax=ax_3d, shrink=0.6, pad=0.1, label=label)
-    ax_3d.set_title("VGGT pointmap (xyz)")
+    scatter_kwargs = dict(s=4, alpha=0.85)
+    if show_confidence:
+        scatter = ax_3d.scatter(xs, ys, zs, c=colors, cmap=cm.viridis, **scatter_kwargs)
+        fig.colorbar(scatter, ax=ax_3d, shrink=0.6, pad=0.1, label=colorbar_label)
+    else:
+        scatter = ax_3d.scatter(xs, ys, zs, c=colors, **scatter_kwargs)
+
+    ax_3d.set_title("VGGT pointmap (RGB-coloured)" if not show_confidence else "VGGT pointmap (confidence)")
     ax_3d.set_xlabel("X")
     ax_3d.set_ylabel("Y")
     ax_3d.set_zlabel("Z")
+    ax_3d.view_init(elev=30.0, azim=-60.0)
 
     plt.tight_layout()
     if output:

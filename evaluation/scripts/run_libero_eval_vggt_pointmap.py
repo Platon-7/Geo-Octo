@@ -492,9 +492,17 @@ def run_episode(
                             snapshot_output_dir,
                             f"snapshot_task-{task_description.replace(' ', '_')}_ep{episode_index:02d}_step{cfg.snapshot_step_index:03d}.npz",
                         )
+                        # Store original and VGGT-preprocessed RGB frames for downstream visualisation
+                        if "rgb_preprocessed" in observation:
+                            rgb_pre = observation.pop("rgb_preprocessed")
+                        else:
+                            rgb_pre = load_and_preprocess_images([img], target_size=cfg.vggt_input_res)[0].transpose(1, 2, 0)
+                        if rgb_pre.max() > 1.0:
+                            rgb_pre = rgb_pre / 255.0
                         np.savez_compressed(
                             snapshot_path,
                             rgb=img,
+                            rgb_preprocessed=rgb_pre,
                             pointmap_normalized=pm,
                             pointmap_raw=pm_raw if pm_raw is not None else pm,
                             task_description=task_description,
