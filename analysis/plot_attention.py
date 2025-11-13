@@ -47,8 +47,8 @@ def _load_policy_snapshot(npz_path: Path, label: str) -> Dict[str, np.ndarray]:
 
         payload = {
             "rgb": np.asarray(data[rgb_key]),
-            "octo_tokens": np.asarray(data[octo_key]),
-            "vggt_tokens": np.asarray(data[vggt_key]) if vggt_key in data else None,
+            "octo_tokens": np.asarray(data[octo_key], dtype=np.float32),
+            "vggt_tokens": np.asarray(data[vggt_key], dtype=np.float32) if vggt_key in data else None,
         }
         if meta_key in data:
             try:
