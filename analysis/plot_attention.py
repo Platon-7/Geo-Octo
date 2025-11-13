@@ -144,7 +144,6 @@ def main() -> None:
 
     rows = len(labels)
     fig, axes = plt.subplots(rows, 2, figsize=(12, 4 * rows))
-    fig.subplots_adjust(top=0.78)
     if rows == 1:
         axes = axes[np.newaxis, ...]
 
@@ -173,9 +172,12 @@ def main() -> None:
             overlay = _render_heatmap(ax_heat, rgb, heat_overlay, f"{disp_label} – Similarity", args.alpha)
             fig.colorbar(overlay, ax=ax_heat, fraction=0.046, pad=0.04)
 
-    fig.suptitle("Comparison of Baseline Self-Attention and 2D-3D Cross-Modal Similarity", fontsize=18)
-    plt.subplots_adjust(top=0.78)
-    plt.tight_layout()
+    fig.suptitle(
+        "Comparison of Baseline Self-Attention and 2D-3D Cross-Modal Similarity",
+        fontsize=18,
+        y=0.98,
+    )
+    fig.tight_layout(rect=[0, 0, 1, 0.94])
     args.output.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(args.output, dpi=600)
     print(f"[plot_attention] Saved visualization to {args.output}")
