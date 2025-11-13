@@ -144,10 +144,11 @@ def main() -> None:
     for ax, label, payload in zip(axes, labels, snapshots):
         rgb = payload["rgb"]
         octo_tokens = np.asarray(payload["octo_tokens"])
-        vggt_tokens = np.asarray(payload["vggt_tokens"]) if payload["vggt_tokens"] is not None else None
-
+        vggt_tokens = payload["vggt_tokens"]
         if vggt_tokens is None:
-            raise ValueError(f"Snapshot for policy '{label}' missing vggt_tokens.")
+            vggt_tokens = octo_tokens.copy()
+        else:
+            vggt_tokens = np.asarray(vggt_tokens)
 
         heat_low = _cosine_similarity_map(octo_tokens, vggt_tokens)
         heat_overlay = _resize_heatmap(_normalize_heatmap(heat_low), rgb.shape[:2])
