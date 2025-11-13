@@ -319,8 +319,8 @@ def get_action(
         task = model.create_tasks(texts=[task_label])
 
         # Sample action
-        #action = model.sample_actions(observation, task, rng=jax.random.PRNGKey(0))
-        
+        # action = model.sample_actions(observation, task, rng=jax.random.PRNGKey(0))
+
         # Build un-normalization stats from the checkpoint
         ds = getattr(model, "dataset_statistics", {}).get("action")
         unnorm_stats = None
@@ -331,13 +331,14 @@ def get_action(
             if "mask" in ds:
                 unnorm_stats["mask"] = np.array(ds["mask"], dtype=bool)
 
-          # Sample action; model applies un-normalization
-          action = model.sample_actions(
+        # Sample action; model applies un-normalization
+        action = model.sample_actions(
             observation,
             task,
             unnormalization_statistics=unnorm_stats,
             rng=jax.random.PRNGKey(0),
         )
+
         # Convert to numpy and normalize output to a list of 7D steps
         arr = np.array(action)
         while arr.ndim > 1 and arr.shape[0] == 1:
@@ -358,22 +359,22 @@ def get_action(
             else:
                 steps.append(np.pad(vec.astype(np.float32), (0, 7 - vec.size)))
 
-          # Cache the exact inputs that produced this action so downstream code
-          # (e.g., attention visualizations) can re-run the transformer without
-          # having to reconstruct the full observation/task dict.
-          try:
-              obs_copy = jax.tree_map(lambda x: np.asarray(x), observation)
-              task_copy = jax.tree_map(lambda x: np.asarray(x), task)
-              get_action._last_inputs = {
-                  "observation": obs_copy,
-                  "task": task_copy,
-                  "timestep_pad_mask": np.asarray(observation["timestep_pad_mask"]),
-              }
-          except Exception as cache_err:
-              print(f"[WARN] Failed to cache transformer inputs: {cache_err}", flush=True)
-              get_action._last_inputs = None
+        # Cache the exact inputs that produced this action so downstream code
+        # (e.g., attention visualizations) can re-run the transformer without
+        # having to reconstruct the full observation/task dict.
+        try:
+            obs_copy = jax.tree_map(lambda x: np.asarray(x), observation)
+            task_copy = jax.tree_map(lambda x: np.asarray(x), task)
+            get_action._last_inputs = {
+                "observation": obs_copy,
+                "task": task_copy,
+                "timestep_pad_mask": np.asarray(observation["timestep_pad_mask"]),
+            }
+        except Exception as cache_err:
+            print(f"[WARN] Failed to cache transformer inputs: {cache_err}", flush=True)
+            get_action._last_inputs = None
 
-          return steps
+        return steps
     else:
         raise ValueError(f"Unsupported model family: {cfg.model_family}")
 
