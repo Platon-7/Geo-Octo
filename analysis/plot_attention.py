@@ -173,7 +173,7 @@ def main() -> None:
             fig.colorbar(overlay, ax=ax_heat, fraction=0.046, pad=0.04)
 
     fig.suptitle("Comparison of Baseline Self-Attention and 2D-3D Cross-Modal Similarity", fontsize=18)
-    plt.subplots_adjust(top=0.83)
+    plt.subplots_adjust(top=0.78)
     plt.tight_layout()
     args.output.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(args.output, dpi=600)
