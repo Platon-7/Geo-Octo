@@ -154,19 +154,37 @@ def main() -> None:
             heat_overlay = _resize_heatmap(_normalize_heatmap(heat_low), rgb.shape[:2])
 
             _render_rgb(ax_rgb, rgb, f"{label} – RGB")
-            overlay = _render_heatmap(ax_heat, rgb, f"{label} – Activation Energy", heat_overlay, args.alpha)
+            overlay = _render_heatmap(ax_heat, rgb, heat_overlay, f"{label} – Activation Energy", args.alpha)
             fig.colorbar(overlay, ax=ax_heat, fraction=0.046, pad=0.04)
             ax_fail.axis("off")
-            ax_fail.set_title(f"{label} – Failure")
+            ax_fail.text(
+                0.5,
+                0.5,
+                f"{label} – Failure",
+                ha="center",
+                va="center",
+                fontsize=12,
+                fontweight="bold",
+                transform=ax_fail.transAxes,
+            )
         else:
             heat_low = _cosine_similarity_map(octo_tokens, vggt_tokens)
             heat_overlay = _resize_heatmap(_normalize_heatmap(heat_low), rgb.shape[:2])
 
             _render_rgb(ax_rgb, rgb, f"{label} – RGB")
-            overlay = _render_heatmap(ax_heat, rgb, f"{label} – Similarity", heat_overlay, args.alpha)
+            overlay = _render_heatmap(ax_heat, rgb, heat_overlay, f"{label} – Similarity", args.alpha)
             fig.colorbar(overlay, ax=ax_heat, fraction=0.046, pad=0.04)
             ax_fail.axis("off")
-            ax_fail.set_title(f"{label} – Failure")
+            ax_fail.text(
+                0.5,
+                0.5,
+                f"{label} – Failure",
+                ha="center",
+                va="center",
+                fontsize=12,
+                fontweight="bold",
+                transform=ax_fail.transAxes,
+            )
 
     plt.tight_layout()
     args.output.parent.mkdir(parents=True, exist_ok=True)
