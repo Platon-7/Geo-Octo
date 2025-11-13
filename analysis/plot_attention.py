@@ -134,12 +134,12 @@ def main() -> None:
     snapshots = [_load_policy_snapshot(args.snapshot, label) for label in labels]
 
     rows = len(labels)
-    fig, axes = plt.subplots(rows, 2, figsize=(10, 4 * rows))
+    fig, axes = plt.subplots(rows, 3, figsize=(14, 4 * rows))
     if rows == 1:
         axes = axes[np.newaxis, ...]
 
     for row_idx, (label, payload) in enumerate(zip(labels, snapshots)):
-        ax_rgb, ax_heat = axes[row_idx]
+        ax_rgb, ax_heat, ax_extra = axes[row_idx]
         rgb = payload["rgb"]
         octo_tokens = np.asarray(payload["octo_tokens"])
         vggt_tokens = (
@@ -156,6 +156,14 @@ def main() -> None:
             _render_rgb(ax_rgb, rgb, f"{label} – RGB")
             overlay = _render_heatmap(ax_heat, rgb, heat_overlay, f"{label} – Activation Energy", args.alpha)
             fig.colorbar(overlay, ax=ax_heat, fraction=0.046, pad=0.04)
+
+            # Panel (c): baseline self-similarity
+            self_heat = _cosine_similarity_map(octo_tokens, octo_tokens)
+            self_overlay = _resize_heatmap(_normalize_heatmap(self_heat), rgb.shape[:2])
+            overlay_extra = _render_heatmap(
+                ax_extra, rgb, self_overlay, f"{label} – Self Similarity", args.alpha
+            )
+            fig.colorbar(overlay_extra, ax=ax_extra, fraction=0.046, pad=0.04)
         else:
             heat_low = _cosine_similarity_map(octo_tokens, vggt_tokens)
             heat_overlay = _resize_heatmap(_normalize_heatmap(heat_low), rgb.shape[:2])
@@ -163,6 +171,7 @@ def main() -> None:
             _render_rgb(ax_rgb, rgb, f"{label} – RGB")
             overlay = _render_heatmap(ax_heat, rgb, heat_overlay, f"{label} – Similarity", args.alpha)
             fig.colorbar(overlay, ax=ax_heat, fraction=0.046, pad=0.04)
+            ax_extra.axis("off")
 
     plt.tight_layout()
     args.output.parent.mkdir(parents=True, exist_ok=True)
