@@ -109,69 +109,78 @@ def _render_heatmap(
 
 
 def main() -> None:
-    # Bar chart summary of evaluation results
-    libero_object = {
-        "Baseline": 70.8,
-        "VGGT-Only": 7.2,
-        "VGGT-Fusion": 61.0,
-        "VGGT-Pointmap": 9.0,
-    }
-    libero_spatial = {
-        "Baseline": 82.0,
-        "VGGT-Only": 15.2,
-        "VGGT-Fusion": 74.8,
-        "VGGT-Pointmap": 41.4,
-    }
-
-    color_map = {
-        "Baseline": "#ff8c42",       # warm orange
-        "VGGT-Only": "#e63946",      # vibrant red
-        "VGGT-Fusion": "#0081a7",    # deep teal/blue
-        "VGGT-Pointmap": "#ffca3a",  # rich yellow
-    }
-
-    datasets = [("LIBERO Object", libero_object), ("LIBERO Spatial", libero_spatial)]
-
-    parser = argparse.ArgumentParser(description="Plot evaluation success rates.")
+    parser = argparse.ArgumentParser(description="Visualize attention snapshots from evaluation.")
+    parser.add_argument("--snapshot", type=Path, required=True, help="Path to the combined .npz snapshot file.")
+    parser.add_argument(
+        "--policies",
+        type=str,
+        default="baseline,vggt",
+        help="Comma-separated list of policy labels stored in the snapshot.",
+    )
     parser.add_argument(
         "--output",
         type=Path,
-        default=Path("analysis/attention_snapshots/evaluation_bar_chart.png"),
-        help="Where to save the bar chart.",
+        default=Path("analysis/attention_snapshots/attention_overlay.png"),
+        help="Where to save the resulting visualization.",
     )
+    parser.add_argument("--alpha", type=float, default=0.5, help="Transparency for heatmap overlay.")
     parser.add_argument("--show", action="store_true", help="Display the figure interactively.")
     args = parser.parse_args()
 
-    fig, axes = plt.subplots(1, 2, figsize=(12, 5), squeeze=False)
-    axes = axes[0]
+    labels = [p.strip() for p in args.policies.split(",") if p.strip()]
+    if not labels:
+        raise ValueError("No policy labels provided.")
 
-    for ax, (title, data) in zip(axes, datasets):
-        names = list(data.keys())
-        values = list(data.values())
-        colors = [color_map[name] for name in names]
+    snapshots = [_load_policy_snapshot(args.snapshot, label) for label in labels]
 
-        bars = ax.bar(names, values, color=colors, edgecolor="black", linewidth=1.0)
+    display_names = []
+    for label in labels:
+        label_lower = label.lower()
+        if label_lower == "baseline":
+            display_names.append("Baseline")
+        elif label_lower == "vggt":
+            display_names.append("VGGT")
+        else:
+            display_names.append(label.capitalize())
 
-        for bar, value in zip(bars, values):
-            ax.text(
-                bar.get_x() + bar.get_width() / 2,
-                bar.get_height() + 1,
-                f"{value:.1f}%",
-                ha="center",
-                va="bottom",
-                fontsize=11,
-            )
+    rows = len(labels)
+    fig, axes = plt.subplots(rows, 2, figsize=(12, 4 * rows))
+    if rows == 1:
+        axes = axes[np.newaxis, ...]
 
-        ax.set_ylim(0, 100)
-        ax.set_ylabel("Success Rate (%)")
-        ax.set_title(title, fontsize=14, pad=12)
-        ax.set_xticklabels(names, rotation=15, ha="right")
+    for row_idx, (label, disp_label, payload) in enumerate(zip(labels, display_names, snapshots)):
+        ax_rgb, ax_heat = axes[row_idx]
+        rgb = payload["rgb"]
+        octo_tokens = np.asarray(payload["octo_tokens"])
+        vggt_tokens = (
+            np.asarray(payload["vggt_tokens"]) if payload["vggt_tokens"] is not None else None
+        )
 
-    fig.suptitle("Evaluation Success Rates on LIBERO Suites", fontsize=18, y=0.96)
-    fig.tight_layout(rect=[0, 0, 1, 0.94])
+        if vggt_tokens is None:
+            self_heat = _cosine_similarity_map(octo_tokens, octo_tokens)
+            heat_low = self_heat
+            heat_overlay = _resize_heatmap(_normalize_heatmap(heat_low), rgb.shape[:2])
+
+            _render_rgb(ax_rgb, rgb, f"{disp_label} – RGB")
+            overlay = _render_heatmap(ax_heat, rgb, heat_overlay, f"{disp_label} – Self-Similarity", args.alpha)
+            fig.colorbar(overlay, ax=ax_heat, fraction=0.046, pad=0.04)
+        else:
+            heat_low = _cosine_similarity_map(octo_tokens, vggt_tokens)
+            heat_overlay = _resize_heatmap(_normalize_heatmap(heat_low), rgb.shape[:2])
+
+            _render_rgb(ax_rgb, rgb, f"{disp_label} – RGB")
+            overlay = _render_heatmap(ax_heat, rgb, heat_overlay, f"{disp_label} – Similarity", args.alpha)
+            fig.colorbar(overlay, ax=ax_heat, fraction=0.046, pad=0.04)
+
+    fig.suptitle(
+        "Comparison of Baseline Self-Attention and 2D-3D Cross-Modal Similarity",
+        fontsize=18,
+        y=0.985,
+    )
+    fig.tight_layout(rect=[0, 0, 1, 0.945])
     args.output.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(args.output, dpi=600)
-    print(f"[plot_attention] Saved bar chart to {args.output}")
+    print(f"[plot_attention] Saved visualization to {args.output}")
 
     if args.show:
         plt.show()
