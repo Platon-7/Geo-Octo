@@ -189,23 +189,23 @@ class GenerateConfig:
 
     vggt_only_eval: bool = False                     # Used when finetuning removed vision encoder completely
 
-    #################################################################################################################
-    # Utils
-    #################################################################################################################
-    run_id_note: Optional[str] = None                # Extra note to add to end of run ID for logging
-    local_log_dir: str = "./experiments/logs"        # Local directory for eval logs
+      #################################################################################################################
+      # Utils
+      #################################################################################################################
+      run_id_note: Optional[str] = None                # Extra note to add to end of run ID for logging
+      local_log_dir: str = "./experiments/logs"        # Local directory for eval logs
 
-    #################################################################################################################
-    # Attention snapshot capture (disabled by default)
-    #################################################################################################################
-    capture_attention_snapshot: bool = False         # Enable saving intermediate vision tokens for analysis
-    attention_snapshot_task: Optional[str] = "pick up the ketchup and place it in the basket"
-    attention_snapshot_episode_idx: int = 3          # Zero-based episode index to capture from
-    attention_snapshot_seconds: float = 1.0          # Seconds after episode start to capture observation
-    attention_snapshot_control_freq: Optional[float] = None  # Override control frequency if env attribute missing
-    attention_snapshot_output_dir: str = "./analysis/attention_snapshots"
-    attention_snapshot_filename: Optional[str] = None
-    attention_snapshot_label: Optional[str] = None   # Required when capture enabled to distinguish policies
+      #################################################################################################################
+      # Attention snapshot capture (disabled by default)
+      #################################################################################################################
+      capture_attention_snapshot: bool = False         # Enable saving intermediate vision tokens for analysis
+      attention_snapshot_task: Optional[str] = "pick up the cream cheese and place it in the basket"
+      attention_snapshot_episode_idx: int = 3          # Zero-based episode index to capture from
+      attention_snapshot_seconds: float = 1.0          # Seconds after episode start to capture observation
+      attention_snapshot_control_freq: Optional[float] = None  # Override control frequency if env attribute missing
+      attention_snapshot_output_dir: str = "./analysis/attention_snapshots"
+      attention_snapshot_filename: Optional[str] = None
+      attention_snapshot_label: Optional[str] = None   # Required when capture enabled to distinguish policies
 
     use_wandb: bool = False                          # Whether to also log results in Weights & Biases
     wandb_entity: str = "your-wandb-entity"          # Name of WandB entity
