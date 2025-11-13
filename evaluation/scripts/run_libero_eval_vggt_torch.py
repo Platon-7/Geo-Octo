@@ -343,7 +343,7 @@ def process_action(action, model_family, action_mean=None, action_std=None):
 
 
 class AttentionSnapshotManager:
-    """Manage when and how to record intermediate vision tokens for later visualization."""
+    """Minimal snapshot manager placeholder for stepwise integration."""
 
     def __init__(self, cfg: GenerateConfig, task_description: str, log_fn=log_message):
         self.cfg = cfg
@@ -353,11 +353,6 @@ class AttentionSnapshotManager:
         self._task_match = False
         self.task_match = False
         self.captured = False
-        self._pending = False
-        self._pending_policy_step = None
-        self._freq_cache: Optional[float] = None
-        self.output_dir: Optional[Path] = None
-        self.output_path: Optional[Path] = None
 
         if not self.enabled:
             return
@@ -366,125 +361,6 @@ class AttentionSnapshotManager:
         current_task = self.task_description.strip().lower()
         self._task_match = (not target_task) or (current_task == target_task)
         self.task_match = self._task_match
-
-        if self._task_match:
-            if not cfg.attention_snapshot_label:
-                raise ValueError(
-                    "attention_snapshot_label must be provided when capture_attention_snapshot is enabled "
-                    "and the target task matches."
-                )
-            base_filename = cfg.attention_snapshot_filename or self._default_filename(current_task or "task")
-            self.output_dir = Path(cfg.attention_snapshot_output_dir).expanduser()
-            self.output_path = self.output_dir / base_filename
-
-    def _default_filename(self, task_slug: str) -> str:
-        slug = "_".join(task_slug.split()) or "task"
-        seconds = self.cfg.attention_snapshot_seconds
-        sec_str = f"{seconds:.2f}".replace(".", "p")
-        episode = self.cfg.attention_snapshot_episode_idx
-        return f"{slug}_episode{episode}_t{sec_str}s.npz"
-
-    def _resolve_control_freq(self, control_freq: Optional[float]) -> float:
-        if self.cfg.attention_snapshot_control_freq is not None:
-            return float(self.cfg.attention_snapshot_control_freq)
-        if control_freq is not None:
-            return float(control_freq)
-        return 20.0  # LIBERO default
-
-    def _target_step(self, control_freq: float) -> int:
-        seconds = max(0.0, float(self.cfg.attention_snapshot_seconds))
-        return max(0, int(round(seconds * control_freq)))
-
-    def should_capture(self, episode_idx: int, policy_step_idx: int, control_freq: Optional[float]) -> bool:
-        if not self.enabled or self.captured or not self._task_match or self.output_path is None:
-            return False
-        if episode_idx != self.cfg.attention_snapshot_episode_idx:
-            return False
-
-        freq = self._resolve_control_freq(control_freq)
-        target_step = self._target_step(freq)
-        if policy_step_idx < target_step:
-            return False
-
-        self._pending = True
-        self._pending_policy_step = policy_step_idx
-        self._freq_cache = freq
-        return True
-
-    def build_capture_spec(self) -> dict:
-        return {"request_tokens": True}
-
-    def commit(
-        self,
-        payload: Optional[dict],
-        image: Optional[np.ndarray],
-        episode_idx: int,
-        control_freq: Optional[float],
-    ) -> None:
-        if not self._pending:
-            return
-
-        self._pending = False
-        freq = self._freq_cache or self._resolve_control_freq(control_freq)
-        policy_step_idx = self._pending_policy_step or 0
-        seconds_actual = policy_step_idx / freq if freq else None
-
-        if payload is None:
-            self._log("Attention snapshot capture requested but returned payload was None.")
-            return
-
-        octo_tokens = payload.get("octo_tokens")
-        if octo_tokens is None:
-            self._log("Attention snapshot payload missing 'octo_tokens'; skipping save.")
-            return
-
-        vggt_tokens = payload.get("vggt_tokens")
-        image_np = np.asarray(image) if image is not None else None
-
-        if self.output_dir is None or self.output_path is None:
-            self._log("Attention snapshot output path is undefined; skipping save.")
-            return
-
-        self.output_dir.mkdir(parents=True, exist_ok=True)
-
-        existing: dict = {}
-        if self.output_path.exists():
-            with np.load(self.output_path, allow_pickle=True) as data:
-                existing = {k: data[k] for k in data.files}
-
-        label = self.cfg.attention_snapshot_label or "policy"
-
-        new_entries = {
-            f"{label}_octo_tokens": np.asarray(octo_tokens, dtype=np.float32),
-        }
-        if vggt_tokens is not None:
-            new_entries[f"{label}_vggt_tokens"] = np.asarray(vggt_tokens, dtype=np.float32)
-        if image_np is not None:
-            new_entries[f"{label}_rgb"] = image_np.astype(np.uint8)
-
-        metadata = {
-            "policy_label": label,
-            "task_description": self.task_description,
-            "episode_idx": episode_idx,
-            "target_seconds": self.cfg.attention_snapshot_seconds,
-            "captured_policy_step": policy_step_idx,
-            "control_freq": freq,
-            "seconds_elapsed": seconds_actual,
-            "timestamp": datetime.utcnow().isoformat(),
-            "pretrained_checkpoint": str(self.cfg.pretrained_checkpoint),
-            "run_id_note": self.cfg.run_id_note,
-        }
-        new_entries[f"{label}_meta"] = np.array(json.dumps(metadata), dtype=object)
-
-        existing.update(new_entries)
-        np.savez_compressed(self.output_path, **existing)
-
-        self.captured = True
-        seconds_str = f"{seconds_actual:.2f}s" if seconds_actual is not None else "N/A"
-        self._log(
-            f"Saved attention snapshot for policy '{label}' at {seconds_str} "
-            f"to {self.output_path}"
-        )
 
 # ===== VGGT (PyTorch) helpers =====
 
