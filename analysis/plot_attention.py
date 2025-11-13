@@ -86,36 +86,29 @@ def _normalize_heatmap(h: np.ndarray) -> np.ndarray:
     return (h - min_val) / (max_val - min_val)
 
 
-def _render_policy_axis(
-    ax,
-    rgb: np.ndarray,
-    heatmap: np.ndarray,
-    label: str,
-    alpha: float,
-    meta: Dict,
-):
+def _render_rgb(ax, rgb: np.ndarray, title: str) -> None:
     ax.imshow(rgb)
+    ax.axis("off")
+    ax.set_title(title)
+
+
+def _render_heatmap(
+    ax,
+    base_image: np.ndarray,
+    heatmap: np.ndarray,
+    title: str,
+    alpha: float,
+):
+    ax.imshow(base_image)
     overlay = ax.imshow(heatmap, cmap="jet", alpha=alpha)
     ax.axis("off")
-
-    title = label
-    if meta:
-        extras = []
-        seconds = meta.get("seconds_elapsed")
-        if seconds is not None:
-            extras.append(f"t={seconds:.2f}s")
-        freq = meta.get("control_freq")
-        if freq is not None:
-            extras.append(f"{freq:.1f}Hz")
-        if extras:
-            title += f" ({', '.join(extras)})"
     ax.set_title(title)
     return overlay
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Visualize attention snapshots from evaluation.")
-    parser.add_argument("--snapshot", type=Path, required=True, help="Path to the .npz snapshot file.")
+    parser.add_argument("--snapshot", type=Path, required=True, help="Path to the combined .npz snapshot file.")
     parser.add_argument(
         "--policies",
         type=str,
@@ -144,16 +137,42 @@ def main() -> None:
     for ax, label, payload in zip(axes, labels, snapshots):
         rgb = payload["rgb"]
         octo_tokens = np.asarray(payload["octo_tokens"])
-        vggt_tokens = payload["vggt_tokens"]
-        if vggt_tokens is None:
-            vggt_tokens = octo_tokens.copy()
-        else:
-            vggt_tokens = np.asarray(vggt_tokens)
+        vggt_tokens = (
+            np.asarray(payload["vggt_tokens"]) if payload["vggt_tokens"] is not None else None
+        )
 
-        heat_low = _cosine_similarity_map(octo_tokens, vggt_tokens)
-        heat_overlay = _resize_heatmap(_normalize_heatmap(heat_low), rgb.shape[:2])
-        overlay = _render_policy_axis(ax, rgb, heat_overlay, label, alpha=args.alpha, meta=payload.get("meta", {}))
-        fig.colorbar(overlay, ax=ax, fraction=0.046, pad=0.04)
+        if vggt_tokens is None:
+            # Baseline: activation magnitude map
+            energy = np.linalg.norm(octo_tokens, axis=1)
+            side = int(round(np.sqrt(energy.size)))
+            heat_low = energy.reshape(side, side)
+            heat_overlay = _resize_heatmap(_normalize_heatmap(heat_low), rgb.shape[:2])
+
+            # Panel (a): RGB; Panel (b): activation map
+            ax_rgb = ax if len(labels) == 1 else ax[0]
+            ax_heat = ax if len(labels) == 1 else ax[1]
+            ax_fail = None if len(labels) == 1 else ax[2]
+
+            _render_rgb(ax_rgb, rgb, f"{label} – RGB")
+            overlay = _render_heatmap(ax_heat, rgb, f"{label} – Activation Energy", heat_overlay, args.alpha)
+            fig.colorbar(overlay, ax=ax_heat, fraction=0.046, pad=0.04)
+            if ax_fail is not None:
+                ax_fail.axis("off")
+                ax_fail.set_title(f"{label} – Failure")
+        else:
+            heat_low = _cosine_similarity_map(octo_tokens, vggt_tokens)
+            heat_overlay = _resize_heatmap(_normalize_heatmap(heat_low), rgb.shape[:2])
+
+            ax_rgb = ax if len(labels) == 1 else ax[0]
+            ax_heat = ax if len(labels) == 1 else ax[1]
+            ax_fail = None if len(labels) == 1 else ax[2]
+
+            _render_rgb(ax_rgb, rgb, f"{label} – RGB")
+            overlay = _render_heatmap(ax_heat, rgb, f"{label} – Similarity", heat_overlay, args.alpha)
+            fig.colorbar(overlay, ax=ax_heat, fraction=0.046, pad=0.04)
+            if ax_fail is not None:
+                ax_fail.axis("off")
+                ax_fail.set_title(f"{label} – Failure")
 
     plt.tight_layout()
     args.output.parent.mkdir(parents=True, exist_ok=True)
