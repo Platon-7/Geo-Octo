@@ -146,7 +146,11 @@ def plot_snapshot(
         n_cols += 1
 
     fig = plt.figure(figsize=(6 * n_cols, 5))
-    fig.suptitle("VGGT Zero-Shot 3D Reconstruction of the LIBERO Object Environment from a Single View", fontsize=16, y=0.95)
+    fig.suptitle(
+        "VGGT Zero-Shot 3D Reconstruction of the LIBERO Object Environment from a Single View",
+        fontsize=16,
+        y=0.98,
+    )
 
     panel = 1
     ax_rgb = fig.add_subplot(1, n_cols, panel)
@@ -215,7 +219,7 @@ def plot_snapshot(
     if ax_3d is not None:
         ax_3d.set_box_aspect((x_range, y_range, z_range if z_range > 0 else 1.0))
 
-    plt.tight_layout()
+    plt.tight_layout(rect=[0, 0, 1, 0.95])
     if output:
         os.makedirs(os.path.dirname(output) or ".", exist_ok=True)
         fig.savefig(output, dpi=400, bbox_inches="tight", facecolor="white", edgecolor="none")
