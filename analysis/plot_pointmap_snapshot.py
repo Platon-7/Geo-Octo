@@ -146,6 +146,7 @@ def plot_snapshot(
         n_cols += 1
 
     fig = plt.figure(figsize=(6 * n_cols, 5))
+    fig.suptitle("VGGT Zero-Shot 3D Reconstruction of the LIBERO Object Environment from a Single View", fontsize=16, y=0.95)
 
     panel = 1
     ax_rgb = fig.add_subplot(1, n_cols, panel)
@@ -166,7 +167,7 @@ def plot_snapshot(
     im_depth = ax_depth.imshow(depth_map, cmap="viridis")
     ax_depth.set_title("VGGT depth map")
     ax_depth.axis("off")
-    fig.colorbar(im_depth, ax=ax_depth, fraction=0.046, pad=0.04, label="z")
+    fig.colorbar(im_depth, ax=ax_depth, fraction=0.046, pad=0.04)
 
     if external_image is not None:
         try:
