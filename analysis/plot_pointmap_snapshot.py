@@ -167,6 +167,7 @@ def plot_snapshot(
         depth_map = np.zeros_like(depth_map)
 
     ax_depth = fig.add_subplot(1, n_cols, panel)
+    ax_depth.set_anchor("W")
     panel += 1
     im_depth = ax_depth.imshow(depth_map, cmap="viridis")
     ax_depth.set_title("VGGT depth map")
