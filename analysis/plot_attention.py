@@ -144,6 +144,7 @@ def main() -> None:
 
     rows = len(labels)
     fig, axes = plt.subplots(rows, 2, figsize=(12, 4 * rows))
+    fig.subplots_adjust(top=0.78)
     if rows == 1:
         axes = axes[np.newaxis, ...]
 
