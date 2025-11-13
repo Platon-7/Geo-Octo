@@ -21,6 +21,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib import cm
 from mpl_toolkits.mplot3d import Axes3D  # noqa: F401  (import registers 3D projection)
+import imageio.v2 as imageio
 
 
 def _downsample(pointmap: np.ndarray, stride: int) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -45,6 +46,9 @@ def plot_snapshot(
     rotate_y: float = 0.0,
     rotate_z: float = 0.0,
     zoom: float = 1.0,
+    external_image: Optional[str] = None,
+    external_title: str = "External View",
+    skip_scatter: bool = False,
 ) -> None:
     data = np.load(path)
     rgb = data["rgb"]
@@ -135,40 +139,63 @@ def plot_snapshot(
         cmap = None
         colorbar_label = None
 
-    fig = plt.figure(figsize=(18, 5))
+    n_cols = 3  # rgb, depth, overlay
+    if external_image is not None:
+        n_cols += 1
+    if not skip_scatter:
+        n_cols += 1
 
-    ax_rgb = fig.add_subplot(1, 4, 1)
+    fig = plt.figure(figsize=(6 * n_cols, 5))
+
+    panel = 1
+    ax_rgb = fig.add_subplot(1, n_cols, panel)
+    panel += 1
     ax_rgb.imshow(rgb)
     ax_rgb.set_title("Policy RGB input")
     ax_rgb.axis("off")
 
     depth_map = np.linalg.norm(pointmap[..., :3], axis=-1)
 
-    ax_depth = fig.add_subplot(1, 4, 2)
+    ax_depth = fig.add_subplot(1, n_cols, panel)
+    panel += 1
     im_depth = ax_depth.imshow(depth_map, cmap="viridis")
     ax_depth.set_title("VGGT depth map")
     ax_depth.axis("off")
     fig.colorbar(im_depth, ax=ax_depth, fraction=0.046, pad=0.04, label="z")
 
-    ax_overlay = fig.add_subplot(1, 4, 3)
+    ax_overlay = fig.add_subplot(1, n_cols, panel)
+    panel += 1
     ax_overlay.imshow(rgb)
     ax_overlay.imshow(depth_map, cmap="viridis", alpha=0.5)
     ax_overlay.set_title("RGB + depth overlay")
     ax_overlay.axis("off")
 
-    ax_3d = fig.add_subplot(1, 4, 4, projection="3d")
-    scatter_kwargs = dict(s=4, alpha=0.85, depthshade=False)
-    if show_confidence:
-        scatter = ax_3d.scatter(xs, ys, zs, c=colors, cmap=cmap, **scatter_kwargs)
-        fig.colorbar(scatter, ax=ax_3d, fraction=0.046, pad=0.04, label=colorbar_label)
-    else:
-        scatter = ax_3d.scatter(xs, ys, zs, c=colors, **scatter_kwargs)
+    if external_image is not None:
+        try:
+            ext_img = imageio.imread(external_image)
+            ax_ext = fig.add_subplot(1, n_cols, panel)
+            panel += 1
+            ax_ext.imshow(ext_img)
+            ax_ext.set_title(external_title)
+            ax_ext.axis("off")
+        except Exception as e:
+            print(f"[WARN] Could not load external image {external_image}: {e}")
 
-    ax_3d.set_title("VGGT pointmap (RGB-coloured)" if not show_confidence else "VGGT pointmap (confidence)")
-    ax_3d.set_xlabel("X")
-    ax_3d.set_ylabel("Y")
-    ax_3d.set_zlabel("Z")
-    ax_3d.view_init(elev=0.0, azim=-90.0)
+    ax_3d = None
+    if not skip_scatter:
+        ax_3d = fig.add_subplot(1, n_cols, panel, projection="3d")
+        scatter_kwargs = dict(s=4, alpha=0.85, depthshade=False)
+        if show_confidence:
+            scatter = ax_3d.scatter(xs, ys, zs, c=colors, cmap=cmap, **scatter_kwargs)
+            fig.colorbar(scatter, ax=ax_3d, fraction=0.046, pad=0.04, label=colorbar_label)
+        else:
+            scatter = ax_3d.scatter(xs, ys, zs, c=colors, **scatter_kwargs)
+
+        ax_3d.set_title("VGGT pointmap (RGB-coloured)" if not show_confidence else "VGGT pointmap (confidence)")
+        ax_3d.set_xlabel("X")
+        ax_3d.set_ylabel("Y")
+        ax_3d.set_zlabel("Z")
+        ax_3d.view_init(elev=0.0, azim=-90.0)
 
     x_range = xs.max() - xs.min() if n_points else 1.0
     y_range = ys.max() - ys.min() if n_points else 1.0
@@ -181,11 +208,13 @@ def plot_snapshot(
         cx = 0.5 * (xs.max() + xs.min())
         cy = 0.5 * (ys.max() + ys.min())
         cz = 0.5 * (zs.max() + zs.min())
-        ax_3d.set_xlim(cx - (x_range * zoom) / 2, cx + (x_range * zoom) / 2)
-        ax_3d.set_ylim(cy - (y_range * zoom) / 2, cy + (y_range * zoom) / 2)
-        ax_3d.set_zlim(cz - (z_range * zoom) / 2, cz + (z_range * zoom) / 2)
+        if ax_3d is not None:
+            ax_3d.set_xlim(cx - (x_range * zoom) / 2, cx + (x_range * zoom) / 2)
+            ax_3d.set_ylim(cy - (y_range * zoom) / 2, cy + (y_range * zoom) / 2)
+            ax_3d.set_zlim(cz - (z_range * zoom) / 2, cz + (z_range * zoom) / 2)
 
-    ax_3d.set_box_aspect((x_range, y_range, z_range if z_range > 0 else 1.0))
+    if ax_3d is not None:
+        ax_3d.set_box_aspect((x_range, y_range, z_range if z_range > 0 else 1.0))
 
     plt.tight_layout()
     if output:
@@ -231,6 +260,23 @@ def main():
         default=1.0,
         help="Fraction of the axis range to keep centered on the point cloud (0 < zoom <= 1).",
     )
+    parser.add_argument(
+        "--external-image",
+        type=str,
+        default=None,
+        help="Path to an external image (e.g., Viser snapshot) to show as an additional panel.",
+    )
+    parser.add_argument(
+        "--external-title",
+        type=str,
+        default="External View",
+        help="Title to use for the external image panel.",
+    )
+    parser.add_argument(
+        "--skip-scatter",
+        action="store_true",
+        help="Skip the 3D scatter panel when plotting.",
+    )
     args = parser.parse_args()
 
     plot_snapshot(
@@ -245,6 +291,9 @@ def main():
         rotate_y=args.rotate_y,
         rotate_z=args.rotate_z,
         zoom=args.zoom,
+        external_image=args.external_image,
+        external_title=args.external_title,
+        skip_scatter=args.skip_scatter,
     )
 
 
