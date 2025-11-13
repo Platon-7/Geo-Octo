@@ -175,9 +175,9 @@ def main() -> None:
     fig.suptitle(
         "Comparison of Baseline Self-Attention and 2D-3D Cross-Modal Similarity",
         fontsize=18,
-        y=0.98,
+        y=0.985,
     )
-    fig.tight_layout(rect=[0, 0, 1, 0.94])
+    fig.tight_layout(rect=[0, 0, 1, 0.945])
     args.output.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(args.output, dpi=600)
     print(f"[plot_attention] Saved visualization to {args.output}")
