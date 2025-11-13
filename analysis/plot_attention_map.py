@@ -37,17 +37,7 @@ def _cosine_heatmap(obs_tokens: np.ndarray, readout_token: np.ndarray) -> np.nda
     return cos.reshape(side, side)
 
 
-def plot(
-    snapshot_path: str,
-    output: Optional[str] = None,
-    cmap: str = "inferno",
-    suptitle: Optional[str] = "VGGT-Augmented Policy Failure Analysis",
-    failure_image: Optional[str] = None,
-    failure_caption: Optional[str] = None,
-    dpi: int = 400,
-) -> None:
-    data = np.load(snapshot_path, allow_pickle=True)
-
+def _plot_single_snapshot(axs, data, cmap: str, failure_image: Optional[str], failure_caption: Optional[str]) -> None:
     rgb = data["rgb"]
     obs_tokens = data["obs_tokens"]
     readout = data["readout_token"]
@@ -56,52 +46,123 @@ def plot(
     action = data.get("action", None)
     note = data.get("note", "")
 
-    fig, axes = plt.subplots(1, 3, figsize=(15, 5))
+    axs[0].imshow(rgb)
+    axs[0].axis("off")
+
+    axs[1].imshow(rgb)
+    im = axs[1].imshow(heatmap, alpha=0.55, cmap=cmap, extent=(0, rgb.shape[1], rgb.shape[0], 0))
+    axs[1].axis("off")
+    return im, action, note
+
+
+def plot(
+    baseline_snapshot: str,
+    method_snapshot: str,
+    output: Optional[str] = None,
+    cmap: str = "inferno",
+    suptitle: Optional[str] = "Policy Failure Analysis",
+    baseline_failure_image: Optional[str] = None,
+    method_failure_image: Optional[str] = None,
+    baseline_failure_caption: Optional[str] = None,
+    method_failure_caption: Optional[str] = None,
+    dpi: int = 400,
+) -> None:
+    baseline_data = np.load(baseline_snapshot, allow_pickle=True)
+    method_data = np.load(method_snapshot, allow_pickle=True)
+
+    fig, axes = plt.subplots(2, 3, figsize=(15, 8))
     if suptitle:
-        fig.suptitle(suptitle, fontsize=16, y=0.97)
+        fig.suptitle(suptitle, fontsize=16, y=0.99)
 
-    axes[0].imshow(rgb)
-    axes[0].set_title("(a) Camera view")
-    axes[0].axis("off")
+    baseline_im, baseline_action, baseline_note = _plot_single_snapshot(
+        axes[0, :2],
+        baseline_data,
+        cmap,
+        baseline_failure_image,
+        baseline_failure_caption,
+    )
+    axes[0, 0].set_title("(a) Baseline camera view")
+    axes[0, 1].set_title("(b) Baseline saliency")
+    fig.colorbar(baseline_im, ax=axes[0, 1], fraction=0.046, pad=0.04, label="cosine similarity")
 
-    axes[1].imshow(rgb)
-    im = axes[1].imshow(heatmap, alpha=0.55, cmap=cmap, extent=(0, rgb.shape[1], rgb.shape[0], 0))
-    axes[1].set_title("(b) Saliency map")
-    axes[1].axis("off")
-    fig.colorbar(im, ax=axes[1], fraction=0.046, pad=0.04, label="cosine similarity")
-
-    if failure_image is not None:
+    if baseline_failure_image:
         try:
-            failure_rgb = imageio.imread(failure_image)
-            axes[2].imshow(failure_rgb)
+            baseline_fail_rgb = imageio.imread(baseline_failure_image)
+            axes[0, 2].imshow(baseline_fail_rgb)
         except Exception as e:
-            print(f"[WARN] Could not load failure image {failure_image}: {e}")
-            axes[2].imshow(rgb)
+            print(f"[WARN] Could not load baseline failure image {baseline_failure_image}: {e}")
+            axes[0, 2].imshow(baseline_data["rgb"])
     else:
-        axes[2].imshow(rgb)
-    axes[2].axis("off")
-    subtitle = "(c) Outcome"
+        axes[0, 2].imshow(baseline_data["rgb"])
+    axes[0, 2].axis("off")
     caption_lines = []
-    if failure_caption:
-        caption_lines.append(failure_caption)
-    if isinstance(note, str) and note:
-        caption_lines.append(note)
-    if action is not None:
-        caption_lines.append(f"Action: {np.array2string(action, precision=3, separator=', ')}")
+    if baseline_failure_caption:
+        caption_lines.append(baseline_failure_caption)
+    if isinstance(baseline_note, str) and baseline_note:
+        caption_lines.append(baseline_note)
+    if baseline_action is not None:
+        caption_lines.append(f"Action: {np.array2string(baseline_action, precision=3, separator=', ')}")
     caption = "\n".join(caption_lines)
-    axes[2].set_title(subtitle)
+    axes[0, 2].set_title("(c) Baseline outcome")
     if caption:
-        axes[2].text(
+        axes[0, 2].text(
             0.02,
             0.02,
             caption,
-            transform=axes[2].transAxes,
+            transform=axes[0, 2].transAxes,
             verticalalignment="bottom",
             fontsize=9,
             bbox=dict(boxstyle="round", facecolor="wheat", alpha=0.65),
         )
 
-    plt.tight_layout(rect=[0, 0, 1, 0.94])
+    method_im, method_action, method_note = _plot_single_snapshot(
+        axes[1, :2],
+        method_data,
+        cmap,
+        method_failure_image,
+        method_failure_caption,
+    )
+    axes[1, 0].set_title("(d) Token Fusion camera view")
+    axes[1, 1].set_title("(e) Token Fusion saliency")
+    fig.colorbar(method_im, ax=axes[1, 1], fraction=0.046, pad=0.04, label="cosine similarity")
+
+    if method_failure_image:
+        try:
+            method_fail_rgb = imageio.imread(method_failure_image)
+            axes[1, 2].imshow(method_fail_rgb)
+        except Exception as e:
+            print(f"[WARN] Could not load method failure image {method_failure_image}: {e}")
+            axes[1, 2].imshow(method_data["rgb"])
+    else:
+        axes[1, 2].imshow(method_data["rgb"])
+    axes[1, 2].axis("off")
+    caption_lines = []
+    if method_failure_caption:
+        caption_lines.append(method_failure_caption)
+    if isinstance(method_note, str) and method_note:
+        caption_lines.append(method_note)
+    if method_action is not None:
+        caption_lines.append(f"Action: {np.array2string(method_action, precision=3, separator=', ')}")
+    caption = "\n".join(caption_lines)
+    axes[1, 2].set_title("(f) Token Fusion outcome")
+    if caption:
+        axes[1, 2].text(
+            0.02,
+            0.02,
+            caption,
+            transform=axes[1, 2].transAxes,
+            verticalalignment="bottom",
+            fontsize=9,
+            bbox=dict(boxstyle="round", facecolor="wheat", alpha=0.65),
+        )
+
+    for row in axes:
+        for ax in row:
+            if ax in [row[2] for row in axes]:
+                continue
+            ax.axis("off")
+
+    fig.tight_layout(rect=[0, 0, 1, 0.95])
     if output:
         os.makedirs(os.path.dirname(output) or ".", exist_ok=True)
         fig.savefig(output, dpi=dpi, bbox_inches="tight", facecolor="white", edgecolor="none")
@@ -112,22 +173,28 @@ def plot(
 
 def main():
     parser = argparse.ArgumentParser(description="Plot RGB + attention heatmap + outcome panels.")
-    parser.add_argument("--snapshot", required=True, help="Path to .npz file with rgb, obs_tokens, readout_token.")
+    parser.add_argument("--baseline-snapshot", required=True, help="Path to baseline .npz.")
+    parser.add_argument("--method-snapshot", required=True, help="Path to method .npz.")
     parser.add_argument("--output", type=str, default=None, help="Optional output image path.")
     parser.add_argument("--cmap", type=str, default="inferno", help="Matplotlib colormap for the heatmap overlay.")
-    parser.add_argument("--suptitle", type=str, default="VGGT-Augmented Policy Failure Analysis")
-    parser.add_argument("--failure-image", type=str, default=None, help="Optional image showing the failure outcome.")
-    parser.add_argument("--failure-caption", type=str, default=None, help="Caption text for the outcome panel.")
+    parser.add_argument("--suptitle", type=str, default="Policy Failure Analysis")
+    parser.add_argument("--baseline-failure-image", type=str, default=None)
+    parser.add_argument("--method-failure-image", type=str, default=None)
+    parser.add_argument("--baseline-failure-caption", type=str, default=None)
+    parser.add_argument("--method-failure-caption", type=str, default=None)
     parser.add_argument("--dpi", type=int, default=400, help="Output DPI.")
     args = parser.parse_args()
 
     plot(
-        args.snapshot,
+        baseline_snapshot=args.baseline_snapshot,
+        method_snapshot=args.method_snapshot,
         output=args.output,
         cmap=args.cmap,
         suptitle=args.suptitle,
-        failure_image=args.failure_image,
-        failure_caption=args.failure_caption,
+        baseline_failure_image=args.baseline_failure_image,
+        method_failure_image=args.method_failure_image,
+        baseline_failure_caption=args.baseline_failure_caption,
+        method_failure_caption=args.method_failure_caption,
         dpi=args.dpi,
     )
 

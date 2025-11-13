@@ -506,6 +506,8 @@ def run_episode(
                                 f"pointmap.shape={pm.shape} raw_shape={(pm_raw.shape if pm_raw is not None else None)}",
                                 log_file,
                             )
+                        record_index = decision_step  # use timestep relative to decision moment
+                        snapshot_name = f"{task_description.replace(' ', '_')}_ep{episode_index:02d}_step{record_index:03d}.npz"
                         np.savez_compressed(
                             snapshot_path,
                             rgb=img,
