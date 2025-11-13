@@ -131,10 +131,13 @@ def main() -> None:
 
     snapshots = [_load_policy_snapshot(args.snapshot, label) for label in labels]
 
-    fig, axes = plt.subplots(1, len(labels), figsize=(6 * len(labels), 6))
-    axes = np.atleast_1d(axes)
+    rows = len(labels)
+    fig, axes = plt.subplots(rows, 3, figsize=(12, 4 * rows))
+    if rows == 1:
+        axes = axes[np.newaxis, ...]
 
-    for ax, label, payload in zip(axes, labels, snapshots):
+    for row_idx, (label, payload) in enumerate(zip(labels, snapshots)):
+        ax_rgb, ax_heat, ax_fail = axes[row_idx]
         rgb = payload["rgb"]
         octo_tokens = np.asarray(payload["octo_tokens"])
         vggt_tokens = (
@@ -148,31 +151,20 @@ def main() -> None:
             heat_low = energy.reshape(side, side)
             heat_overlay = _resize_heatmap(_normalize_heatmap(heat_low), rgb.shape[:2])
 
-            # Panel (a): RGB; Panel (b): activation map
-            ax_rgb = ax if len(labels) == 1 else ax[0]
-            ax_heat = ax if len(labels) == 1 else ax[1]
-            ax_fail = None if len(labels) == 1 else ax[2]
-
             _render_rgb(ax_rgb, rgb, f"{label} – RGB")
             overlay = _render_heatmap(ax_heat, rgb, f"{label} – Activation Energy", heat_overlay, args.alpha)
             fig.colorbar(overlay, ax=ax_heat, fraction=0.046, pad=0.04)
-            if ax_fail is not None:
-                ax_fail.axis("off")
-                ax_fail.set_title(f"{label} – Failure")
+            ax_fail.axis("off")
+            ax_fail.set_title(f"{label} – Failure")
         else:
             heat_low = _cosine_similarity_map(octo_tokens, vggt_tokens)
             heat_overlay = _resize_heatmap(_normalize_heatmap(heat_low), rgb.shape[:2])
 
-            ax_rgb = ax if len(labels) == 1 else ax[0]
-            ax_heat = ax if len(labels) == 1 else ax[1]
-            ax_fail = None if len(labels) == 1 else ax[2]
-
             _render_rgb(ax_rgb, rgb, f"{label} – RGB")
             overlay = _render_heatmap(ax_heat, rgb, f"{label} – Similarity", heat_overlay, args.alpha)
             fig.colorbar(overlay, ax=ax_heat, fraction=0.046, pad=0.04)
-            if ax_fail is not None:
-                ax_fail.axis("off")
-                ax_fail.set_title(f"{label} – Failure")
+            ax_fail.axis("off")
+            ax_fail.set_title(f"{label} – Failure")
 
     plt.tight_layout()
     args.output.parent.mkdir(parents=True, exist_ok=True)
