@@ -139,7 +139,7 @@ def plot_snapshot(
         cmap = None
         colorbar_label = None
 
-    n_cols = 3  # rgb, depth, overlay
+    n_cols = 2  # rgb, depth
     if external_image is not None:
         n_cols += 1
     if not skip_scatter:
@@ -154,9 +154,7 @@ def plot_snapshot(
     ax_rgb.set_title("Policy RGB input")
     ax_rgb.axis("off")
 
-    depth_map = pointmap[..., 2].copy()
-    if invert_z:
-        depth_map = -depth_map
+    depth_map = -pointmap[..., 2].copy()
     depth_min, depth_max = depth_map.min(), depth_map.max()
     if depth_max - depth_min > 1e-8:
         depth_map = (depth_map - depth_min) / (depth_max - depth_min)
@@ -169,13 +167,6 @@ def plot_snapshot(
     ax_depth.set_title("VGGT depth map")
     ax_depth.axis("off")
     fig.colorbar(im_depth, ax=ax_depth, fraction=0.046, pad=0.04, label="z")
-
-    ax_overlay = fig.add_subplot(1, n_cols, panel)
-    panel += 1
-    ax_overlay.imshow(rgb)
-    ax_overlay.imshow(depth_map, cmap="viridis", alpha=0.5)
-    ax_overlay.set_title("RGB + depth overlay")
-    ax_overlay.axis("off")
 
     if external_image is not None:
         try:
