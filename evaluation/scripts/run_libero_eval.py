@@ -30,7 +30,7 @@ from collections import deque
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Optional, Union
+from typing import Optional, Tuple, Union
 
 import draccus
 import tqdm
@@ -369,6 +369,7 @@ class AttentionSnapshotManager:
         target_task = (cfg.attention_snapshot_task or "").strip().lower()
         current_task = self.task_description.strip().lower()
         self._task_match = (not target_task) or (current_task == target_task)
+        self.task_match = self._task_match
 
         if self._task_match:
             if not cfg.attention_snapshot_label:
@@ -627,7 +628,7 @@ def run_task(
     total_episodes=0,
     total_successes=0,
     log_file=None,
-):
+) -> Tuple[int, int, bool]:
     """Run evaluation for a single task."""
     # Get task
     task = task_suite.get_task(task_id)
@@ -642,6 +643,13 @@ def run_task(
         log_message(message, log_file)
 
     snapshot_manager = AttentionSnapshotManager(cfg, task_description, _snapshot_log)
+
+    if cfg.capture_attention_snapshot and not snapshot_manager.task_match:
+        log_message(
+            f"Skipping task '{task_description}' because it does not match attention_snapshot_task.",
+            log_file,
+        )
+        return total_episodes, total_successes, False
 
     # Start episodes
     task_episodes, task_successes = 0, 0
@@ -700,6 +708,10 @@ def run_task(
         log_message(f"# episodes completed so far: {total_episodes}", log_file)
         log_message(f"# successes: {total_successes} ({total_successes / total_episodes * 100:.1f}%)", log_file)
 
+        if snapshot_manager.captured:
+            log_message("Attention snapshot captured; ending task early.", log_file)
+            break
+
     # Log task results
     task_success_rate = float(task_successes) / float(task_episodes) if task_episodes > 0 else 0
     total_success_rate = float(total_successes) / float(total_episodes) if total_episodes > 0 else 0
@@ -716,7 +728,7 @@ def run_task(
             }
         )
 
-    return total_episodes, total_successes
+    return total_episodes, total_successes, snapshot_manager.captured
 
 
 @draccus.wrap()
@@ -759,7 +771,7 @@ def eval_libero(cfg: GenerateConfig) -> float:
     # Start evaluation
     total_episodes, total_successes = 0, 0
     for task_id in tqdm.tqdm(range(num_tasks)):
-        total_episodes, total_successes = run_task(
+        total_episodes, total_successes, snapshot_captured = run_task(
             cfg,
             task_suite,
             task_id,
@@ -772,6 +784,9 @@ def eval_libero(cfg: GenerateConfig) -> float:
             total_successes,
             log_file,
         )
+        if snapshot_captured:
+            log_message("Attention snapshot captured; stopping further task evaluation.", log_file)
+            break
 
     # Calculate final success rate
     final_success_rate = float(total_successes) / float(total_episodes) if total_episodes > 0 else 0
