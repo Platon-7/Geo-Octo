@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """
-Utility script to visualize policy attention snapshots by overlaying cosine-similarity
-heatmaps on the original RGB frame.
+Visualize attention snapshots by overlaying cosine-similarity heatmaps on the captured RGB frame.
 
-Expected input: an `.npz` file produced during evaluation that stores, per policy label,
-the raw RGB image as well as the Octo and VGGT token tensors with keys of the form
-`{label}_rgb`, `{label}_octo_tokens`, `{label}_vggt_tokens`, and `{label}_meta`.
+The snapshot `.npz` should contain entries of the form:
+  {label}_rgb           -> (H, W, 3) uint8 image
+  {label}_octo_tokens   -> (256, 512) float tensor
+  {label}_vggt_tokens   -> (256, 512) float tensor
+  {label}_meta          -> JSON-serialized metadata (optional)
 """
 
 from __future__ import annotations
@@ -65,7 +66,6 @@ def _cosine_similarity_map(octo: np.ndarray, vggt: np.ndarray) -> np.ndarray:
     if octo.ndim != 2:
         raise ValueError(f"Expected (N, D) tokens but received shape {octo.shape}")
 
-    # Normalize and compute cosine similarity per token
     octo_norm = octo / (np.linalg.norm(octo, axis=1, keepdims=True) + 1e-8)
     vggt_norm = vggt / (np.linalg.norm(vggt, axis=1, keepdims=True) + 1e-8)
     similarity = np.sum(octo_norm * vggt_norm, axis=1)
@@ -101,14 +101,14 @@ def _render_policy_axis(
     title = label
     if meta:
         seconds = meta.get("seconds_elapsed")
-        extra = []
+        extras = []
         if seconds is not None:
-            extra.append(f"t={seconds:.2f}s")
+            extras.append(f"t={seconds:.2f}s")
         freq = meta.get("control_freq")
         if freq is not None:
-            extra.append(f"ctrl {freq:.1f}Hz")
-        if extra:
-            title += f" ({', '.join(extra)})"
+            extras.append(f"{freq:.1f}Hz")
+        if extras:
+            title += f" ({', '.join(extras)})"
     ax.set_title(title)
     return overlay
 
