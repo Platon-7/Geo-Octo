@@ -2,11 +2,11 @@
 """
 Visualize attention snapshots by overlaying cosine-similarity heatmaps on the captured RGB frame.
 
-The snapshot `.npz` should contain entries of the form:
+Expected snapshot structure (.npz):
   {label}_rgb           -> (H, W, 3) uint8 image
-  {label}_octo_tokens   -> (256, 512) float tensor
-  {label}_vggt_tokens   -> (256, 512) float tensor
-  {label}_meta          -> JSON-serialized metadata (optional)
+  {label}_octo_tokens   -> (256, 512) float32 tokens
+  {label}_vggt_tokens   -> (256, 512) float32 tokens (optional)
+  {label}_meta          -> JSON-encoded metadata (optional)
 """
 
 from __future__ import annotations
@@ -41,14 +41,14 @@ def _load_policy_snapshot(npz_path: Path, label: str) -> Dict[str, np.ndarray]:
         vggt_key = f"{label}_vggt_tokens"
         meta_key = f"{label}_meta"
 
-        missing = [k for k in (rgb_key, octo_key, vggt_key) if k not in data]
+        missing = [k for k in (rgb_key, octo_key) if k not in data]
         if missing:
-            raise KeyError(f"Snapshot {npz_path} is missing keys for policy '{label}': {missing}")
+            raise KeyError(f"Snapshot {npz_path} missing required keys for policy '{label}': {missing}")
 
         payload = {
             "rgb": np.asarray(data[rgb_key]),
             "octo_tokens": np.asarray(data[octo_key]),
-            "vggt_tokens": np.asarray(data[vggt_key]),
+            "vggt_tokens": np.asarray(data[vggt_key]) if vggt_key in data else None,
         }
         if meta_key in data:
             try:
@@ -100,8 +100,8 @@ def _render_policy_axis(
 
     title = label
     if meta:
-        seconds = meta.get("seconds_elapsed")
         extras = []
+        seconds = meta.get("seconds_elapsed")
         if seconds is not None:
             extras.append(f"t={seconds:.2f}s")
         freq = meta.get("control_freq")
@@ -144,7 +144,11 @@ def main() -> None:
     for ax, label, payload in zip(axes, labels, snapshots):
         rgb = payload["rgb"]
         octo_tokens = np.asarray(payload["octo_tokens"])
-        vggt_tokens = np.asarray(payload["vggt_tokens"])
+        vggt_tokens = np.asarray(payload["vggt_tokens"]) if payload["vggt_tokens"] is not None else None
+
+        if vggt_tokens is None:
+            raise ValueError(f"Snapshot for policy '{label}' missing vggt_tokens.")
+
         heat_low = _cosine_similarity_map(octo_tokens, vggt_tokens)
         heat_overlay = _resize_heatmap(_normalize_heatmap(heat_low), rgb.shape[:2])
         overlay = _render_policy_axis(ax, rgb, heat_overlay, label, alpha=args.alpha, meta=payload.get("meta", {}))
