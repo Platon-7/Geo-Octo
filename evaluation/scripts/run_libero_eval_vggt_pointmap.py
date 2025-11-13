@@ -46,6 +46,7 @@ import tensorflow as tf
 # Torch + VGGT
 import torch
 import torch.nn.functional as F
+import imageio.v2 as imageio
 from vggt.models.vggt import VGGT
 
 
@@ -516,6 +517,20 @@ def run_episode(
                             step_index=cfg.snapshot_step_index,
                             time_index_policy=t,
                         )
+                        try:
+                            rgb_path = snapshot_path.replace(".npz", ".png")
+                            img_uint8 = np.clip(np.asarray(img), 0, 255).astype(np.uint8)
+                            imageio.imwrite(rgb_path, img_uint8)
+                            pre_rgb_uint8 = np.clip(rgb_pre * 255.0, 0, 255).astype(np.uint8)
+                            pre_rgb_path = snapshot_path.replace(".npz", "_pre.png")
+                            imageio.imwrite(pre_rgb_path, pre_rgb_uint8)
+                            log_message(
+                                f"[SNAPSHOT] Saved RGB images to {rgb_path} and {pre_rgb_path}",
+                                log_file,
+                            )
+                        except Exception as save_err:
+                            log_message(f"[SNAPSHOT WARNING] Failed to save RGB images: {save_err}", log_file)
+
                         log_message(f"[SNAPSHOT] Saved RGB + pointmap to {snapshot_path}", log_file)
                         snapshot_state["captured"] = True
                 except Exception as _e:
