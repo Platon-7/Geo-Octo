@@ -2,7 +2,6 @@ import sys
 import warnings
 import json
 import numpy as np
-import jax
 
 # Add compatibility shim before importing anything else
 try:
@@ -24,6 +23,7 @@ action_mean = np.array(dataset_statistics['action']['mean'])
 action_std = np.array(dataset_statistics['action']['std'])
 
 import logging
+import copy
 import imageio.v2 as imageio
 
 import os
@@ -64,6 +64,7 @@ from evaluation.supporting_files.libero_utils import (
 from evaluation.supporting_files.robot_utils import (
     DATE_TIME,
     get_action,
+    get_last_octo_inputs,
     get_model,
     invert_gripper_action,
     normalize_gripper_action,
@@ -157,12 +158,26 @@ def _select_observation_group(transformer_outputs) -> str:
     raise KeyError("Could not find an observation token group in transformer outputs.")
 
 
+def _tree_to_jax(tree):
+    import jax
+    import jax.numpy as jnp
+
+    def _convert(x):
+        if isinstance(x, np.ndarray):
+            return jnp.asarray(x)
+        if isinstance(x, (np.generic, int, float, bool)):
+            return jnp.asarray(x)
+        return x
+
+    return jax.tree_util.tree_map(_convert, tree)
+
+
 def capture_attention_snapshot(
     cfg: "GenerateConfig",
     model,
-    observation: dict,
-    task: dict,
-    timestep_pad_mask: np.ndarray,
+    observation_tree: Optional[Dict[str, Any]],
+    task_tree: Optional[Dict[str, Any]],
+    timestep_pad_mask: Optional[np.ndarray],
     task_description: str,
     episode_index: int,
     decision_step: int,
@@ -170,11 +185,22 @@ def capture_attention_snapshot(
     pending_action: Optional[np.ndarray],
     log_file=None,
 ) -> bool:
+    if observation_tree is None or task_tree is None or timestep_pad_mask is None:
+        log_message("[SNAPSHOT] Missing cached transformer inputs; skipping capture.", log_file)
+        return False
+
+    obs_copy = copy.deepcopy(observation_tree)
+    task_copy = copy.deepcopy(task_tree)
+    pad_mask_copy = np.array(timestep_pad_mask, copy=True)
+
+    import jax
+    import jax.numpy as jnp
+
     try:
         transformer_outputs = model.run_transformer(
-            observation,
-            task,
-            timestep_pad_mask,
+            _tree_to_jax(obs_copy),
+            _tree_to_jax(task_copy),
+            jnp.asarray(pad_mask_copy),
             train=False,
         )
     except Exception as err:
@@ -610,20 +636,6 @@ def run_episode(
                 and decision_step == cfg.snapshot_step_after_wait
             )
 
-            cached_inputs: Dict[str, Any] = {}
-
-            def _copy_leaf(x):
-                if hasattr(x, "dtype"):
-                    return np.array(x, copy=True)
-                return x
-
-            def _cache_snapshot_inputs(obs_tree, task_tree, pad_mask):
-                cached_inputs["observation"] = jax.tree_util.tree_map(_copy_leaf, obs_tree)
-                cached_inputs["task"] = jax.tree_util.tree_map(_copy_leaf, task_tree)
-                cached_inputs["pad_mask"] = np.array(pad_mask, copy=True)
-
-            cache_cb = _cache_snapshot_inputs if trigger_snapshot else None
-
             if len(action_queue) == 0:
                 actions = get_action(
                     cfg,
@@ -635,30 +647,27 @@ def run_episode(
                     proprio_projector=proprio_projector,
                     noisy_action_projector=noisy_action_projector,
                     use_film=cfg.use_film,
-                    cache_callback=cache_cb,
                 )
                 action_queue.extend(actions)
 
                 if trigger_snapshot:
                     pending = actions[0] if len(actions) > 0 else None
-                    if not cached_inputs:
-                        log_message("[SNAPSHOT] Cache callback did not capture inputs.", log_file)
-                    else:
-                        captured = capture_attention_snapshot(
-                            cfg,
-                            model,
-                            cached_inputs["observation"],
-                            cached_inputs["task"],
-                            cached_inputs["pad_mask"],
-                            task_description,
-                            episode_index,
-                            decision_step,
-                            img,
-                            pending,
-                            log_file=log_file,
-                        )
-                        if captured:
-                            snapshot_state["captured"] = True
+                    last_obs, last_task, last_pad = get_last_octo_inputs()
+                    captured = capture_attention_snapshot(
+                        cfg,
+                        model,
+                        last_obs,
+                        last_task,
+                        last_pad,
+                        task_description,
+                        episode_index,
+                        decision_step,
+                        img,
+                        pending,
+                        log_file=log_file,
+                    )
+                    if captured:
+                        snapshot_state["captured"] = True
 
             action = action_queue.popleft()
             action = process_action(action, cfg.model_family, action_mean, action_std)

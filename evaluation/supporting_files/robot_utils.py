@@ -38,6 +38,11 @@ VGGT_HISTORY: deque = deque(maxlen=2)
 # Add PointMap history for windowed inputs
 POINTMAP_HISTORY: deque = deque(maxlen=2)
 
+# Cache of the most recent Octo observation fed to the policy (for introspection).
+LAST_OCTO_OBSERVATION: Optional[Dict[str, Any]] = None
+LAST_OCTO_TASK: Optional[Dict[str, Any]] = None
+LAST_OCTO_PAD_MASK: Optional[np.ndarray] = None
+
 
 def set_seed_everywhere(seed: int) -> None:
     """
@@ -169,7 +174,6 @@ def get_action(
     proprio_projector: Optional[torch.nn.Module] = None,
     noisy_action_projector: Optional[torch.nn.Module] = None,
     use_film: bool = False,
-    cache_callback: Optional[Callable[[Dict[str, Any], Dict[str, Any], np.ndarray], None]] = None,
 ) -> Union[List[np.ndarray], np.ndarray]:
     """
     Query the model to get action predictions.
@@ -184,8 +188,6 @@ def get_action(
         proprio_projector: Optional proprioception projector
         noisy_action_projector: Optional noisy action projector for diffusion
         use_film: Whether to use FiLM
-        cache_callback: Optional callable that receives the (observation, task, timestep_pad_mask)
-            PyTrees used for sampling. Useful for downstream introspection.
 
     Returns:
         Union[List[np.ndarray], np.ndarray]: Predicted actions
@@ -321,6 +323,12 @@ def get_action(
         # Construct task from text without touching its representation
         task = model.create_tasks(texts=[task_label])
 
+        # Cache the exact inputs that will be fed to the transformer for optional introspection.
+        global LAST_OCTO_OBSERVATION, LAST_OCTO_TASK, LAST_OCTO_PAD_MASK
+        LAST_OCTO_OBSERVATION = observation
+        LAST_OCTO_TASK = task
+        LAST_OCTO_PAD_MASK = observation["timestep_pad_mask"]
+
         # Sample action
         # action = model.sample_actions(observation, task, rng=jax.random.PRNGKey(0))
 
@@ -362,15 +370,38 @@ def get_action(
             else:
                 steps.append(np.pad(vec.astype(np.float32), (0, 7 - vec.size)))
 
-        if cache_callback is not None:
-            try:
-                cache_callback(observation, task, observation["timestep_pad_mask"])
-            except Exception as cache_err:
-                print(f"[WARN] Snapshot cache callback failed: {cache_err}", flush=True)
-
         return steps
     else:
         raise ValueError(f"Unsupported model family: {cfg.model_family}")
+
+
+def get_last_octo_inputs() -> tuple[Optional[Dict[str, Any]], Optional[Dict[str, Any]], Optional[np.ndarray]]:
+    """
+    Retrieve the most recent Octo observation/task pair that was passed to `sample_actions`.
+    Returns copies of the cached structures so downstream consumers can safely mutate them.
+    """
+    def _to_numpy_tree(tree):
+        if isinstance(tree, dict):
+            return {k: _to_numpy_tree(v) for k, v in tree.items()}
+        if isinstance(tree, (list, tuple)):
+            return type(tree)(_to_numpy_tree(v) for v in tree)
+        try:
+            import jax
+            if isinstance(tree, jax.Array):
+                return np.array(tree)
+        except Exception:
+            pass
+        if isinstance(tree, np.ndarray):
+            return np.array(tree, copy=True)
+        return tree
+
+    if LAST_OCTO_OBSERVATION is None or LAST_OCTO_TASK is None or LAST_OCTO_PAD_MASK is None:
+        return None, None, None
+    return (
+        _to_numpy_tree(LAST_OCTO_OBSERVATION),
+        _to_numpy_tree(LAST_OCTO_TASK),
+        np.array(LAST_OCTO_PAD_MASK, copy=True),
+    )
 
 
 def normalize_gripper_action(action: np.ndarray, binarize: bool = True) -> np.ndarray:
