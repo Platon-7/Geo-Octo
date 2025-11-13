@@ -154,7 +154,14 @@ def plot_snapshot(
     ax_rgb.set_title("Policy RGB input")
     ax_rgb.axis("off")
 
-    depth_map = np.linalg.norm(pointmap[..., :3], axis=-1)
+    depth_map = pointmap[..., 2].copy()
+    if invert_z:
+        depth_map = -depth_map
+    depth_min, depth_max = depth_map.min(), depth_map.max()
+    if depth_max - depth_min > 1e-8:
+        depth_map = (depth_map - depth_min) / (depth_max - depth_min)
+    else:
+        depth_map = np.zeros_like(depth_map)
 
     ax_depth = fig.add_subplot(1, n_cols, panel)
     panel += 1
