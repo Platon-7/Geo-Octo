@@ -49,6 +49,7 @@ def plot_snapshot(
     external_image: Optional[str] = None,
     external_title: str = "External View",
     skip_scatter: bool = False,
+    depth_offset: float = 0.0,
 ) -> None:
     data = np.load(path)
     rgb = data["rgb"]
@@ -160,6 +161,8 @@ def plot_snapshot(
     ax_rgb.axis("off")
 
     depth_map = -pointmap[..., 2].copy()
+    if invert_z:
+        depth_map = -depth_map
     depth_min, depth_max = depth_map.min(), depth_map.max()
     if depth_max - depth_min > 1e-8:
         depth_map = (depth_map - depth_min) / (depth_max - depth_min)
@@ -172,7 +175,7 @@ def plot_snapshot(
     im_depth = ax_depth.imshow(depth_map, cmap="viridis")
     ax_depth.set_title("VGGT depth map")
     ax_depth.axis("off")
-    fig.colorbar(im_depth, ax=ax_depth, fraction=0.046, pad=0.04)
+    cbar_depth = fig.colorbar(im_depth, ax=ax_depth, fraction=0.046, pad=0.04)
 
     if external_image is not None:
         try:
@@ -220,7 +223,15 @@ def plot_snapshot(
     if ax_3d is not None:
         ax_3d.set_box_aspect((x_range, y_range, z_range if z_range > 0 else 1.0))
 
-    plt.tight_layout(rect=[0, 0, 1, 0.95])
+    plt.tight_layout(rect=[0, 0, 1, 0.95], pad=0.5, h_pad=1.0, w_pad=0.5)
+
+    if depth_offset != 0.0:
+        bbox = ax_depth.get_position()
+        shifted = [bbox.x0 - depth_offset, bbox.y0, bbox.width, bbox.height]
+        ax_depth.set_position(shifted)
+        if cbar_depth is not None:
+            cbbox = cbar_depth.ax.get_position()
+            cbar_depth.ax.set_position([cbbox.x0 - depth_offset, cbbox.y0, cbbox.width, cbbox.height])
     if output:
         os.makedirs(os.path.dirname(output) or ".", exist_ok=True)
         fig.savefig(output, dpi=400, bbox_inches="tight", facecolor="white", edgecolor="none")
@@ -265,6 +276,12 @@ def main():
         help="Fraction of the axis range to keep centered on the point cloud (0 < zoom <= 1).",
     )
     parser.add_argument(
+        "--depth-offset",
+        type=float,
+        default=0.0,
+        help="Shift the depth map and colorbar horizontally by this amount (in figure fraction).",
+    )
+    parser.add_argument(
         "--external-image",
         type=str,
         default=None,
@@ -298,6 +315,7 @@ def main():
         external_image=args.external_image,
         external_title=args.external_title,
         skip_scatter=args.skip_scatter,
+        depth_offset=args.depth_offset,
     )
 
 
