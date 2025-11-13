@@ -289,6 +289,7 @@ class GenerateConfig:
     snapshot_step_after_wait: int = 0
     snapshot_output_dir: str = "analysis/attention_snapshots"
     snapshot_note: Optional[str] = None
+    snapshot_stop_after_capture: bool = False
 
     # fmt: on
 
@@ -521,10 +522,6 @@ def run_episode(
                 and decision_step == cfg.snapshot_step_after_wait
             )
 
-            if trigger_snapshot and len(action_queue) != 0:
-                # Force a re-query so tokens reflect this timestep precisely.
-                action_queue.clear()
-
             # If action queue is empty, requery model
             if len(action_queue) == 0:
                 # Query model to get action
@@ -661,7 +658,12 @@ def run_task(
         log_message(f"# episodes completed so far: {total_episodes}", log_file)
         log_message(f"# successes: {total_successes} ({total_successes / total_episodes * 100:.1f}%)", log_file)
 
-        if cfg.snapshot_enable and snapshot_state and snapshot_state.get("captured", False):
+        if (
+            cfg.snapshot_enable
+            and cfg.snapshot_stop_after_capture
+            and snapshot_state
+            and snapshot_state.get("captured", False)
+        ):
             log_message("[SNAPSHOT] Requested snapshot captured; stopping early.", log_file)
             break
 
@@ -739,7 +741,11 @@ def eval_libero(cfg: GenerateConfig) -> float:
             log_file,
             snapshot_state=snapshot_state,
         )
-        if cfg.snapshot_enable and snapshot_state.get("captured", False):
+        if (
+            cfg.snapshot_enable
+            and cfg.snapshot_stop_after_capture
+            and snapshot_state.get("captured", False)
+        ):
             break
 
     # Calculate final success rate

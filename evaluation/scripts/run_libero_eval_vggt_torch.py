@@ -298,6 +298,7 @@ class GenerateConfig:
     snapshot_step_after_wait: int = 0
     snapshot_output_dir: str = "analysis/attention_snapshots"
     snapshot_note: Optional[str] = None
+    snapshot_stop_after_capture: bool = False
 
     #################################################################################################################
     # Utils
@@ -617,9 +618,6 @@ def run_episode(
                 and decision_step == cfg.snapshot_step_after_wait
             )
 
-            if trigger_snapshot and len(action_queue) != 0:
-                action_queue.clear()
-
             if len(action_queue) == 0:
                 actions = get_action(
                     cfg,
@@ -733,7 +731,12 @@ def run_task(
         log_message(f"# episodes completed so far: {total_episodes}", log_file)
         log_message(f"# successes: {total_successes} ({total_successes / total_episodes * 100:.1f}%)", log_file)
 
-        if cfg.snapshot_enable and snapshot_state and snapshot_state.get("captured", False):
+        if (
+            cfg.snapshot_enable
+            and cfg.snapshot_stop_after_capture
+            and snapshot_state
+            and snapshot_state.get("captured", False)
+        ):
             log_message("[SNAPSHOT] Requested snapshot captured; stopping early.", log_file)
             break
 
@@ -843,7 +846,11 @@ def eval_libero(cfg: GenerateConfig) -> float:
             vggt_ctx=vggt_ctx,
             snapshot_state=snapshot_state,
         )
-        if cfg.snapshot_enable and snapshot_state.get("captured", False):
+        if (
+            cfg.snapshot_enable
+            and cfg.snapshot_stop_after_capture
+            and snapshot_state.get("captured", False)
+        ):
             break
 
     final_success_rate = float(total_successes) / float(total_episodes) if total_episodes > 0 else 0
