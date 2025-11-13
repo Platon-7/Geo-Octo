@@ -218,7 +218,7 @@ def plot_snapshot(
     plt.tight_layout()
     if output:
         os.makedirs(os.path.dirname(output) or ".", exist_ok=True)
-        fig.savefig(output, dpi=200, bbox_inches="tight")
+        fig.savefig(output, dpi=400, bbox_inches="tight", facecolor="white", edgecolor="none")
         print(f"[INFO] Saved figure to {output}")
     else:
         plt.show()
