@@ -134,12 +134,12 @@ def main() -> None:
     snapshots = [_load_policy_snapshot(args.snapshot, label) for label in labels]
 
     rows = len(labels)
-    fig, axes = plt.subplots(rows, 3, figsize=(12, 4 * rows))
+    fig, axes = plt.subplots(rows, 2, figsize=(10, 4 * rows))
     if rows == 1:
         axes = axes[np.newaxis, ...]
 
     for row_idx, (label, payload) in enumerate(zip(labels, snapshots)):
-        ax_rgb, ax_heat, ax_fail = axes[row_idx]
+        ax_rgb, ax_heat = axes[row_idx]
         rgb = payload["rgb"]
         octo_tokens = np.asarray(payload["octo_tokens"])
         vggt_tokens = (
@@ -156,17 +156,6 @@ def main() -> None:
             _render_rgb(ax_rgb, rgb, f"{label} – RGB")
             overlay = _render_heatmap(ax_heat, rgb, heat_overlay, f"{label} – Activation Energy", args.alpha)
             fig.colorbar(overlay, ax=ax_heat, fraction=0.046, pad=0.04)
-            ax_fail.axis("off")
-            ax_fail.text(
-                0.5,
-                0.5,
-                f"{label} – Failure",
-                ha="center",
-                va="center",
-                fontsize=12,
-                fontweight="bold",
-                transform=ax_fail.transAxes,
-            )
         else:
             heat_low = _cosine_similarity_map(octo_tokens, vggt_tokens)
             heat_overlay = _resize_heatmap(_normalize_heatmap(heat_low), rgb.shape[:2])
@@ -174,17 +163,6 @@ def main() -> None:
             _render_rgb(ax_rgb, rgb, f"{label} – RGB")
             overlay = _render_heatmap(ax_heat, rgb, heat_overlay, f"{label} – Similarity", args.alpha)
             fig.colorbar(overlay, ax=ax_heat, fraction=0.046, pad=0.04)
-            ax_fail.axis("off")
-            ax_fail.text(
-                0.5,
-                0.5,
-                f"{label} – Failure",
-                ha="center",
-                va="center",
-                fontsize=12,
-                fontweight="bold",
-                transform=ax_fail.transAxes,
-            )
 
     plt.tight_layout()
     args.output.parent.mkdir(parents=True, exist_ok=True)
