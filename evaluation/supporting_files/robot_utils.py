@@ -1,7 +1,7 @@
 import os
 import random
 import time
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Callable, Dict, List, Optional, Union
 from collections import deque
 
 import numpy as np
@@ -169,6 +169,7 @@ def get_action(
     proprio_projector: Optional[torch.nn.Module] = None,
     noisy_action_projector: Optional[torch.nn.Module] = None,
     use_film: bool = False,
+    cache_callback: Optional[Callable[[Dict[str, Any], Dict[str, Any], np.ndarray], None]] = None,
 ) -> Union[List[np.ndarray], np.ndarray]:
     """
     Query the model to get action predictions.
@@ -183,6 +184,8 @@ def get_action(
         proprio_projector: Optional proprioception projector
         noisy_action_projector: Optional noisy action projector for diffusion
         use_film: Whether to use FiLM
+        cache_callback: Optional callable that receives the (observation, task, timestep_pad_mask)
+            PyTrees used for sampling. Useful for downstream introspection.
 
     Returns:
         Union[List[np.ndarray], np.ndarray]: Predicted actions
@@ -359,20 +362,11 @@ def get_action(
             else:
                 steps.append(np.pad(vec.astype(np.float32), (0, 7 - vec.size)))
 
-        # Cache the exact inputs that produced this action so downstream code
-        # (e.g., attention visualizations) can re-run the transformer without
-        # having to reconstruct the full observation/task dict.
-        try:
-            obs_copy = jax.tree_map(lambda x: np.asarray(x), observation)
-            task_copy = jax.tree_map(lambda x: np.asarray(x), task)
-            get_action._last_inputs = {
-                "observation": obs_copy,
-                "task": task_copy,
-                "timestep_pad_mask": np.asarray(observation["timestep_pad_mask"]),
-            }
-        except Exception as cache_err:
-            print(f"[WARN] Failed to cache transformer inputs: {cache_err}", flush=True)
-            get_action._last_inputs = None
+        if cache_callback is not None:
+            try:
+                cache_callback(observation, task, observation["timestep_pad_mask"])
+            except Exception as cache_err:
+                print(f"[WARN] Snapshot cache callback failed: {cache_err}", flush=True)
 
         return steps
     else:

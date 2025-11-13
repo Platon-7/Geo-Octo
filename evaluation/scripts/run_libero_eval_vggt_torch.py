@@ -2,6 +2,7 @@ import sys
 import warnings
 import json
 import numpy as np
+import jax
 
 # Add compatibility shim before importing anything else
 try:
@@ -30,7 +31,7 @@ from collections import deque
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Optional, Union, Tuple, List
+from typing import Any, Dict, Optional, Tuple, Union, List
 
 import draccus
 import tqdm
@@ -159,6 +160,9 @@ def _select_observation_group(transformer_outputs) -> str:
 def capture_attention_snapshot(
     cfg: "GenerateConfig",
     model,
+    observation: dict,
+    task: dict,
+    timestep_pad_mask: np.ndarray,
     task_description: str,
     episode_index: int,
     decision_step: int,
@@ -166,23 +170,11 @@ def capture_attention_snapshot(
     pending_action: Optional[np.ndarray],
     log_file=None,
 ) -> bool:
-    cached = getattr(get_action, "_last_inputs", None)
-    if not cached:
-        log_message("[SNAPSHOT] No cached transformer inputs available.", log_file)
-        return False
-
-    observation = cached.get("observation")
-    tasks = cached.get("task")
-    pad_mask = cached.get("timestep_pad_mask")
-    if observation is None or tasks is None or pad_mask is None:
-        log_message("[SNAPSHOT] Cached inputs missing required fields.", log_file)
-        return False
-
     try:
         transformer_outputs = model.run_transformer(
             observation,
-            tasks,
-            pad_mask,
+            task,
+            timestep_pad_mask,
             train=False,
         )
     except Exception as err:
@@ -618,6 +610,20 @@ def run_episode(
                 and decision_step == cfg.snapshot_step_after_wait
             )
 
+            cached_inputs: Dict[str, Any] = {}
+
+            def _copy_leaf(x):
+                if hasattr(x, "dtype"):
+                    return np.array(x, copy=True)
+                return x
+
+            def _cache_snapshot_inputs(obs_tree, task_tree, pad_mask):
+                cached_inputs["observation"] = jax.tree_util.tree_map(_copy_leaf, obs_tree)
+                cached_inputs["task"] = jax.tree_util.tree_map(_copy_leaf, task_tree)
+                cached_inputs["pad_mask"] = np.array(pad_mask, copy=True)
+
+            cache_cb = _cache_snapshot_inputs if trigger_snapshot else None
+
             if len(action_queue) == 0:
                 actions = get_action(
                     cfg,
@@ -629,23 +635,30 @@ def run_episode(
                     proprio_projector=proprio_projector,
                     noisy_action_projector=noisy_action_projector,
                     use_film=cfg.use_film,
+                    cache_callback=cache_cb,
                 )
                 action_queue.extend(actions)
 
                 if trigger_snapshot:
                     pending = actions[0] if len(actions) > 0 else None
-                    captured = capture_attention_snapshot(
-                        cfg,
-                        model,
-                        task_description,
-                        episode_index,
-                        decision_step,
-                        img,
-                        pending,
-                        log_file=log_file,
-                    )
-                    if captured:
-                        snapshot_state["captured"] = True
+                    if not cached_inputs:
+                        log_message("[SNAPSHOT] Cache callback did not capture inputs.", log_file)
+                    else:
+                        captured = capture_attention_snapshot(
+                            cfg,
+                            model,
+                            cached_inputs["observation"],
+                            cached_inputs["task"],
+                            cached_inputs["pad_mask"],
+                            task_description,
+                            episode_index,
+                            decision_step,
+                            img,
+                            pending,
+                            log_file=log_file,
+                        )
+                        if captured:
+                            snapshot_state["captured"] = True
 
             action = action_queue.popleft()
             action = process_action(action, cfg.model_family, action_mean, action_std)
