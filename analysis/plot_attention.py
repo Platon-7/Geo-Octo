@@ -133,13 +133,22 @@ def main() -> None:
 
     snapshots = [_load_policy_snapshot(args.snapshot, label) for label in labels]
 
+    display_names = []
+    for label in labels:
+        if label.lower() == "baseline":
+            display_names.append("Baseline")
+        elif label.lower() == "vggt":
+            display_names.append("VGGT")
+        else:
+            display_names.append(label.capitalize())
+
     rows = len(labels)
-    fig, axes = plt.subplots(rows, 3, figsize=(14, 4 * rows))
+    fig, axes = plt.subplots(rows, 2, figsize=(12, 4 * rows))
     if rows == 1:
         axes = axes[np.newaxis, ...]
 
-    for row_idx, (label, payload) in enumerate(zip(labels, snapshots)):
-        ax_rgb, ax_heat, ax_extra = axes[row_idx]
+    for row_idx, (label, disp_label, payload) in enumerate(zip(labels, display_names, snapshots)):
+        ax_rgb, ax_heat = axes[row_idx]
         rgb = payload["rgb"]
         octo_tokens = np.asarray(payload["octo_tokens"])
         vggt_tokens = (
@@ -147,35 +156,27 @@ def main() -> None:
         )
 
         if vggt_tokens is None:
-            # Baseline: activation magnitude map
-            energy = np.linalg.norm(octo_tokens, axis=1)
-            side = int(round(np.sqrt(energy.size)))
-            heat_low = energy.reshape(side, side)
+            # Baseline: self-similarity map
+            self_heat = _cosine_similarity_map(octo_tokens, octo_tokens)
+            heat_low = self_heat
             heat_overlay = _resize_heatmap(_normalize_heatmap(heat_low), rgb.shape[:2])
 
-            _render_rgb(ax_rgb, rgb, f"{label} – RGB")
-            overlay = _render_heatmap(ax_heat, rgb, heat_overlay, f"{label} – Activation Energy", args.alpha)
+            _render_rgb(ax_rgb, rgb, f"{disp_label} – RGB")
+            overlay = _render_heatmap(ax_heat, rgb, heat_overlay, f"{disp_label} – Self-Similarity", args.alpha)
             fig.colorbar(overlay, ax=ax_heat, fraction=0.046, pad=0.04)
-
-            # Panel (c): baseline self-similarity
-            self_heat = _cosine_similarity_map(octo_tokens, octo_tokens)
-            self_overlay = _resize_heatmap(_normalize_heatmap(self_heat), rgb.shape[:2])
-            overlay_extra = _render_heatmap(
-                ax_extra, rgb, self_overlay, f"{label} – Self Similarity", args.alpha
-            )
-            fig.colorbar(overlay_extra, ax=ax_extra, fraction=0.046, pad=0.04)
         else:
             heat_low = _cosine_similarity_map(octo_tokens, vggt_tokens)
             heat_overlay = _resize_heatmap(_normalize_heatmap(heat_low), rgb.shape[:2])
 
-            _render_rgb(ax_rgb, rgb, f"{label} – RGB")
-            overlay = _render_heatmap(ax_heat, rgb, heat_overlay, f"{label} – Similarity", args.alpha)
+            _render_rgb(ax_rgb, rgb, f"{disp_label} – RGB")
+            overlay = _render_heatmap(ax_heat, rgb, heat_overlay, f"{disp_label} – Similarity", args.alpha)
             fig.colorbar(overlay, ax=ax_heat, fraction=0.046, pad=0.04)
-            ax_extra.axis("off")
 
+    fig.suptitle("Comparison of Baseline Self-Attention and 2D-3D Cross-Modal Similarity", fontsize=18)
+    plt.subplots_adjust(top=0.88)
     plt.tight_layout()
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(args.output, dpi=200)
+    fig.savefig(args.output, dpi=600)
     print(f"[plot_attention] Saved visualization to {args.output}")
 
     if args.show:
