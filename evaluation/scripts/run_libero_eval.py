@@ -173,7 +173,7 @@ class GenerateConfig:
     local_log_dir: str = "./experiments/logs"        # Local directory for eval logs
 
     #################################################################################################################
-    # Attention snapshot capture
+    # Attention snapshot capture (disabled by default)
     #################################################################################################################
     capture_attention_snapshot: bool = False         # Enable saving intermediate vision tokens for analysis
     attention_snapshot_task: Optional[str] = "pick up the ketchup and place it in the basket"
