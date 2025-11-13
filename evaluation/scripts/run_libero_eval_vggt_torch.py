@@ -362,6 +362,21 @@ class AttentionSnapshotManager:
         self._task_match = (not target_task) or (current_task == target_task)
         self.task_match = self._task_match
 
+    def should_capture(self, episode_idx: int, policy_step_idx: int, control_freq: Optional[float]) -> bool:
+        return False
+
+    def build_capture_spec(self) -> dict:
+        return {}
+
+    def commit(
+        self,
+        payload: Optional[dict],
+        image: Optional[np.ndarray],
+        episode_idx: int,
+        control_freq: Optional[float],
+    ) -> None:
+        pass
+
 # ===== VGGT (PyTorch) helpers =====
 
 class WeightedLayerFuser(nn.Module):
