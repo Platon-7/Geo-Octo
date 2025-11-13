@@ -23,6 +23,7 @@ action_mean = np.array(dataset_statistics['action']['mean'])
 action_std = np.array(dataset_statistics['action']['std'])
 
 import logging
+import imageio.v2 as imageio
 
 import os
 from collections import deque
@@ -127,6 +128,108 @@ except Exception:
 logging.captureWarnings(True)
 
 
+def _normalize_task_name(name: str) -> str:
+    return " ".join(name.lower().strip().split())
+
+
+def _select_observation_group(transformer_outputs) -> str:
+    """Pick the primary observation token group from transformer outputs."""
+    candidate_keys = [
+        key
+        for key in transformer_outputs.keys()
+        if key.startswith("obs_") and key not in ("obs", "obs_task")
+    ]
+    if candidate_keys:
+        return candidate_keys[0]
+    if "obs" in transformer_outputs:
+        return "obs"
+    raise KeyError("Could not find an observation token group in transformer outputs.")
+
+
+def capture_attention_snapshot(
+    cfg: "GenerateConfig",
+    model,
+    task_description: str,
+    episode_index: int,
+    decision_step: int,
+    rgb_image: np.ndarray,
+    pending_action: Optional[np.ndarray],
+    log_file=None,
+) -> bool:
+    """Save RGB + transformer tokens for attention visualization."""
+    cached = getattr(get_action, "_last_inputs", None)
+    if not cached:
+        log_message("[SNAPSHOT] No cached transformer inputs available.", log_file)
+        return False
+
+    observation = cached.get("observation")
+    tasks = cached.get("task")
+    pad_mask = cached.get("timestep_pad_mask")
+    if observation is None or tasks is None or pad_mask is None:
+        log_message("[SNAPSHOT] Cached inputs missing required fields.", log_file)
+        return False
+
+    try:
+        transformer_outputs = model.run_transformer(
+            observation,
+            tasks,
+            pad_mask,
+            train=False,
+        )
+    except Exception as err:
+        log_message(f"[SNAPSHOT] Failed to run transformer: {err}", log_file)
+        return False
+
+    try:
+        obs_key = _select_observation_group(transformer_outputs)
+        obs_tokens = np.asarray(transformer_outputs[obs_key].tokens)
+        readout_tokens = np.asarray(transformer_outputs["readout_action"].tokens)
+    except Exception as err:
+        log_message(f"[SNAPSHOT] Failed to retrieve token groups: {err}", log_file)
+        return False
+
+    try:
+        obs_tokens = obs_tokens[0, -1]  # (tokens, dim)
+        readout_token = readout_tokens[0, -1, 0]  # (dim,)
+    except Exception as err:
+        log_message(f"[SNAPSHOT] Unexpected token shapes: {err}", log_file)
+        return False
+
+    snapshot_dir = Path(cfg.snapshot_output_dir or "analysis/attention_snapshots")
+    snapshot_dir.mkdir(parents=True, exist_ok=True)
+
+    base_name = (
+        f"{task_description.replace(' ', '_')}"
+        f"_ep{episode_index:02d}_step{decision_step:03d}"
+    )
+    snapshot_path = snapshot_dir / f"{base_name}.npz"
+
+    payload = {
+        "rgb": np.asarray(rgb_image, dtype=np.uint8),
+        "obs_tokens": obs_tokens.astype(np.float32),
+        "readout_token": readout_token.astype(np.float32),
+        "task_description": task_description,
+        "episode_index": episode_index,
+        "decision_step": decision_step,
+    }
+    if pending_action is not None:
+        payload["action"] = np.asarray(pending_action, dtype=np.float32)
+    if cfg.snapshot_note:
+        payload["note"] = cfg.snapshot_note
+
+    np.savez_compressed(snapshot_path, **payload)
+    log_message(f"[SNAPSHOT] Saved tokens to {snapshot_path}", log_file)
+
+    try:
+        png_path = snapshot_path.with_suffix(".png")
+        imageio.imwrite(png_path, payload["rgb"])
+        log_message(f"[SNAPSHOT] Saved RGB frame to {png_path}", log_file)
+    except Exception as err:
+        log_message(f"[SNAPSHOT] Failed to save RGB image: {err}", log_file)
+
+    return True
+
+
 @dataclass
 class GenerateConfig:
     # fmt: off
@@ -176,6 +279,16 @@ class GenerateConfig:
     wandb_project: str = "your-wandb-project"        # Name of WandB project
 
     seed: int = 7                                    # Random Seed (for reproducibility)
+
+    #################################################################################################################
+    # Snapshot capture utilities
+    #################################################################################################################
+    snapshot_enable: bool = False
+    snapshot_task_name: Optional[str] = None
+    snapshot_episode_index: int = 0
+    snapshot_step_after_wait: int = 0
+    snapshot_output_dir: str = "analysis/attention_snapshots"
+    snapshot_note: Optional[str] = None
 
     # fmt: on
 
@@ -353,6 +466,8 @@ def run_episode(
     noisy_action_projector=None,
     initial_state=None,
     log_file=None,
+    episode_index: int = 0,
+    snapshot_state: Optional[dict] = None,
 ):
     """Run a single episode in the environment."""
     # Reset environment
@@ -378,6 +493,13 @@ def run_episode(
 
     # Run episode
     success = False
+    snapshot_active = bool(cfg.snapshot_enable) and snapshot_state is not None
+    target_task = (
+        _normalize_task_name(cfg.snapshot_task_name)
+        if cfg.snapshot_task_name
+        else None
+    )
+
     try:
         while t < max_steps + cfg.num_steps_wait:
             # Do nothing for the first few timesteps to let objects stabilize
@@ -389,6 +511,19 @@ def run_episode(
             # Prepare observation
             observation, img = prepare_observation(obs)
             replay_images.append(img)
+
+            decision_step = t - cfg.num_steps_wait
+            trigger_snapshot = (
+                snapshot_active
+                and not snapshot_state.get("captured", False)
+                and (target_task is None or target_task in _normalize_task_name(task_description))
+                and episode_index == cfg.snapshot_episode_index
+                and decision_step == cfg.snapshot_step_after_wait
+            )
+
+            if trigger_snapshot and len(action_queue) != 0:
+                # Force a re-query so tokens reflect this timestep precisely.
+                action_queue.clear()
 
             # If action queue is empty, requery model
             if len(action_queue) == 0:
@@ -405,6 +540,21 @@ def run_episode(
                     use_film=cfg.use_film,
                 )
                 action_queue.extend(actions)
+
+                if trigger_snapshot:
+                    pending = actions[0] if len(actions) > 0 else None
+                    captured = capture_attention_snapshot(
+                        cfg,
+                        model,
+                        task_description,
+                        episode_index,
+                        decision_step,
+                        img,
+                        pending,
+                        log_file=log_file,
+                    )
+                    if captured:
+                        snapshot_state["captured"] = True
 
             # Get action from queue
             action = action_queue.popleft()
@@ -437,6 +587,7 @@ def run_task(
     total_episodes=0,
     total_successes=0,
     log_file=None,
+    snapshot_state: Optional[dict] = None,
 ):
     """Run evaluation for a single task."""
     # Get task
@@ -450,6 +601,11 @@ def run_task(
 
     # Start episodes
     task_episodes, task_successes = 0, 0
+    normalized_name = _normalize_task_name(task_description)
+    if cfg.snapshot_enable and cfg.snapshot_task_name:
+        if cfg.snapshot_task_name.lower() not in normalized_name:
+            return total_episodes, total_successes
+
     for episode_idx in tqdm.tqdm(range(cfg.num_trials_per_task)):
         log_message(f"\nTask: {task_description}", log_file)
 
@@ -484,6 +640,8 @@ def run_task(
             noisy_action_projector,
             initial_state,
             log_file,
+            episode_index=episode_idx,
+            snapshot_state=snapshot_state,
         )
 
         # Update counters
@@ -502,6 +660,10 @@ def run_task(
         log_message(f"Success: {success}", log_file)
         log_message(f"# episodes completed so far: {total_episodes}", log_file)
         log_message(f"# successes: {total_successes} ({total_successes / total_episodes * 100:.1f}%)", log_file)
+
+        if cfg.snapshot_enable and snapshot_state and snapshot_state.get("captured", False):
+            log_message("[SNAPSHOT] Requested snapshot captured; stopping early.", log_file)
+            break
 
     # Log task results
     task_success_rate = float(task_successes) / float(task_episodes) if task_episodes > 0 else 0
@@ -561,6 +723,7 @@ def eval_libero(cfg: GenerateConfig) -> float:
 
     # Start evaluation
     total_episodes, total_successes = 0, 0
+    snapshot_state = {"captured": False}
     for task_id in tqdm.tqdm(range(num_tasks)):
         total_episodes, total_successes = run_task(
             cfg,
@@ -574,7 +737,10 @@ def eval_libero(cfg: GenerateConfig) -> float:
             total_episodes,
             total_successes,
             log_file,
+            snapshot_state=snapshot_state,
         )
+        if cfg.snapshot_enable and snapshot_state.get("captured", False):
+            break
 
     # Calculate final success rate
     final_success_rate = float(total_successes) / float(total_episodes) if total_episodes > 0 else 0
