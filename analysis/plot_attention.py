@@ -41,10 +41,6 @@ def _load_policy_snapshot(npz_path: Path, label: str) -> Dict[str, Any]:
         vggt_key = f"{label}_vggt_tokens"
         meta_key = f"{label}_meta"
 
-        missing = [k for k in (rgb_key,) if k not in data]
-        if missing:
-            raise KeyError(f"Snapshot {npz_path} missing required keys for policy '{label}': {missing}")
-
         payload = {
             "rgb": np.asarray(data[rgb_key]) if rgb_key in data else None,
             "octo_tokens": (
@@ -54,6 +50,12 @@ def _load_policy_snapshot(npz_path: Path, label: str) -> Dict[str, Any]:
                 np.asfarray(data[vggt_key], dtype=np.float32) if vggt_key in data else None
             ),
         }
+
+        if payload["octo_tokens"] is None and payload["vggt_tokens"] is None:
+            raise KeyError(
+                f"Snapshot {npz_path} missing vision tokens for policy '{label}'. "
+                "Expected either octo or VGGT tokens."
+            )
         if meta_key in data:
             try:
                 payload["meta"] = json.loads(str(data[meta_key].item()))
