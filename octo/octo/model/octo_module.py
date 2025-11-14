@@ -339,13 +339,11 @@ class OctoTransformer(nn.Module):
             # Inject pointmap embedding additively if provided in observations
             if (self.pointmap_encoder is not None) and (self.pointmap_input_key in observations):
                 pm = observations[self.pointmap_input_key]
-                # Expected shape: (batch, horizon, H, W, C)
                 logging.info(
                     "[PointMap Injection] Using key '%s' with shape %s",
                     self.pointmap_input_key,
                     tuple(pm.shape),
                 )
-                # Encode to (batch, horizon, token_dim)
                 pm_embed = self.pointmap_encoder(pm, train=train)
                 logging.info(
                     "[PointMap Injection] Encoder output shape %s (token_dim=%d)",
@@ -356,29 +354,23 @@ class OctoTransformer(nn.Module):
                     raise ValueError(
                         f"PointMapEncoder output dim {pm_embed.shape[-1]} != token_embedding_size {self.token_embedding_size}"
                     )
-                # Bottleneck fusion (PointVLA-style):
-                # readout_b = LN(readout) -> Dense(b) -> GELU
-                # point_b   = LN(pointmap_embed) -> Dense(b)
-                # fused_b   = readout_b + gate * broadcast(point_b)
-                # out       = Dense(d_model)(fused_b)
-                # readout   = readout + out  (residual)
+
+                if self.is_mutable_collection("debug"):
+                    self.sow("debug", f"{group_name}_readout_pre_pointmap", readout_tokens)
+                    self.sow("debug", f"{group_name}_pointmap_embed", pm_embed)
 
                 bottleneck_dim = min(256, self.token_embedding_size)
 
-                # Readout bottleneck + MLP adapter at bottleneck dim (Dense(b)->GELU->Dense(b))
                 r_ln = nn.LayerNorm(name=f"{group_name}_bottleneck_readout_ln")(readout_tokens)
                 r_b = nn.Dense(bottleneck_dim, name=f"{group_name}_bottleneck_readout_proj")(r_ln)
                 r_b = nn.gelu(r_b)
                 r_b = nn.Dense(bottleneck_dim, name=f"{group_name}_bottleneck_readout_ffn")(r_b)
 
-                # Pointmap bottleneck (per (B,T))
                 p_ln = nn.LayerNorm(name=f"{group_name}_bottleneck_point_ln")(pm_embed)
                 p_b = nn.Dense(bottleneck_dim, name=f"{group_name}_bottleneck_point_proj")(p_ln)
-                # Broadcast to readout token count
                 p_b = p_b[:, :, None, :]
                 p_b = jnp.tile(p_b, (1, 1, n_tokens_for_readout, 1))
 
-                # Learnable gate to control residual strength (trainable; small init)
                 gate_scale = self.param(
                     f"{group_name}_pointmap_gate",
                     nn.initializers.constant(0.05),
@@ -389,6 +381,10 @@ class OctoTransformer(nn.Module):
                 fused_b = r_b + gate_scale * p_b
                 out = nn.Dense(self.token_embedding_size, name=f"{group_name}_bottleneck_out_proj")(fused_b)
                 readout_tokens = readout_tokens + out
+
+                if self.is_mutable_collection("debug"):
+                    self.sow("debug", f"{group_name}_readout_post_pointmap", readout_tokens)
+
                 logging.info(
                     "[PointMap Injection] Added to '%s'; resulting readout tokens %s",
                     group_name,

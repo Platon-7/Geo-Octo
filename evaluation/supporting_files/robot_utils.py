@@ -44,6 +44,7 @@ def _extract_vision_tokens_for_snapshot(
     observation: Dict[str, Any],
     task: Dict[str, Any],
     timestep_index: int,
+    capture_spec: Optional[Dict[str, Any]] = None,
 ) -> Optional[Dict[str, Optional[np.ndarray]]]:
     """
     Extract intermediate vision tokens from the Octo model for analysis snapshots.
@@ -126,9 +127,94 @@ def _extract_vision_tokens_for_snapshot(
             return tokens[batch_idx].astype(np.float32)
         return tokens.astype(np.float32)
 
-    return {
+    payload: Dict[str, Optional[np.ndarray]] = {
         "octo_tokens": _select(octo_tokens),
         "vggt_tokens": _select(vggt_tokens),
+    }
+
+    if capture_spec and capture_spec.get("request_pointmap_debug"):
+        debug_tokens = _extract_pointmap_readout_tokens(
+            model,
+            observation,
+            task,
+            timestep_index=timestep_index,
+        )
+        if debug_tokens is not None:
+            payload.update(debug_tokens)
+
+    return payload
+
+
+def _extract_pointmap_readout_tokens(
+    model: torch.nn.Module,
+    observation: Dict[str, Any],
+    task: Dict[str, Any],
+    timestep_index: int,
+) -> Optional[Dict[str, Optional[np.ndarray]]]:
+    try:
+        import jax
+        import jax.numpy as jnp
+    except Exception as exc:
+        print(f"[SNAPSHOT] Unable to import JAX for pointmap debug extraction: {exc}", flush=True)
+        return None
+
+    def _to_jax(x: Any):
+        if isinstance(x, np.ndarray):
+            return jnp.asarray(x)
+        if isinstance(x, (list, tuple)):
+            return jnp.asarray(x)
+        if isinstance(x, dict):
+            return {k: _to_jax(v) for k, v in x.items()}
+        return x
+
+    obs_jax = _to_jax(observation)
+    task_jax = _to_jax(task)
+
+    try:
+        _, debug_vars = model.module.apply(
+            {"params": model.params},
+            obs_jax,
+            task_jax,
+            obs_jax["timestep_pad_mask"],
+            train=False,
+            method=model.module.octo_transformer,
+            mutable=["debug"],
+        )
+    except Exception as exc:
+        print(f"[SNAPSHOT] Failed to capture pointmap debug tokens: {exc}", flush=True)
+        return None
+
+    debug_collection = debug_vars.get("debug", {})
+    if not debug_collection:
+        return None
+
+    def _extract_named(name_suffix: str) -> Optional[np.ndarray]:
+        for key, value in debug_collection.items():
+            if key.endswith(name_suffix):
+                arr = np.asarray(jax.device_get(value))
+                if arr.ndim >= 2:
+                    b = min(arr.shape[0] - 1, 0)
+                    t = min(max(timestep_index, 0), arr.shape[1] - 1) if arr.ndim >= 3 else 0
+                    if arr.ndim == 4:
+                        return arr[b, t].astype(np.float32)
+                    if arr.ndim == 3:
+                        return arr[b, t].astype(np.float32)
+                    if arr.ndim == 2:
+                        return arr[b].astype(np.float32)
+                return arr.astype(np.float32)
+        return None
+
+    pre_tokens = _extract_named("_readout_pre_pointmap")
+    post_tokens = _extract_named("_readout_post_pointmap")
+    pointmap_embed = _extract_named("_pointmap_embed")
+
+    if pre_tokens is None and post_tokens is None and pointmap_embed is None:
+        return None
+
+    return {
+        "pointmap_readout_pre_tokens": pre_tokens,
+        "pointmap_readout_post_tokens": post_tokens,
+        "pointmap_embed_tokens": pointmap_embed,
     }
 
 
@@ -424,6 +510,7 @@ def get_action(
                 observation,
                 task,
                 timestep_index=timestep_idx,
+                capture_spec=capture_spec,
             )
 
         # Build un-normalization stats from the checkpoint
