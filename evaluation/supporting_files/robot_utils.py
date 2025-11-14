@@ -1,3 +1,4 @@
+import copy
 import os
 import random
 import time
@@ -180,20 +181,13 @@ def _build_pointmap_debug_payload(
     """
     payload: Dict[str, np.ndarray] = {}
 
-    post_tokens = _extract_readout_tokens_for_snapshot(
-        model, observation, task, timestep_index, readout_name="action"
+    observation_no_pm = dict(observation)
+    observation_no_pm.pop(pm_key, None)
+    pre_tokens = _extract_readout_tokens_for_snapshot(
+        model, observation_no_pm, task, timestep_index, readout_name="action"
     )
-    if post_tokens is not None:
-        payload["readout_post_pointmap_tokens"] = post_tokens
-
-    if pm_key in observation:
-        observation_no_pm = dict(observation)
-        observation_no_pm.pop(pm_key, None)
-        pre_tokens = _extract_readout_tokens_for_snapshot(
-            model, observation_no_pm, task, timestep_index, readout_name="action"
-        )
-        if pre_tokens is not None:
-            payload["readout_pre_pointmap_tokens"] = pre_tokens
+    if pre_tokens is not None:
+        payload["readout_pre_pointmap_tokens"] = pre_tokens
 
     pm_raw = pointmap_buffers.get("raw") if pointmap_buffers else None
     if pm_raw is None:
@@ -213,7 +207,44 @@ def _build_pointmap_debug_payload(
             rgb = rgb / 255.0
         payload["rgb_preprocessed"] = rgb
 
+    pm_norm = pointmap_buffers.get("normalized") if pointmap_buffers else None
+    if pm_norm is not None:
+        obs_with_pm = _inject_pointmap_for_debug(observation, pm_norm, pm_key, timestep_index)
+        if obs_with_pm is not None:
+            post_tokens = _extract_readout_tokens_for_snapshot(
+                model, obs_with_pm, task, timestep_index, readout_name="action"
+            )
+            if post_tokens is not None:
+                payload["readout_post_pointmap_tokens"] = post_tokens
+
     return payload
+
+
+def _inject_pointmap_for_debug(
+    observation: Dict[str, Any],
+    pointmap: np.ndarray,
+    pm_key: str,
+    timestep_index: int,
+) -> Optional[Dict[str, Any]]:
+    try:
+        obs_copy: Dict[str, Any] = copy.deepcopy(observation)
+        proprio = obs_copy.get("proprio")
+        if proprio is not None and proprio.ndim >= 3:
+            T = proprio.shape[1]
+        else:
+            timestep_mask = obs_copy.get("timestep_pad_mask")
+            T = int(timestep_mask.shape[1]) if timestep_mask is not None else 1
+        pm_stack = np.zeros((1, T, *pointmap.shape), dtype=np.float32)
+        idx = max(0, min(T - 1, timestep_index))
+        pm_stack[0, idx] = pointmap.astype(np.float32)
+        obs_copy[pm_key] = pm_stack
+        pad_mask = copy.deepcopy(obs_copy.get("pad_mask_dict", {}))
+        pad_mask[pm_key] = np.ones((1, T), dtype=bool)
+        obs_copy["pad_mask_dict"] = pad_mask
+        return obs_copy
+    except Exception as exc:
+        print(f"[SNAPSHOT DEBUG] Failed to build observation with pointmap: {exc}", flush=True)
+        return None
 
 
 def set_seed_everywhere(seed: int) -> None:

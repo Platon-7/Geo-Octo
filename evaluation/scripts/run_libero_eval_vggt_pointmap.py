@@ -622,14 +622,61 @@ def compute_compressed_vggt_tokens_torch(image: np.ndarray, vggt_ctx: dict) -> O
     return z[0]
 
 
+class VGGTPointmapRunner:
+    """Compute VGGT pointmaps (xyz + confidence) on demand for debugging."""
+
+    def __init__(self, device: torch.device, input_res: int, batch_size: int = 2):
+        self.device = device
+        self.input_res = int(input_res)
+        self.batch_size = max(1, int(batch_size))
+        self.model = VGGT.from_pretrained("facebook/VGGT-1B").to(self.device).eval()
+        if self.device.type == "cuda":
+            torch.backends.cudnn.benchmark = True
+
+    @torch.no_grad()
+    def compute_pointmap(self, images_bt3hw: np.ndarray) -> np.ndarray:
+        b, t, h, w, c = images_bt3hw.shape
+        flat = images_bt3hw.reshape(b * t, h, w, c).astype(np.uint8)
+        chw = _preprocess_images_for_vggt(flat, self.input_res)
+        outputs = []
+        amp_ctx = torch.cuda.amp.autocast(enabled=self.device.type == "cuda")
+
+        for start in range(0, chw.shape[0], self.batch_size):
+            batch = torch.from_numpy(chw[start : start + self.batch_size]).to(self.device)
+            batch = batch.unsqueeze(1)  # (k,1,3,H,W)
+            with amp_ctx:
+                preds = self.model(batch)
+            if isinstance(preds, dict) and "world_points" in preds:
+                pts = preds["world_points"][:, 0]
+                conf = preds.get("world_points_conf")
+                if conf is not None:
+                    conf = conf[:, 0][..., None]
+                else:
+                    conf = torch.ones((*pts.shape[:3], 1), device=pts.device)
+                out = torch.cat([pts, conf], dim=-1)
+            elif isinstance(preds, dict) and "depth" in preds:
+                depth = preds["depth"][:, 0, ..., 0][..., None]
+                conf = preds.get("depth_conf")
+                if conf is not None:
+                    conf = conf[:, 0][..., None]
+                else:
+                    conf = torch.ones_like(depth)
+                zeros = torch.zeros_like(depth)
+                out = torch.cat([zeros, zeros, depth, conf], dim=-1)
+            else:
+                raise RuntimeError("VGGT did not return world_points/depth predictions.")
+            outputs.append(out.detach().cpu().numpy())
+
+        stacked = np.concatenate(outputs, axis=0)
+        return stacked.reshape(b, t, stacked.shape[1], stacked.shape[2], stacked.shape[3]).astype(np.float32)
+
+
 def _preprocess_images_for_vggt(images_np: np.ndarray, target_size: int) -> np.ndarray:
-    """Aspect-preserving resize with white padding, returning CHW floats in [0,1]."""
     from PIL import Image
 
-    processed_images = []
+    processed = []
     for img_array in images_np:
         pil_image = Image.fromarray(img_array)
-
         if pil_image.mode == "RGBA":
             background = Image.new("RGBA", pil_image.size, (255, 255, 255, 255))
             pil_image = Image.alpha_composite(background, pil_image)
@@ -659,16 +706,15 @@ def _preprocess_images_for_vggt(images_np: np.ndarray, target_size: int) -> np.n
             mode="constant",
             constant_values=1.0,
         )
-        processed_images.append(arr)
+        processed.append(arr)
 
-    return np.stack(processed_images, axis=0)
+    return np.stack(processed, axis=0)
 
 
-def _normalize_pointmap(pm: np.ndarray, keep_conf: bool = True) -> np.ndarray:
-    """Normalize XYZ per image; keep confidence unchanged."""
-    if pm.ndim != 5 or pm.shape[-1] < 1:
-        return pm
-    x = pm.astype(np.float32)
+def _normalize_pointmap_batch(pointmaps: np.ndarray, keep_conf: bool = True) -> np.ndarray:
+    if pointmaps.ndim != 5:
+        return pointmaps
+    x = pointmaps.astype(np.float32)
     if keep_conf and x.shape[-1] >= 4:
         xyz = x[..., :3]
         conf = x[..., 3:4]
@@ -679,6 +725,21 @@ def _normalize_pointmap(pm: np.ndarray, keep_conf: bool = True) -> np.ndarray:
     mean = np.nanmean(x, axis=(-3, -2), keepdims=True)
     std = np.nanstd(x, axis=(-3, -2), keepdims=True) + 1e-6
     return (x - mean) / std
+
+
+def _compute_pointmap_buffers(
+    image: np.ndarray,
+    runner: "VGGTPointmapRunner",
+    normalize: bool = True,
+) -> Dict[str, np.ndarray]:
+    img_bt = image[np.newaxis, np.newaxis, ...].astype(np.uint8)
+    pm_bt = runner.compute_pointmap(img_bt)
+    pm_raw = pm_bt[0, 0]
+    pm_norm = pm_raw if not normalize else _normalize_pointmap_batch(pm_bt)[0, 0]
+    return {
+        "raw": pm_raw.astype(np.float32),
+        "normalized": pm_norm.astype(np.float32),
+    }
 
 
 class VGGTPointmapRunner:
@@ -800,26 +861,6 @@ def run_episode(
 
             replay_images.append(img)
 
-            pointmap_cache: Optional[Dict[str, np.ndarray]] = None
-            if cfg.model_family == "octo" and pointmap_ctx is not None:
-                runner: Optional[VGGTPointmapRunner] = pointmap_ctx.get("runner")  # type: ignore[arg-type]
-                if runner is not None:
-                    try:
-                        img_bt = img[np.newaxis, np.newaxis, ...].astype(np.uint8)
-                        pm_bt = runner.compute_pointmap(img_bt)
-                        pm_raw = pm_bt[0, 0]
-                        if cfg.normalize_pointmap:
-                            pm_norm = _normalize_pointmap(pm_bt)[0, 0]
-                        else:
-                            pm_norm = pm_raw
-                        observation[cfg.pointmap_key] = pm_norm.astype(np.float32)
-                        pointmap_cache = {
-                            "raw": pm_raw.astype(np.float32),
-                            "normalized": pm_norm.astype(np.float32),
-                        }
-                    except Exception as _e:
-                        log_message(f"[PointMap] Failed to compute VGGT pointmap at t={t}: {_e}", log_file)
-
             if len(action_queue) == 0:
                 policy_step_idx = max(0, t - cfg.num_steps_wait)
                 capture_payload = None
@@ -830,8 +871,21 @@ def run_episode(
                 )
                 if capture_now:
                     spec = snapshot_manager.build_capture_spec()
-                    if spec is not None and pointmap_cache is not None:
-                        spec["pointmap_buffers"] = pointmap_cache
+                    pointmap_buffers = None
+                    if (
+                        cfg.attention_snapshot_request_pointmap_debug
+                        and pointmap_ctx is not None
+                    ):
+                        runner: Optional[VGGTPointmapRunner] = pointmap_ctx.get("runner")  # type: ignore[arg-type]
+                        if runner is not None:
+                            try:
+                                pointmap_buffers = _compute_pointmap_buffers(
+                                    img, runner, normalize=cfg.normalize_pointmap
+                                )
+                            except Exception as _e:
+                                log_message(f"[PointMap] Failed to compute VGGT pointmap at t={t}: {_e}", log_file)
+                    if pointmap_buffers is not None:
+                        spec["pointmap_buffers"] = pointmap_buffers
                     actions_output = get_action(
                         cfg,
                         model,
@@ -1029,7 +1083,12 @@ def eval_libero(cfg: GenerateConfig) -> float:
                 vggt_ctx = None
 
     pointmap_ctx: Optional[dict] = None
-    if cfg.model_family == "octo" and cfg.use_vggt_tokens:
+    if (
+        cfg.model_family == "octo"
+        and cfg.use_vggt_tokens
+        and cfg.capture_attention_snapshot
+        and cfg.attention_snapshot_request_pointmap_debug
+    ):
         try:
             if cfg.vggt_use_cuda and torch.cuda.is_available():
                 device_index = cfg.vggt_device_id if cfg.vggt_device_id is not None else 0
