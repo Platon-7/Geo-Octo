@@ -355,9 +355,8 @@ class OctoTransformer(nn.Module):
                         f"PointMapEncoder output dim {pm_embed.shape[-1]} != token_embedding_size {self.token_embedding_size}"
                     )
 
-                if self.is_mutable_collection("debug"):
-                    self.sow("debug", f"{group_name}_readout_pre_pointmap", readout_tokens)
-                    self.sow("debug", f"{group_name}_pointmap_embed", pm_embed)
+                self.sow("debug", f"{group_name}_readout_pre_pointmap", readout_tokens)
+                self.sow("debug", f"{group_name}_pointmap_embed", pm_embed)
 
                 bottleneck_dim = min(256, self.token_embedding_size)
 
@@ -382,8 +381,7 @@ class OctoTransformer(nn.Module):
                 out = nn.Dense(self.token_embedding_size, name=f"{group_name}_bottleneck_out_proj")(fused_b)
                 readout_tokens = readout_tokens + out
 
-                if self.is_mutable_collection("debug"):
-                    self.sow("debug", f"{group_name}_readout_post_pointmap", readout_tokens)
+                self.sow("debug", f"{group_name}_readout_post_pointmap", readout_tokens)
 
                 logging.info(
                     "[PointMap Injection] Added to '%s'; resulting readout tokens %s",
