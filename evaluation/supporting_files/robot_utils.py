@@ -39,6 +39,99 @@ VGGT_HISTORY: deque = deque(maxlen=2)
 POINTMAP_HISTORY: deque = deque(maxlen=2)
 
 
+def _extract_vision_tokens_for_snapshot(
+    model: torch.nn.Module,
+    observation: Dict[str, Any],
+    task: Dict[str, Any],
+    timestep_index: int,
+) -> Optional[Dict[str, Optional[np.ndarray]]]:
+    """
+    Extract intermediate vision tokens from the Octo model for analysis snapshots.
+    """
+    try:
+        from flax.core import freeze
+        import jax
+        from octo.model.components.tokenizers import VisionMixer
+    except Exception as exc:
+        print(f"[SNAPSHOT] Missing dependencies for token extraction: {exc}", flush=True)
+        return None
+
+    if not hasattr(model, "module") or not hasattr(model.module, "octo_transformer"):
+        return None
+
+    try:
+        bound_module = model.module.bind({"params": model.params})
+    except Exception as exc:
+        print(f"[SNAPSHOT] Failed to bind Octo module: {exc}", flush=True)
+        return None
+
+    transformer = getattr(bound_module, "octo_transformer", None)
+    if transformer is None or not hasattr(transformer, "observation_tokenizers"):
+        return None
+
+    obs_tokenizers = transformer.observation_tokenizers
+    obs_frozen = freeze(observation)
+    task_frozen = freeze(task)
+
+    octo_tokens = None
+    vggt_tokens = None
+
+    for tokenizer in obs_tokenizers.values():
+        if isinstance(tokenizer, VisionMixer):
+            try:
+                patch_group = tokenizer.patch_tokenizer(obs_frozen, task_frozen, train=False)
+            except Exception:
+                patch_group = None
+            if patch_group is not None:
+                octo_tokens = np.asarray(jax.device_get(patch_group.tokens))
+            try:
+                vg_group = tokenizer.vggt_tokenizer(obs_frozen, task_frozen, train=False)
+            except Exception:
+                vg_group = None
+            if vg_group is not None:
+                vggt_tokens = np.asarray(jax.device_get(vg_group.tokens))
+            break
+
+    if octo_tokens is None:
+        for tokenizer in obs_tokenizers.values():
+            try:
+                group = tokenizer(obs_frozen, task_frozen, train=False)
+            except Exception:
+                continue
+            if group is None:
+                continue
+            try:
+                octo_tokens = np.asarray(jax.device_get(group.tokens))
+                break
+            except Exception:
+                continue
+
+    def _select(tokens: Optional[np.ndarray]) -> Optional[np.ndarray]:
+        if tokens is None:
+            return None
+        if tokens.ndim < 3:
+            return tokens.astype(np.float32)
+        # Expect shape (B, T, N, D)
+        batch_idx = min(0, tokens.shape[0] - 1)
+        tdim = tokens.shape[1] if tokens.ndim >= 4 else 1
+        if tdim == 0:
+            return None
+        idx = timestep_index
+        if idx < 0:
+            idx = tdim + idx
+        idx = max(0, min(idx, tdim - 1))
+        if tokens.ndim == 4:
+            return tokens[batch_idx, idx].astype(np.float32)
+        if tokens.ndim == 3:
+            return tokens[batch_idx].astype(np.float32)
+        return tokens.astype(np.float32)
+
+    return {
+        "octo_tokens": _select(octo_tokens),
+        "vggt_tokens": _select(vggt_tokens),
+    }
+
+
 def set_seed_everywhere(seed: int) -> None:
     """
     Set random seed for all random number generators for reproducibility.
@@ -169,6 +262,7 @@ def get_action(
     proprio_projector: Optional[torch.nn.Module] = None,
     noisy_action_projector: Optional[torch.nn.Module] = None,
     use_film: bool = False,
+    capture_spec: Optional[Dict[str, Any]] = None,
 ) -> Union[List[np.ndarray], np.ndarray]:
     """
     Query the model to get action predictions.
@@ -185,7 +279,8 @@ def get_action(
         use_film: Whether to use FiLM
 
     Returns:
-        Union[List[np.ndarray], np.ndarray]: Predicted actions
+        List[np.ndarray] or tuple: Predicted actions. When ``capture_spec`` is provided,
+        returns ``(actions, payload)`` where ``payload`` contains intermediate vision tokens.
 
     Raises:
         ValueError: If model family is not supported
@@ -205,7 +300,7 @@ def get_action(
                 noisy_action_projector=noisy_action_projector,
                 use_film=use_film,
             )
-        return action
+        return (action, None) if capture_spec is not None else action
     elif cfg.model_family == "octo":
         # Build Octo observation and sample a single-step action
         import jax
@@ -318,9 +413,19 @@ def get_action(
         # Construct task from text without touching its representation
         task = model.create_tasks(texts=[task_label])
 
-        # Sample action
-        #action = model.sample_actions(observation, task, rng=jax.random.PRNGKey(0))
-        
+        capture_payload: Optional[Dict[str, Optional[np.ndarray]]] = None
+        if capture_spec is not None and capture_spec.get("request_tokens"):
+            try:
+                timestep_idx = int(capture_spec.get("timestep_index", T - 1))
+            except Exception:
+                timestep_idx = T - 1
+            capture_payload = _extract_vision_tokens_for_snapshot(
+                model,
+                observation,
+                task,
+                timestep_index=timestep_idx,
+            )
+
         # Build un-normalization stats from the checkpoint
         ds = getattr(model, "dataset_statistics", {}).get("action")
         unnorm_stats = None
@@ -358,6 +463,8 @@ def get_action(
             else:
                 steps.append(np.pad(vec.astype(np.float32), (0, 7 - vec.size)))
 
+        if capture_spec is not None:
+            return steps, capture_payload
         return steps
     else:
         raise ValueError(f"Unsupported model family: {cfg.model_family}")

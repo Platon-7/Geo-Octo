@@ -5,7 +5,7 @@
 #SBATCH --gpus=1
 #SBATCH --job-name=Train_VGGT_AE
 #SBATCH --ntasks=1
-#SBATCH --time=20:00:00
+#SBATCH --time=01:00:00
 #SBATCH --mem=122000M
 #SBATCH --output=outfiles/train_vggt_ae_%A.out
 

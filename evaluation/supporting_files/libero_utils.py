@@ -58,7 +58,7 @@ def save_rollout_video(rollout_images, idx, success, task_description, log_file=
     rollout_dir = os.path.join(base_dir, DATE)
     os.makedirs(rollout_dir, exist_ok=True)
     processed_task_description = task_description.lower().replace(" ", "_").replace("\n", "_").replace(".", "_")[:50]
-    filename = f"libero_eval3--episode={idx}--success={success}--task={processed_task_description}.mp4"
+    filename = f"libero_eval_vggt--episode={idx}--success={success}--task={processed_task_description}.mp4"
     mp4_path = os.path.join(rollout_dir, filename)
     video_writer = imageio.get_writer(mp4_path, fps=30)
     for img in rollout_images:

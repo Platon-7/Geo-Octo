@@ -1,0 +1,54 @@
+
+==================================================
+EVALUATION CONFIGURATION
+  Model Path:      /scratch-shared/tmp.cwkV8vOvfY/trained_models/my_octo_vggt_model_online/octo_finetune_pointmap/lora_pointmap_20251102_141315
+  Checkpoint Step: 40000
+==================================================
+
+Task suite: libero_object
+Using default initial states
+Skipping task 'pick up the alphabet soup and place it in the basket' because it does not match attention_snapshot_task.
+Using default initial states
+Skipping task 'pick up the cream cheese and place it in the basket' because it does not match attention_snapshot_task.
+Using default initial states
+Skipping task 'pick up the salad dressing and place it in the basket' because it does not match attention_snapshot_task.
+Using default initial states
+Skipping task 'pick up the bbq sauce and place it in the basket' because it does not match attention_snapshot_task.
+Using default initial states
+
+Task: pick up the ketchup and place it in the basket
+Starting episode 1...
+Saved rollout MP4 at path ./rollouts/2025_11_14/libero_eval_vggt--episode=1--success=False--task=pick_up_the_ketchup_and_place_it_in_the_basket.mp4
+Success: False
+# episodes completed so far: 1
+# successes: 0 (0.0%)
+
+Task: pick up the ketchup and place it in the basket
+Starting episode 2...
+Saved rollout MP4 at path ./rollouts/2025_11_14/libero_eval_vggt--episode=2--success=True--task=pick_up_the_ketchup_and_place_it_in_the_basket.mp4
+Success: True
+# episodes completed so far: 2
+# successes: 1 (50.0%)
+
+Task: pick up the ketchup and place it in the basket
+Starting episode 3...
+Saved rollout MP4 at path ./rollouts/2025_11_14/libero_eval_vggt--episode=3--success=False--task=pick_up_the_ketchup_and_place_it_in_the_basket.mp4
+Success: False
+# episodes completed so far: 3
+# successes: 1 (33.3%)
+
+Task: pick up the ketchup and place it in the basket
+Starting episode 4...
+Saved attention snapshot for policy 'pointmap' at 1.00s to analysis/attention_snapshots/ketchup_episode3_t1p00s_pointmap.npz
+Saved rollout MP4 at path ./rollouts/2025_11_14/libero_eval_vggt--episode=4--success=False--task=pick_up_the_ketchup_and_place_it_in_the_basket.mp4
+Success: False
+# episodes completed so far: 4
+# successes: 1 (25.0%)
+Attention snapshot captured; ending task early.
+Current task success rate: 0.25
+Current total success rate: 0.25
+Attention snapshot captured; stopping further task evaluation.
+Final results:
+Total episodes: 4
+Total successes: 1
+Overall success rate: 0.2500 (25.0%)

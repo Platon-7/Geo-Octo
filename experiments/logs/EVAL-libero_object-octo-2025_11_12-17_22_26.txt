@@ -1,0 +1,12 @@
+
+==================================================
+EVALUATION CONFIGURATION
+  Model Path:      /scratch-shared/tmp.cwkV8vOvfY/trained_models/my_octo_vggt_model_offline/octo_finetune_baseline/experiment_20251102_135224
+  Checkpoint Step: 160000
+==================================================
+
+Task suite: libero_object
+Using default initial states
+
+Task: pick up the alphabet soup and place it in the basket
+Starting episode 1...

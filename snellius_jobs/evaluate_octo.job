@@ -66,6 +66,13 @@ srun python -m evaluation.scripts.run_libero_eval \
   --model_family octo \
   --pretrained_checkpoint "/scratch-shared/tmp.cwkV8vOvfY/trained_models/my_octo_vggt_model_offline/octo_finetune_baseline/experiment_20251102_135224" \
   --task_suite_name libero_object \
-  --checkpoint_step 200000 \
-  --num_trials_per_task 1 \
-  --num_open_loop_steps 4
+  --checkpoint_step 160000 \
+  --num_trials_per_task 10 \
+  --num_open_loop_steps 4 \
+  --capture_attention_snapshot True \
+  --attention_snapshot_label baseline \
+  --attention_snapshot_task "pick up the ketchup and place it in the basket" \
+  --attention_snapshot_episode_idx 3 \
+  --attention_snapshot_seconds 1.0 \
+  --attention_snapshot_output_dir "analysis/attention_snapshots" \
+  --attention_snapshot_filename "ketchup_episode3_t1p00s.npz"

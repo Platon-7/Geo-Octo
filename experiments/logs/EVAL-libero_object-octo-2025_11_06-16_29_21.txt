@@ -1,0 +1,122 @@
+
+==================================================
+EVALUATION CONFIGURATION
+  Model Path:      /scratch-shared/tmp.cwkV8vOvfY/trained_models/my_octo_vggt_model_online/octo_finetune_vggt/experiment_20251102_141706
+  Checkpoint Step: 200000
+==================================================
+
+Task suite: libero_object
+Using default initial states
+
+Task: pick up the alphabet soup and place it in the basket
+Starting episode 1...
+Episode error: Initializer expected to generate shape (1024, 768) but got shape (512, 768) instead for parameter "kernel" in "/octo_transformer/obs_primary_projection". (https://flax.readthedocs.io/en/latest/api_reference/flax.errors.html#flax.errors.ScopeParamShapeError)
+Saved rollout MP4 at path ./rollouts/2025_11_06/libero_eval3--episode=1--success=False--task=pick_up_the_alphabet_soup_and_place_it_in_the_bask.mp4
+Success: False
+# episodes completed so far: 1
+# successes: 0 (0.0%)
+Current task success rate: 0.0
+Current total success rate: 0.0
+Using default initial states
+
+Task: pick up the cream cheese and place it in the basket
+Starting episode 1...
+Episode error: Initializer expected to generate shape (1024, 768) but got shape (512, 768) instead for parameter "kernel" in "/octo_transformer/obs_primary_projection". (https://flax.readthedocs.io/en/latest/api_reference/flax.errors.html#flax.errors.ScopeParamShapeError)
+Saved rollout MP4 at path ./rollouts/2025_11_06/libero_eval3--episode=2--success=False--task=pick_up_the_cream_cheese_and_place_it_in_the_baske.mp4
+Success: False
+# episodes completed so far: 2
+# successes: 0 (0.0%)
+Current task success rate: 0.0
+Current total success rate: 0.0
+Using default initial states
+
+Task: pick up the salad dressing and place it in the basket
+Starting episode 1...
+Episode error: Initializer expected to generate shape (1024, 768) but got shape (512, 768) instead for parameter "kernel" in "/octo_transformer/obs_primary_projection". (https://flax.readthedocs.io/en/latest/api_reference/flax.errors.html#flax.errors.ScopeParamShapeError)
+Saved rollout MP4 at path ./rollouts/2025_11_06/libero_eval3--episode=3--success=False--task=pick_up_the_salad_dressing_and_place_it_in_the_bas.mp4
+Success: False
+# episodes completed so far: 3
+# successes: 0 (0.0%)
+Current task success rate: 0.0
+Current total success rate: 0.0
+Using default initial states
+
+Task: pick up the bbq sauce and place it in the basket
+Starting episode 1...
+Episode error: Initializer expected to generate shape (1024, 768) but got shape (512, 768) instead for parameter "kernel" in "/octo_transformer/obs_primary_projection". (https://flax.readthedocs.io/en/latest/api_reference/flax.errors.html#flax.errors.ScopeParamShapeError)
+Saved rollout MP4 at path ./rollouts/2025_11_06/libero_eval3--episode=4--success=False--task=pick_up_the_bbq_sauce_and_place_it_in_the_basket.mp4
+Success: False
+# episodes completed so far: 4
+# successes: 0 (0.0%)
+Current task success rate: 0.0
+Current total success rate: 0.0
+Using default initial states
+
+Task: pick up the ketchup and place it in the basket
+Starting episode 1...
+Episode error: Initializer expected to generate shape (1024, 768) but got shape (512, 768) instead for parameter "kernel" in "/octo_transformer/obs_primary_projection". (https://flax.readthedocs.io/en/latest/api_reference/flax.errors.html#flax.errors.ScopeParamShapeError)
+Saved rollout MP4 at path ./rollouts/2025_11_06/libero_eval3--episode=5--success=False--task=pick_up_the_ketchup_and_place_it_in_the_basket.mp4
+Success: False
+# episodes completed so far: 5
+# successes: 0 (0.0%)
+Current task success rate: 0.0
+Current total success rate: 0.0
+Using default initial states
+
+Task: pick up the tomato sauce and place it in the basket
+Starting episode 1...
+Episode error: Initializer expected to generate shape (1024, 768) but got shape (512, 768) instead for parameter "kernel" in "/octo_transformer/obs_primary_projection". (https://flax.readthedocs.io/en/latest/api_reference/flax.errors.html#flax.errors.ScopeParamShapeError)
+Saved rollout MP4 at path ./rollouts/2025_11_06/libero_eval3--episode=6--success=False--task=pick_up_the_tomato_sauce_and_place_it_in_the_baske.mp4
+Success: False
+# episodes completed so far: 6
+# successes: 0 (0.0%)
+Current task success rate: 0.0
+Current total success rate: 0.0
+Using default initial states
+
+Task: pick up the butter and place it in the basket
+Starting episode 1...
+Episode error: Initializer expected to generate shape (1024, 768) but got shape (512, 768) instead for parameter "kernel" in "/octo_transformer/obs_primary_projection". (https://flax.readthedocs.io/en/latest/api_reference/flax.errors.html#flax.errors.ScopeParamShapeError)
+Saved rollout MP4 at path ./rollouts/2025_11_06/libero_eval3--episode=7--success=False--task=pick_up_the_butter_and_place_it_in_the_basket.mp4
+Success: False
+# episodes completed so far: 7
+# successes: 0 (0.0%)
+Current task success rate: 0.0
+Current total success rate: 0.0
+Using default initial states
+
+Task: pick up the milk and place it in the basket
+Starting episode 1...
+Episode error: Initializer expected to generate shape (1024, 768) but got shape (512, 768) instead for parameter "kernel" in "/octo_transformer/obs_primary_projection". (https://flax.readthedocs.io/en/latest/api_reference/flax.errors.html#flax.errors.ScopeParamShapeError)
+Saved rollout MP4 at path ./rollouts/2025_11_06/libero_eval3--episode=8--success=False--task=pick_up_the_milk_and_place_it_in_the_basket.mp4
+Success: False
+# episodes completed so far: 8
+# successes: 0 (0.0%)
+Current task success rate: 0.0
+Current total success rate: 0.0
+Using default initial states
+
+Task: pick up the chocolate pudding and place it in the basket
+Starting episode 1...
+Episode error: Initializer expected to generate shape (1024, 768) but got shape (512, 768) instead for parameter "kernel" in "/octo_transformer/obs_primary_projection". (https://flax.readthedocs.io/en/latest/api_reference/flax.errors.html#flax.errors.ScopeParamShapeError)
+Saved rollout MP4 at path ./rollouts/2025_11_06/libero_eval3--episode=9--success=False--task=pick_up_the_chocolate_pudding_and_place_it_in_the_.mp4
+Success: False
+# episodes completed so far: 9
+# successes: 0 (0.0%)
+Current task success rate: 0.0
+Current total success rate: 0.0
+Using default initial states
+
+Task: pick up the orange juice and place it in the basket
+Starting episode 1...
+Episode error: Initializer expected to generate shape (1024, 768) but got shape (512, 768) instead for parameter "kernel" in "/octo_transformer/obs_primary_projection". (https://flax.readthedocs.io/en/latest/api_reference/flax.errors.html#flax.errors.ScopeParamShapeError)
+Saved rollout MP4 at path ./rollouts/2025_11_06/libero_eval3--episode=10--success=False--task=pick_up_the_orange_juice_and_place_it_in_the_baske.mp4
+Success: False
+# episodes completed so far: 10
+# successes: 0 (0.0%)
+Current task success rate: 0.0
+Current total success rate: 0.0
+Final results:
+Total episodes: 10
+Total successes: 0
+Overall success rate: 0.0000 (0.0%)

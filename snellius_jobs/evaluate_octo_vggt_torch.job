@@ -45,14 +45,21 @@ export PYTHONPATH="/gpfs/home4/pkarageorgis/geo_octo/vggt:/gpfs/home4/pkarageorg
 
 srun python -m evaluation.scripts.run_libero_eval_vggt_torch \
   --model_family octo \
-  --pretrained_checkpoint "/scratch-shared/tmp.cwkV8vOvfY/trained_models/my_octo_vggt_model_online/octo_finetune_vggt/experiment_20251102_141706" \
+  --pretrained_checkpoint "/scratch-shared/tmp.cwkV8vOvfY/trained_models/my_octo_vggt_model_online/octo_finetune_vggt/experiment_20251102_143753" \
   --checkpoint_step 200000 \
   --task_suite_name libero_object \
-  --num_trials_per_task 1 \
+  --num_trials_per_task 10 \
   --num_open_loop_steps 4 \
   --use_vggt_tokens True \
   --vggt_ae_path "/home/pkarageorgis/AE_Compressor/vggt_autoencoder_24L_256x512.pt" \
   --vggt_input_res 224 \
   --vggt_agg_layers 24 \
-  --vggt_only_eval False \
-  --vggt_layer_indices=None
+  --vggt_only_eval True \
+  --vggt_layer_indices=None \
+  --capture_attention_snapshot True \
+  --attention_snapshot_label vggt_only \
+  --attention_snapshot_task "pick up the ketchup and place it in the basket" \
+  --attention_snapshot_episode_idx 3 \
+  --attention_snapshot_seconds 1.0 \
+  --attention_snapshot_output_dir "analysis/attention_snapshots" \
+  --attention_snapshot_filename "ketchup_episode3_t1p00s_vggt_only.npz"

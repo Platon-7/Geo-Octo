@@ -906,21 +906,30 @@ def main(_):
     if FLAGS.ae_verification_enable:
         verification_dir = FLAGS.ae_verification_dir or os.path.join(FLAGS.output_dir, "ae_verification")
         try:
-            verify_autoencoder_reconstruction(
-                builders=original_builders,
-                extractor=extractor,
-                compressor=compressor,
-                num_samples=int(FLAGS.ae_verification_count),
-                output_dir=verification_dir,
-                device=device,
-            )
+            # --- START MODIFICATION ---
+            # Find the specific builder for 'libero_object' from the list of all builders.
+            object_builder = next((b for b in original_builders if 'libero_object' in b.name), None)
+
+            if object_builder:
+                logging.info("Running AE verification specifically on the 'libero_object' dataset.")
+                # Pass a new list containing only the 'libero_object' builder.
+                verify_autoencoder_reconstruction(
+                    builders=[object_builder],
+                    extractor=extractor,
+                    compressor=compressor,
+                    num_samples=int(FLAGS.ae_verification_count),
+                    output_dir=verification_dir,
+                    device=device,
+                )
+            else:
+                logging.warning("Could not find 'libero_object' dataset for verification. Skipping.")
         except Exception as e:
             logging.warning("AE verification failed: %s", e)
 
     # Save AE
     os.makedirs(FLAGS.output_dir, exist_ok=True)
     agg_tag = "pointmap" if FLAGS.pointmap_tokens else f"{FLAGS.vggt_agg_layers}L"
-    ae_path = os.path.join(FLAGS.output_dir, f"vggt_autoencoder_{agg_tag}_{target_size[0]}x{target_size[1]}.pt")
+    ae_path = os.path.join(FLAGS.output_dir, f"vggt_autoencoder_2_{agg_tag}_{target_size[0]}x{target_size[1]}.pt")
     compressor.cpu().save(ae_path)
     logging.info("Saved AE compressor to %s", ae_path)
 

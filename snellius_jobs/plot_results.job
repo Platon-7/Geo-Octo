@@ -1,0 +1,46 @@
+#!/bin/bash
+#SBATCH --partition=gpu_a100
+#SBATCH --gres=gpu:1
+#SBATCH --cpus-per-task=4
+#SBATCH --gpus=1
+#SBATCH --job-name=Plot_Results
+#SBATCH --ntasks=1
+#SBATCH --time=00:20:00
+#SBATCH --mem=122000M
+#SBATCH --output=outfiles/plot_results_%A.out
+module purge
+module load 2024
+module load Anaconda3/2024.06-1
+
+
+export WANDB_API_KEY="5d3260b21e8729601f20bfe817abc713a0dcc047"
+export WANDB_ENTITY="nlp-squad"
+export WANDB_PROJECT="Geo_Octo"
+
+
+source activate octo-libero-eval
+
+export CUDA_NVCC_BIN=$(python -c "import os,inspect,nvidia.cuda_nvcc as nvcc; print(os.path.join(os.path.dirname(inspect.getfile(nvcc)),'bin'))")
+export NVRTC_LIB_DIR=$(python -c "import os,inspect,nvidia.cuda_nvrtc as nvrtc; print(os.path.join(os.path.dirname(inspect.getfile(nvrtc)),'lib'))")
+export PATH="$CUDA_NVCC_BIN:$PATH"
+export LD_LIBRARY_PATH="$NVRTC_LIB_DIR:$CONDA_PREFIX/lib:$LD_LIBRARY_PATH"
+export PYTHONPATH="/gpfs/home4/pkarageorgis/geo_octo:/gpfs/home4/pkarageorgis/geo_octo/LIBERO:/gpfs/home4/pkarageorgis/geo_octo/octo:$PYTHONPATH"
+export MUJOCO_GL=egl
+export TOKENIZERS_PARALLELISM=false
+export TF_CPP_MIN_LOG_LEVEL=3
+export DISABLE_LIBERO_FLIPS=0
+
+# GPU diagnostics (runs on the allocated GPU node)
+srun -n 1 python - <<'PY'
+import os, jax, torch
+print('CUDA_VISIBLE_DEVICES=', os.environ.get('CUDA_VISIBLE_DEVICES'))
+print('JAX:', jax.default_backend(), jax.devices())
+print('Torch CUDA:', torch.version.cuda)
+PY
+
+export PYTHONPATH="/gpfs/home4/pkarageorgis/geo_octo/vggt:/gpfs/home4/pkarageorgis/geo_octo/LIBERO:/gpfs/home4/pkarageorgis/geo_octo/octo:$PYTHONPATH"
+
+hostname
+
+python evaluation/scripts/plot_results.py \
+  --output analysis/accuracy_bar_chart.png

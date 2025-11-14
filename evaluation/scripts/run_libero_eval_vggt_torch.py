@@ -2,6 +2,7 @@ import sys
 import warnings
 import json
 import numpy as np
+from datetime import datetime
 
 # Add compatibility shim before importing anything else
 try:
@@ -194,6 +195,18 @@ class GenerateConfig:
     run_id_note: Optional[str] = None                # Extra note to add to end of run ID for logging
     local_log_dir: str = "./experiments/logs"        # Local directory for eval logs
 
+    #################################################################################################################
+    # Attention snapshot capture (disabled by default)
+    #################################################################################################################
+    capture_attention_snapshot: bool = False         # Enable saving intermediate vision tokens for analysis
+    attention_snapshot_task: Optional[str] = "pick up the ketchup and place it in the basket"
+    attention_snapshot_episode_idx: int = 3          # Zero-based episode index to capture from
+    attention_snapshot_seconds: float = 1.0          # Seconds after episode start to capture observation
+    attention_snapshot_control_freq: Optional[float] = None  # Override control frequency if env attribute missing
+    attention_snapshot_output_dir: str = "./analysis/attention_snapshots"
+    attention_snapshot_filename: Optional[str] = None
+    attention_snapshot_label: Optional[str] = None   # Required when capture enabled to distinguish policies
+
     use_wandb: bool = False                          # Whether to also log results in Weights & Biases
     wandb_entity: str = "your-wandb-entity"          # Name of WandB entity
     wandb_project: str = "your-wandb-project"        # Name of WandB project
@@ -317,17 +330,157 @@ def process_action(action, model_family, action_mean=None, action_std=None):
         action = invert_gripper_action(action)
     # change the octo branch in process_action:
     elif model_family == "octo":
-        if action_mean is None or action_std is None:
-            raise ValueError("Action statistics (mean, std) must be provided for Octo model evaluation!")
-        action_mean = action_mean[:action.shape[-1]]
-        action_std = action_std[:action.shape[-1]]
-        if action_mask is not None:
-            mask = action_mask[:action.shape[-1]]
-            return np.where(mask, (action * action_std) + action_mean, action)
-        return (action * action_std) + action_mean
+        # For Octo we assume the model already outputs actions in the correct range
+        return np.asarray(action, dtype=np.float32)
+    
     else:
+        # Fallback for other models if needed
         return np.clip(np.asarray(action, dtype=np.float32), -1.0, 1.0)
 
+
+class AttentionSnapshotManager:
+    """Manage when and how to record intermediate vision tokens for later visualization."""
+
+    def __init__(self, cfg: GenerateConfig, task_description: str, log_fn=log_message):
+        self.cfg = cfg
+        self.task_description = task_description or ""
+        self._log = log_fn
+        self.enabled = bool(getattr(cfg, "capture_attention_snapshot", False))
+        self._task_match = False
+        self.task_match = False
+        self.captured = False
+        self._pending = False
+        self._pending_policy_step = None
+        self._freq_cache: Optional[float] = None
+        self.output_dir: Optional[Path] = None
+        self.output_path: Optional[Path] = None
+
+        if not self.enabled:
+            return
+
+        target_task = (cfg.attention_snapshot_task or "").strip().lower()
+        current_task = self.task_description.strip().lower()
+        self._task_match = (not target_task) or (current_task == target_task)
+        self.task_match = self._task_match
+
+        if self._task_match:
+            if not cfg.attention_snapshot_label:
+                raise ValueError(
+                    "attention_snapshot_label must be provided when capture_attention_snapshot is enabled "
+                    "and the target task matches."
+                )
+            base_filename = cfg.attention_snapshot_filename or self._default_filename(current_task or "task")
+            self.output_dir = Path(cfg.attention_snapshot_output_dir).expanduser()
+            self.output_path = self.output_dir / base_filename
+
+    def _default_filename(self, task_slug: str) -> str:
+        slug = "_".join(task_slug.split()) or "task"
+        seconds = self.cfg.attention_snapshot_seconds
+        sec_str = f"{seconds:.2f}".replace(".", "p")
+        episode = self.cfg.attention_snapshot_episode_idx
+        return f"{slug}_episode{episode}_t{sec_str}s.npz"
+
+    def _resolve_control_freq(self, control_freq: Optional[float]) -> float:
+        if self.cfg.attention_snapshot_control_freq is not None:
+            return float(self.cfg.attention_snapshot_control_freq)
+        if control_freq is not None:
+            return float(control_freq)
+        return 20.0  # LIBERO default
+
+    def _target_step(self, control_freq: float) -> int:
+        seconds = max(0.0, float(self.cfg.attention_snapshot_seconds))
+        return max(0, int(round(seconds * control_freq)))
+
+    def should_capture(self, episode_idx: int, policy_step_idx: int, control_freq: Optional[float]) -> bool:
+        if not self.enabled or self.captured or not self._task_match or self.output_path is None:
+            return False
+        if episode_idx != self.cfg.attention_snapshot_episode_idx:
+            return False
+
+        freq = self._resolve_control_freq(control_freq)
+        target_step = self._target_step(freq)
+        if policy_step_idx < target_step:
+            return False
+
+        self._pending = True
+        self._pending_policy_step = policy_step_idx
+        self._freq_cache = freq
+        return True
+
+    def build_capture_spec(self) -> dict:
+        return {"request_tokens": True}
+
+    def commit(
+        self,
+        payload: Optional[dict],
+        image: Optional[np.ndarray],
+        episode_idx: int,
+        control_freq: Optional[float],
+    ) -> None:
+        if not self._pending:
+            return
+
+        self._pending = False
+        freq = self._freq_cache or self._resolve_control_freq(control_freq)
+        policy_step_idx = self._pending_policy_step or 0
+        seconds_actual = policy_step_idx / freq if freq else None
+
+        if payload is None:
+            self._log("Attention snapshot capture requested but returned payload was None.")
+            return
+
+        octo_tokens = payload.get("octo_tokens")
+        if octo_tokens is None:
+            self._log("Attention snapshot payload missing 'octo_tokens'; skipping save.")
+            return
+
+        vggt_tokens = payload.get("vggt_tokens")
+        image_np = np.asarray(image) if image is not None else None
+
+        if self.output_dir is None or self.output_path is None:
+            self._log("Attention snapshot output path is undefined; skipping save.")
+            return
+
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+
+        existing: dict = {}
+        if self.output_path.exists():
+            with np.load(self.output_path, allow_pickle=True) as data:
+                existing = {k: data[k] for k in data.files}
+
+        label = self.cfg.attention_snapshot_label or "policy"
+
+        new_entries = {
+            f"{label}_octo_tokens": np.asarray(octo_tokens, dtype=np.float32),
+        }
+        if vggt_tokens is not None:
+            new_entries[f"{label}_vggt_tokens"] = np.asarray(vggt_tokens, dtype=np.float32)
+        if image_np is not None:
+            new_entries[f"{label}_rgb"] = image_np.astype(np.uint8)
+
+        metadata = {
+            "policy_label": label,
+            "task_description": self.task_description,
+            "episode_idx": episode_idx,
+            "target_seconds": self.cfg.attention_snapshot_seconds,
+            "captured_policy_step": policy_step_idx,
+            "control_freq": freq,
+            "seconds_elapsed": seconds_actual,
+            "timestamp": datetime.utcnow().isoformat(),
+            "pretrained_checkpoint": str(self.cfg.pretrained_checkpoint),
+            "run_id_note": self.cfg.run_id_note,
+        }
+        new_entries[f"{label}_meta"] = np.array(json.dumps(metadata), dtype=object)
+
+        existing.update(new_entries)
+        np.savez_compressed(self.output_path, **existing)
+
+        self.captured = True
+        seconds_str = f"{seconds_actual:.2f}s" if seconds_actual is not None else "N/A"
+        self._log(
+            f"Saved attention snapshot for policy '{label}' at {seconds_str} "
+            f"to {self.output_path}"
+        )
 
 # ===== VGGT (PyTorch) helpers =====
 
@@ -452,6 +605,8 @@ def run_episode(
     initial_state=None,
     log_file=None,
     vggt_ctx: Optional[dict] = None,
+    episode_idx: int = 0,
+    snapshot_manager: Optional[AttentionSnapshotManager] = None,
 ):
     env.reset()
     if initial_state is not None:
@@ -464,6 +619,13 @@ def run_episode(
               f"({NUM_ACTIONS_CHUNK}) constant defined in prismatic.vla.constants! For best performance (in terms of "
                "both speed and success rate), we recommend executing the full action chunk.")
     action_queue = deque(maxlen=cfg.num_open_loop_steps)
+
+    # Try to infer control frequency for timing calculations
+    control_freq = getattr(env, "control_freq", None)
+    if control_freq is None and hasattr(env, "env"):
+        control_freq = getattr(env.env, "control_freq", None)
+    if control_freq is None and hasattr(env, "wrapped_env"):
+        control_freq = getattr(env.wrapped_env, "control_freq", None)
 
     t = 0
     replay_images = []
@@ -479,6 +641,7 @@ def run_episode(
 
             observation, img = prepare_observation(obs)
 
+            compressed_tokens = None
             if cfg.model_family == "octo" and cfg.use_vggt_tokens and vggt_ctx is not None:
                 try:
                     compressed_tokens = compute_compressed_vggt_tokens_torch(img, vggt_ctx)
@@ -489,17 +652,54 @@ def run_episode(
             replay_images.append(img)
 
             if len(action_queue) == 0:
-                actions = get_action(
-                    cfg,
-                    model,
-                    observation,
-                    task_description,
-                    processor=processor,
-                    action_head=action_head,
-                    proprio_projector=proprio_projector,
-                    noisy_action_projector=noisy_action_projector,
-                    use_film=cfg.use_film,
+                policy_step_idx = max(0, t - cfg.num_steps_wait)
+                capture_payload = None
+                capture_now = (
+                    snapshot_manager is not None
+                    and cfg.model_family == "octo"
+                    and snapshot_manager.should_capture(episode_idx, policy_step_idx, control_freq)
                 )
+                if capture_now:
+                    spec = snapshot_manager.build_capture_spec()
+                    actions_output = get_action(
+                        cfg,
+                        model,
+                        observation,
+                        task_description,
+                        processor=processor,
+                        action_head=action_head,
+                        proprio_projector=proprio_projector,
+                        noisy_action_projector=noisy_action_projector,
+                        use_film=cfg.use_film,
+                        capture_spec=spec,
+                    )
+                    if isinstance(actions_output, tuple) and len(actions_output) == 2:
+                        actions, capture_payload = actions_output
+                    else:
+                        actions = actions_output
+                        capture_payload = None
+                    if compressed_tokens is not None:
+                        if capture_payload is None:
+                            capture_payload = {}
+                        capture_payload["vggt_tokens"] = compressed_tokens
+                    snapshot_manager.commit(
+                        payload=capture_payload,
+                        image=img,
+                        episode_idx=episode_idx,
+                        control_freq=control_freq,
+                    )
+                else:
+                    actions = get_action(
+                        cfg,
+                        model,
+                        observation,
+                        task_description,
+                        processor=processor,
+                        action_head=action_head,
+                        proprio_projector=proprio_projector,
+                        noisy_action_projector=noisy_action_projector,
+                        use_film=cfg.use_film,
+                    )
                 action_queue.extend(actions)
 
             action = action_queue.popleft()
@@ -529,10 +729,22 @@ def run_task(
     total_successes=0,
     log_file=None,
     vggt_ctx: Optional[dict] = None,
-):
+) -> Tuple[int, int, bool]:
     task = task_suite.get_task(task_id)
     initial_states, all_initial_states = load_initial_states(cfg, task_suite, task_id, log_file)
     env, task_description = get_libero_env(task, cfg.model_family, cfg.env_img_res)
+
+    def _snapshot_log(message: str) -> None:
+        log_message(message, log_file)
+
+    snapshot_manager = AttentionSnapshotManager(cfg, task_description, _snapshot_log)
+
+    if cfg.capture_attention_snapshot and not snapshot_manager.task_match:
+        log_message(
+            f"Skipping task '{task_description}' because it does not match attention_snapshot_task.",
+            log_file,
+        )
+        return total_episodes, total_successes, False
 
     task_episodes, task_successes = 0, 0
     for episode_idx in tqdm.tqdm(range(cfg.num_trials_per_task)):
@@ -562,6 +774,8 @@ def run_task(
             initial_state,
             log_file,
             vggt_ctx=vggt_ctx,
+            episode_idx=episode_idx,
+            snapshot_manager=snapshot_manager,
         )
 
         task_episodes += 1
@@ -578,6 +792,10 @@ def run_task(
         log_message(f"# episodes completed so far: {total_episodes}", log_file)
         log_message(f"# successes: {total_successes} ({total_successes / total_episodes * 100:.1f}%)", log_file)
 
+        if snapshot_manager.captured:
+            log_message("Attention snapshot captured; ending task early.", log_file)
+            break
+
     task_success_rate = float(task_successes) / float(task_episodes) if task_episodes > 0 else 0
     total_success_rate = float(total_successes) / float(total_episodes) if total_episodes > 0 else 0
 
@@ -592,7 +810,7 @@ def run_task(
             }
         )
 
-    return total_episodes, total_successes
+    return total_episodes, total_successes, snapshot_manager.captured
 
 
 @draccus.wrap()
@@ -668,7 +886,7 @@ def eval_libero(cfg: GenerateConfig) -> float:
 
     total_episodes, total_successes = 0, 0
     for task_id in tqdm.tqdm(range(num_tasks)):
-        total_episodes, total_successes = run_task(
+        total_episodes, total_successes, snapshot_captured = run_task(
             cfg,
             task_suite,
             task_id,
@@ -682,6 +900,9 @@ def eval_libero(cfg: GenerateConfig) -> float:
             log_file,
             vggt_ctx=vggt_ctx,
         )
+        if snapshot_captured:
+            log_message("Attention snapshot captured; stopping further task evaluation.", log_file)
+            break
 
     final_success_rate = float(total_successes) / float(total_episodes) if total_episodes > 0 else 0
 
