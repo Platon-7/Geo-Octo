@@ -814,7 +814,6 @@ def run_episode(
     initial_state=None,
     log_file=None,
     vggt_ctx: Optional[dict] = None,
-    pointmap_ctx: Optional[dict] = None,
     episode_idx: int = 0,
     snapshot_manager: Optional[AttentionSnapshotManager] = None,
 ):
@@ -871,21 +870,14 @@ def run_episode(
                 )
                 if capture_now:
                     spec = snapshot_manager.build_capture_spec()
-                    pointmap_buffers = None
-                    if (
-                        cfg.attention_snapshot_request_pointmap_debug
-                        and pointmap_ctx is not None
-                    ):
-                        runner: Optional[VGGTPointmapRunner] = pointmap_ctx.get("runner")  # type: ignore[arg-type]
-                        if runner is not None:
-                            try:
-                                pointmap_buffers = _compute_pointmap_buffers(
-                                    img, runner, normalize=cfg.normalize_pointmap
-                                )
-                            except Exception as _e:
-                                log_message(f"[PointMap] Failed to compute VGGT pointmap at t={t}: {_e}", log_file)
-                    if pointmap_buffers is not None:
-                        spec["pointmap_buffers"] = pointmap_buffers
+                    if cfg.attention_snapshot_request_pointmap_debug:
+                        spec["pointmap_options"] = {
+                            "vggt_input_res": cfg.vggt_input_res,
+                            "vggt_eval_batch_size": cfg.vggt_eval_batch_size,
+                            "vggt_use_cuda": cfg.vggt_use_cuda,
+                            "vggt_device_id": cfg.vggt_device_id,
+                            "normalize_pointmap": cfg.normalize_pointmap,
+                        }
                     actions_output = get_action(
                         cfg,
                         model,
@@ -954,7 +946,6 @@ def run_task(
     total_successes=0,
     log_file=None,
     vggt_ctx: Optional[dict] = None,
-    pointmap_ctx: Optional[dict] = None,
 ) -> Tuple[int, int, bool]:
     task = task_suite.get_task(task_id)
     initial_states, all_initial_states = load_initial_states(cfg, task_suite, task_id, log_file)
@@ -1000,7 +991,6 @@ def run_task(
             initial_state,
             log_file,
             vggt_ctx=vggt_ctx,
-            pointmap_ctx=pointmap_ctx,
             episode_idx=episode_idx,
             snapshot_manager=snapshot_manager,
         )
@@ -1082,30 +1072,6 @@ def eval_libero(cfg: GenerateConfig) -> float:
                 print(f"[VGGT] Failed to initialize PyTorch VGGT+AE: {e}; continuing without VGGT tokens")
                 vggt_ctx = None
 
-    pointmap_ctx: Optional[dict] = None
-    if (
-        cfg.model_family == "octo"
-        and cfg.use_vggt_tokens
-        and cfg.capture_attention_snapshot
-        and cfg.attention_snapshot_request_pointmap_debug
-    ):
-        try:
-            if cfg.vggt_use_cuda and torch.cuda.is_available():
-                device_index = cfg.vggt_device_id if cfg.vggt_device_id is not None else 0
-                device = torch.device(f"cuda:{device_index}")
-            else:
-                device = torch.device("cpu")
-            runner = VGGTPointmapRunner(
-                device=device,
-                input_res=cfg.vggt_input_res,
-                batch_size=cfg.vggt_eval_batch_size,
-            )
-            pointmap_ctx = {"runner": runner}
-            print(f"[PointMap] Loaded VGGT pointmap runner on {device}")
-        except Exception as e:
-            print(f"[PointMap] Failed to initialize VGGT pointmap runner: {e}; continuing without pointmaps")
-            pointmap_ctx = None
-
     # Initialize model and components
     model, action_head, proprio_projector, noisy_action_projector, processor = initialize_model(cfg)
 
@@ -1150,7 +1116,6 @@ def eval_libero(cfg: GenerateConfig) -> float:
             total_successes,
             log_file,
             vggt_ctx=vggt_ctx,
-            pointmap_ctx=pointmap_ctx,
         )
         if snapshot_captured:
             log_message("Attention snapshot captured; stopping further task evaluation.", log_file)

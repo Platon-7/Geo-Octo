@@ -2,7 +2,7 @@ import copy
 import os
 import random
 import time
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Union, Tuple
 from collections import deque
 
 import numpy as np
@@ -175,11 +175,15 @@ def _build_pointmap_debug_payload(
     latest_obs: Dict[str, Any],
     rgb_preprocessed: Optional[np.ndarray],
     pointmap_buffers: Optional[Dict[str, np.ndarray]] = None,
+    pointmap_options: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, np.ndarray]:
     """
     Collect auxiliary tensors (readout tokens pre/post fusion, pointmaps, resized RGB) for visualization.
     """
     payload: Dict[str, np.ndarray] = {}
+
+    if pointmap_buffers is None and rgb_preprocessed is not None and pointmap_options is not None:
+        pointmap_buffers = _compute_debug_pointmap_buffers(rgb_preprocessed, pointmap_options)
 
     observation_no_pm = dict(observation)
     observation_no_pm.pop(pm_key, None)
@@ -245,6 +249,156 @@ def _inject_pointmap_for_debug(
     except Exception as exc:
         print(f"[SNAPSHOT DEBUG] Failed to build observation with pointmap: {exc}", flush=True)
         return None
+
+
+_POINTMAP_DEBUG_RUNNERS: Dict[Tuple, "_PointmapDebugRunner"] = {}
+
+
+class _PointmapDebugRunner:
+    def __init__(self, device: torch.device, input_res: int, batch_size: int):
+        from vggt.models.vggt import VGGT
+
+        self.device = device
+        self.input_res = int(input_res)
+        self.batch_size = max(1, int(batch_size))
+        self.model = VGGT.from_pretrained("facebook/VGGT-1B").to(self.device).eval()
+        if self.device.type == "cuda":
+            torch.backends.cudnn.benchmark = True
+
+    @torch.no_grad()
+    def compute_pointmap(self, images_bt3hw: np.ndarray) -> np.ndarray:
+        flat = images_bt3hw.reshape(-1, *images_bt3hw.shape[-3:])
+        chw = _debug_preprocess_images_for_vggt(flat, self.input_res)
+        outputs = []
+        amp_ctx = torch.cuda.amp.autocast(enabled=self.device.type == "cuda")
+        for start in range(0, chw.shape[0], self.batch_size):
+            batch = torch.from_numpy(chw[start : start + self.batch_size]).to(self.device)
+            batch = batch.unsqueeze(1)
+            with amp_ctx:
+                preds = self.model(batch)
+            if isinstance(preds, dict) and "world_points" in preds:
+                pts = preds["world_points"][:, 0]
+                conf = preds.get("world_points_conf")
+                if conf is not None:
+                    conf = conf[:, 0][..., None]
+                else:
+                    conf = torch.ones((*pts.shape[:3], 1), device=pts.device)
+                out = torch.cat([pts, conf], dim=-1)
+            elif isinstance(preds, dict) and "depth" in preds:
+                depth = preds["depth"][:, 0, ..., 0][..., None]
+                conf = preds.get("depth_conf")
+                if conf is not None:
+                    conf = conf[:, 0][..., None]
+                else:
+                    conf = torch.ones_like(depth)
+                zeros = torch.zeros_like(depth)
+                out = torch.cat([zeros, zeros, depth, conf], dim=-1)
+            else:
+                raise RuntimeError("VGGT did not return world_points/depth predictions.")
+            outputs.append(out.detach().cpu().numpy())
+
+        stacked = np.concatenate(outputs, axis=0)
+        b, t = images_bt3hw.shape[:2]
+        return stacked.reshape(b, t, stacked.shape[1], stacked.shape[2], stacked.shape[3]).astype(np.float32)
+
+
+def _compute_debug_pointmap_buffers(
+    rgb_preprocessed: np.ndarray,
+    options: Dict[str, Any],
+) -> Optional[Dict[str, np.ndarray]]:
+    try:
+        runner = _get_pointmap_debug_runner(options)
+        rgb = np.asarray(rgb_preprocessed)
+        if rgb.dtype != np.uint8:
+            if rgb.max() <= 1.0:
+                rgb = np.clip(rgb * 255.0, 0, 255).astype(np.uint8)
+            else:
+                rgb = np.clip(rgb, 0, 255).astype(np.uint8)
+        bt = rgb[np.newaxis, np.newaxis, ...]
+        pm_bt = runner.compute_pointmap(bt)
+        pm_raw = pm_bt[0, 0]
+        if bool(options.get("normalize_pointmap", True)):
+            pm_norm = _normalize_pointmap_batch(pm_bt)[0, 0]
+        else:
+            pm_norm = pm_raw
+        return {"raw": pm_raw.astype(np.float32), "normalized": pm_norm.astype(np.float32)}
+    except Exception as exc:
+        print(f"[SNAPSHOT DEBUG] Failed to compute VGGT pointmap: {exc}", flush=True)
+        return None
+
+
+def _get_pointmap_debug_runner(options: Dict[str, Any]) -> "_PointmapDebugRunner":
+    use_cuda = bool(options.get("vggt_use_cuda", False))
+    device_id = options.get("vggt_device_id")
+    if use_cuda and torch.cuda.is_available():
+        device_index = int(device_id) if device_id is not None else 0
+        device = torch.device(f"cuda:{device_index}")
+    else:
+        device = torch.device("cpu")
+    input_res = int(options.get("vggt_input_res", 224))
+    batch_size = int(options.get("vggt_eval_batch_size", 2))
+    key = (device.type, device.index or 0, input_res, batch_size)
+    runner = _POINTMAP_DEBUG_RUNNERS.get(key)
+    if runner is None:
+        runner = _PointmapDebugRunner(device, input_res, batch_size)
+        _POINTMAP_DEBUG_RUNNERS[key] = runner
+    return runner
+
+
+def _debug_preprocess_images_for_vggt(images_np: np.ndarray, target_size: int) -> np.ndarray:
+    from PIL import Image
+
+    processed = []
+    for img_array in images_np:
+        pil_image = Image.fromarray(img_array)
+        if pil_image.mode == "RGBA":
+            background = Image.new("RGBA", pil_image.size, (255, 255, 255, 255))
+            pil_image = Image.alpha_composite(background, pil_image)
+        pil_image = pil_image.convert("RGB")
+
+        width, height = pil_image.size
+        if width >= height:
+            new_width = target_size
+            new_height = int(round(height * (new_width / width) / 14) * 14)
+        else:
+            new_height = target_size
+            new_width = int(round(width * (new_height / height) / 14) * 14)
+        pil_image = pil_image.resize((new_width, new_height), Image.Resampling.BILINEAR)
+
+        arr = np.asarray(pil_image, dtype=np.float32) / 255.0
+        arr = np.transpose(arr, (2, 0, 1))
+
+        h_padding = target_size - arr.shape[1]
+        w_padding = target_size - arr.shape[2]
+        pad_top = h_padding // 2
+        pad_bottom = h_padding - pad_top
+        pad_left = w_padding // 2
+        pad_right = w_padding - pad_left
+        arr = np.pad(
+            arr,
+            ((0, 0), (pad_top, pad_bottom), (pad_left, pad_right)),
+            mode="constant",
+            constant_values=1.0,
+        )
+        processed.append(arr)
+
+    return np.stack(processed, axis=0)
+
+
+def _normalize_pointmap_batch(pointmaps: np.ndarray, keep_conf: bool = True) -> np.ndarray:
+    if pointmaps.ndim != 5:
+        return pointmaps
+    x = pointmaps.astype(np.float32)
+    if keep_conf and x.shape[-1] >= 4:
+        xyz = x[..., :3]
+        conf = x[..., 3:4]
+        mean = np.nanmean(xyz, axis=(-3, -2), keepdims=True)
+        std = np.nanstd(xyz, axis=(-3, -2), keepdims=True) + 1e-6
+        xyz = (xyz - mean) / std
+        return np.concatenate([xyz, conf], axis=-1)
+    mean = np.nanmean(x, axis=(-3, -2), keepdims=True)
+    std = np.nanstd(x, axis=(-3, -2), keepdims=True) + 1e-6
+    return (x - mean) / std
 
 
 def set_seed_everywhere(seed: int) -> None:
@@ -547,6 +701,7 @@ def get_action(
         request_pointmap_debug = bool(capture_spec and capture_spec.get("request_pointmap_debug"))
         if request_pointmap_debug:
             pointmap_buffers = capture_spec.get("pointmap_buffers") if capture_spec else None
+            pointmap_options = capture_spec.get("pointmap_options") if capture_spec else None
             rgb_pre = image
             if target_h is not None and target_w is not None:
                 try:
@@ -563,6 +718,7 @@ def get_action(
                 latest_obs=obs,
                 rgb_preprocessed=rgb_pre,
                 pointmap_buffers=pointmap_buffers,
+                pointmap_options=pointmap_options,
             )
             if debug_payload:
                 if capture_payload is None:
