@@ -690,6 +690,14 @@ def run_episode(
                 )
                 if capture_now:
                     spec = snapshot_manager.build_capture_spec()
+                    if cfg.attention_snapshot_request_pointmap_debug:
+                        spec["pointmap_options"] = {
+                            "vggt_input_res": cfg.vggt_input_res,
+                            "vggt_eval_batch_size": cfg.vggt_eval_batch_size,
+                            "vggt_use_cuda": cfg.vggt_use_cuda,
+                            "vggt_device_id": cfg.vggt_device_id,
+                            "normalize_pointmap": cfg.normalize_pointmap,
+                        }
                     actions_output = get_action(
                         cfg,
                         model,
