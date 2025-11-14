@@ -186,6 +186,8 @@ class GenerateConfig:
     vggt_agg_layers: int = 24                        # 24 for all layers, <24 to slice subset
     vggt_layer_indices: str = "3,10,16,22"           # Used when vggt_agg_layers < 24 (0-based indices)
     vggt_ae_path: Optional[str] = None               # Path to saved AE compressor (.pt)
+    vggt_device_id: Optional[int] = None             # CUDA device index for VGGT helper (None -> default)
+    vggt_eval_batch_size: int = 2                    # Micro-batch size for VGGT helper
 
     vggt_only_eval: bool = False                     # Used when finetuning removed vision encoder completely
 
@@ -207,6 +209,8 @@ class GenerateConfig:
     attention_snapshot_filename: Optional[str] = None
     attention_snapshot_label: Optional[str] = None   # Required when capture enabled to distinguish policies
     attention_snapshot_request_pointmap_debug: bool = False  # Save pointmap/readout debug tensors when capturing
+    pointmap_key: str = "pointmap"                   # Snapshot helper expects this key for normalized pointmap
+    normalize_pointmap: bool = True                  # Whether to snapshot normalized XYZ pointmap
 
     use_wandb: bool = False                          # Whether to also log results in Weights & Biases
     wandb_entity: str = "your-wandb-entity"          # Name of WandB entity
