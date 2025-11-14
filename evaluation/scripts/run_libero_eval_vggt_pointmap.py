@@ -30,7 +30,7 @@ from collections import deque
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Optional, Union, Tuple, List
+from typing import Optional, Union, Tuple, List, Dict
 
 import draccus
 import tqdm
@@ -39,12 +39,10 @@ from libero.libero import benchmark
 import wandb
 
 from evaluation.supporting_files.load_fn import load_and_preprocess_images
-import tensorflow as tf
 
 # Torch + VGGT
 import torch
-import torch.nn as nn
-import torch.nn.functional as F
+from torch.cuda import amp as torch_amp
 from vggt.models.vggt import VGGT
 
 
@@ -183,29 +181,33 @@ class GenerateConfig:
     use_vggt_tokens: bool = True                     # Whether to compute and feed VGGT tokens online
     vggt_input_res: int = 224                        # Input resolution for VGGT model
     vggt_use_cuda: bool = True                       # Whether to use CUDA when available
-    vggt_agg_layers: int = 24                        # 24 for all layers, <24 to slice subset
-    vggt_layer_indices: str = "3,10,16,22"           # Used when vggt_agg_layers < 24 (0-based indices)
-    vggt_ae_path: Optional[str] = None               # Path to saved AE compressor (.pt)
+    vggt_eval_batch_size: int = 2                    # Mini-batch size for VGGT forward pass
+    vggt_device_id: Optional[int] = None             # Explicit CUDA device index (defaults to 0 when None)
+
+    # Pointmap options
+    pointmap_key: str = "pointmap"                   # Observation key to store normalized pointmap
+    normalize_pointmap: bool = True                  # Per-frame normalization of XYZ prior to injection
 
     vggt_only_eval: bool = False                     # Used when finetuning removed vision encoder completely
 
-      #################################################################################################################
-      # Utils
-      #################################################################################################################
-      run_id_note: Optional[str] = None                # Extra note to add to end of run ID for logging
-      local_log_dir: str = "./experiments/logs"        # Local directory for eval logs
+    #################################################################################################################
+    # Utils
+    #################################################################################################################
+    run_id_note: Optional[str] = None                # Extra note to add to end of run ID for logging
+    local_log_dir: str = "./experiments/logs"        # Local directory for eval logs
 
-      #################################################################################################################
-      # Attention snapshot capture (disabled by default)
-      #################################################################################################################
-      capture_attention_snapshot: bool = False         # Enable saving intermediate vision tokens for analysis
-      attention_snapshot_task: Optional[str] = "pick up the ketchup and place it in the basket"
-      attention_snapshot_episode_idx: int = 3          # Zero-based episode index to capture from
-      attention_snapshot_seconds: float = 1.0          # Seconds after episode start to capture observation
-      attention_snapshot_control_freq: Optional[float] = None  # Override control frequency if env attribute missing
-      attention_snapshot_output_dir: str = "./analysis/attention_snapshots"
-      attention_snapshot_filename: Optional[str] = None
-      attention_snapshot_label: Optional[str] = None   # Required when capture enabled to distinguish policies
+    #################################################################################################################
+    # Attention snapshot capture (disabled by default)
+    #################################################################################################################
+    capture_attention_snapshot: bool = False         # Enable saving intermediate vision tokens for analysis
+    attention_snapshot_task: Optional[str] = "pick up the ketchup and place it in the basket"
+    attention_snapshot_episode_idx: int = 3          # Zero-based episode index to capture from
+    attention_snapshot_seconds: float = 1.0          # Seconds after episode start to capture observation
+    attention_snapshot_control_freq: Optional[float] = None  # Override control frequency if env attribute missing
+    attention_snapshot_output_dir: str = "./analysis/attention_snapshots"
+    attention_snapshot_filename: Optional[str] = None
+    attention_snapshot_label: Optional[str] = None   # Required when capture enabled to distinguish policies
+    attention_snapshot_request_pointmap_debug: bool = False  # Store readout/pointmap debug tensors alongside tokens
 
     use_wandb: bool = False                          # Whether to also log results in Weights & Biases
     wandb_entity: str = "your-wandb-entity"          # Name of WandB entity
@@ -342,6 +344,83 @@ def process_action(action, model_family, action_mean=None, action_std=None):
         return np.clip(np.asarray(action, dtype=np.float32), -1.0, 1.0)
 
 
+def _normalize_pointmap_batch(pointmaps: np.ndarray, keep_conf: bool = True) -> np.ndarray:
+    """Per-image normalization for VGGT pointmaps."""
+    if pointmaps.ndim != 5:
+        return pointmaps
+    x = pointmaps.astype(np.float32)
+    if keep_conf and x.shape[-1] >= 4:
+        xyz = x[..., :3]
+        conf = x[..., 3:4]
+        mean = np.nanmean(xyz, axis=(-3, -2), keepdims=True)
+        std = np.nanstd(xyz, axis=(-3, -2), keepdims=True) + 1e-6
+        xyz = (xyz - mean) / std
+        return np.concatenate([xyz, conf], axis=-1)
+    mean = np.nanmean(x, axis=(-3, -2), keepdims=True)
+    std = np.nanstd(x, axis=(-3, -2), keepdims=True) + 1e-6
+    return (x - mean) / std
+
+
+class VGGTPointmapRunner:
+    """Lightweight wrapper to compute VGGT pointmaps (xyz + confidence) online."""
+
+    def __init__(
+        self,
+        device: torch.device,
+        input_res: int,
+        batch_size: int = 2,
+    ):
+        self.device = device
+        self.input_res = input_res
+        self.batch_size = max(1, int(batch_size))
+        self.model = VGGT.from_pretrained("facebook/VGGT-1B").to(self.device).eval()
+        if self.device.type == "cuda":
+            torch.backends.cudnn.benchmark = True
+
+    @torch.no_grad()
+    def compute_pointmap(self, images_bt3hw: np.ndarray) -> np.ndarray:
+        """
+        Args:
+            images_bt3hw: (B, T, H, W, 3) uint8 arrays.
+        Returns:
+            np.ndarray with shape (B, T, H', W', 4) containing xyz + confidence.
+        """
+        b, t, h, w, c = images_bt3hw.shape
+        flat = images_bt3hw.reshape(b * t, h, w, c)
+        chw = load_and_preprocess_images([img for img in flat], target_size=self.input_res)
+        outputs = []
+        amp_ctx = torch_amp.autocast(enabled=self.device.type == "cuda")
+
+        for start in range(0, chw.shape[0], self.batch_size):
+            batch = torch.from_numpy(chw[start : start + self.batch_size]).to(self.device)
+            batch = batch.unsqueeze(1)  # (k,1,3,H,W)
+            with amp_ctx:
+                preds = self.model(batch)
+            if isinstance(preds, Dict) and "world_points" in preds:
+                pts = preds["world_points"][:, 0]  # (k,H,W,3)
+                conf = preds.get("world_points_conf")
+                if conf is not None:
+                    conf = conf[:, 0][..., None]
+                else:
+                    conf = torch.ones((*pts.shape[:3], 1), device=pts.device)
+                out = torch.cat([pts, conf], dim=-1)
+            elif isinstance(preds, Dict) and "depth" in preds:
+                depth = preds["depth"][:, 0, ..., 0][..., None]
+                conf = preds.get("depth_conf")
+                if conf is not None:
+                    conf = conf[:, 0][..., None]
+                else:
+                    conf = torch.ones_like(depth)
+                zeros = torch.zeros_like(depth)
+                out = torch.cat([zeros, zeros, depth, conf], dim=-1)
+            else:
+                raise RuntimeError("VGGT did not return world_points or depth predictions.")
+            outputs.append(out.detach().cpu().numpy())
+
+        stacked = np.concatenate(outputs, axis=0)
+        return stacked.reshape(b, t, stacked.shape[1], stacked.shape[2], stacked.shape[3]).astype(np.float32)
+
+
 class AttentionSnapshotManager:
     """Manage when and how to record intermediate vision tokens for later visualization."""
 
@@ -350,6 +429,7 @@ class AttentionSnapshotManager:
         self.task_description = task_description or ""
         self._log = log_fn
         self.enabled = bool(getattr(cfg, "capture_attention_snapshot", False))
+        self.request_pointmap_debug = bool(getattr(cfg, "attention_snapshot_request_pointmap_debug", False))
         self._task_match = False
         self.task_match = False
         self.captured = False
@@ -412,7 +492,10 @@ class AttentionSnapshotManager:
         return True
 
     def build_capture_spec(self) -> dict:
-        return {"request_tokens": True}
+        spec = {"request_tokens": True}
+        if self.request_pointmap_debug:
+            spec["request_pointmap_debug"] = True
+        return spec
 
     def commit(
         self,
@@ -461,6 +544,21 @@ class AttentionSnapshotManager:
             new_entries[f"{label}_vggt_tokens"] = np.asarray(vggt_tokens, dtype=np.float32)
         if image_np is not None:
             new_entries[f"{label}_rgb"] = image_np.astype(np.uint8)
+        readout_pre = payload.get("readout_pre_pointmap_tokens")
+        if readout_pre is not None:
+            new_entries[f"{label}_readout_pre_pointmap_tokens"] = np.asarray(readout_pre, dtype=np.float32)
+        readout_post = payload.get("readout_post_pointmap_tokens")
+        if readout_post is not None:
+            new_entries[f"{label}_readout_post_pointmap_tokens"] = np.asarray(readout_post, dtype=np.float32)
+        pm_raw = payload.get("pointmap_raw")
+        if pm_raw is not None:
+            new_entries[f"{label}_pointmap_raw"] = np.asarray(pm_raw, dtype=np.float32)
+        pm_norm = payload.get("pointmap_normalized")
+        if pm_norm is not None:
+            new_entries[f"{label}_pointmap_normalized"] = np.asarray(pm_norm, dtype=np.float32)
+        rgb_pre = payload.get("rgb_preprocessed")
+        if rgb_pre is not None:
+            new_entries[f"{label}_rgb_preprocessed"] = np.asarray(rgb_pre, dtype=np.float32)
 
         metadata = {
             "policy_label": label,
@@ -473,6 +571,7 @@ class AttentionSnapshotManager:
             "timestamp": datetime.utcnow().isoformat(),
             "pretrained_checkpoint": str(self.cfg.pretrained_checkpoint),
             "run_id_note": self.cfg.run_id_note,
+            "pointmap_debug_requested": bool(getattr(self, "request_pointmap_debug", False)),
         }
         new_entries[f"{label}_meta"] = np.array(json.dumps(metadata), dtype=object)
 
@@ -488,115 +587,6 @@ class AttentionSnapshotManager:
 
 # ===== VGGT (PyTorch) helpers =====
 
-class WeightedLayerFuser(nn.Module):
-    def __init__(self, num_layers: int):
-        super().__init__()
-        self.weights = nn.Parameter(torch.zeros(num_layers))
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        w = torch.softmax(self.weights, dim=0)
-        return (x * w.view(*([1] * (x.ndim - 2)), -1, 1)).sum(dim=-2)
-
-
-class AECompressor(nn.Module):
-    def __init__(self, num_layers: int, input_dim: int, bottleneck_dim: int = 512, hidden_dim: int = 8192):
-        super().__init__()
-        self.fuser = WeightedLayerFuser(num_layers)
-        self.encoder = nn.Sequential(
-            nn.LayerNorm(input_dim),
-            nn.Linear(input_dim, hidden_dim),
-            nn.GELU(),
-            nn.Linear(hidden_dim, bottleneck_dim),
-        )
-        self.decoder = nn.Sequential(
-            nn.LayerNorm(bottleneck_dim),
-            nn.Linear(bottleneck_dim, hidden_dim),
-            nn.GELU(),
-            nn.Linear(hidden_dim, input_dim),
-        )
-        self.output_norm = nn.LayerNorm(bottleneck_dim)
-
-    @torch.no_grad()
-    def compress_tokens(self, tokens_ld: torch.Tensor) -> torch.Tensor:
-        self.eval()
-        device = next(self.parameters()).device
-        tokens_ld = tokens_ld.to(device)
-        fused = self.fuser(tokens_ld)
-        z = self.encoder(fused)
-        z = self.output_norm(z)
-        return z
-
-
-class TorchVGGTExtractor:
-    def __init__(self, device: torch.device, input_res: int, agg_layers: int, layer_indices: Optional[List[int]] = None):
-        self.device = device
-        self.input_res = input_res
-        self.agg_layers = int(agg_layers)
-        self.layer_indices = layer_indices
-        self.model = VGGT.from_pretrained("facebook/VGGT-1B").to(self.device).eval()
-
-    @torch.no_grad()
-    def extract_layers(self, chw_images: np.ndarray) -> Tuple[np.ndarray, int]:
-        x = torch.from_numpy(chw_images).to(self.device)  # [K,3,H,W]
-        x = x.unsqueeze(1)  # [K,1,3,H,W]
-        output_list, patch_start_idx = self.model.aggregator(x)
-        all_layers = []
-        for t in output_list:  # [K,1,P,8192]
-            t = t[:, 0]  # [K,P,8192]
-            t = t[:, patch_start_idx:, :]
-            all_layers.append(t)
-        layers = torch.stack(all_layers, dim=0).permute(1, 0, 2, 3)  # [K,L,N,8192]
-        if self.agg_layers < 24:
-            idx = self.layer_indices if (self.layer_indices and len(self.layer_indices) > 0) else [3, 10, 16, 22]
-            layers = layers[:, idx, :, :]
-        K, L, N, D = layers.shape
-        sqrt_n = int(round(np.sqrt(N)))
-        return layers.detach().cpu().numpy(), sqrt_n
-
-
-def resize_and_stack_per_layer(features_klnd: np.ndarray, sqrt_n: int) -> np.ndarray:
-    K, L, N, D = features_klnd.shape
-    s = sqrt_n
-    x = torch.from_numpy(features_klnd).float()
-    x = x.reshape(K * L, s, s, D).permute(0, 3, 1, 2)
-    target_side = 16  # for 256 tokens
-    x_small = F.interpolate(x, size=(target_side, target_side), mode='bilinear', align_corners=False)
-    x_small = x_small.permute(0, 2, 3, 1).contiguous().view(K, L, target_side * target_side, D)
-    return x_small.numpy()
-
-
-def _parse_layer_indices(s: str) -> Optional[List[int]]:
-    try:
-        idx = [int(x) for x in s.split(',') if x.strip() != '']
-        return idx
-    except Exception:
-        return [3, 10, 16, 22]
-
-
-def compute_compressed_vggt_tokens_torch(image: np.ndarray, vggt_ctx: dict) -> Optional[np.ndarray]:
-    if vggt_ctx is None:
-        return None
-
-    extractor: TorchVGGTExtractor = vggt_ctx.get("extractor")
-    compressor: AECompressor = vggt_ctx.get("compressor")
-    cfg: GenerateConfig = vggt_ctx.get("cfg")
-    device: torch.device = vggt_ctx.get("device")
-
-    if extractor is None or compressor is None:
-        raise RuntimeError("VGGT torch context is missing required components (extractor or compressor).")
-
-    # Preprocess to CHW float32 in [0,1]
-    pre = load_and_preprocess_images([image], target_size=cfg.vggt_input_res)
-    klnd, sqrt_n = extractor.extract_layers(pre)               # [K,L,N,D]
-    k_l_256_d = resize_and_stack_per_layer(klnd, sqrt_n)        # [K,L,256,D]
-    K, L, S256, D = k_l_256_d.shape
-    tokens = torch.from_numpy(k_l_256_d).float().view(K * S256, L, D).to(device)
-    with torch.no_grad():
-        z = compressor.compress_tokens(tokens)                  # [K*256,512]
-    z = z.view(K, S256, -1).detach().cpu().numpy().astype(np.float16)  # [K,256,512]
-    return z[0]
-
-
 def run_episode(
     cfg: GenerateConfig,
     env,
@@ -608,7 +598,7 @@ def run_episode(
     noisy_action_projector=None,
     initial_state=None,
     log_file=None,
-    vggt_ctx: Optional[dict] = None,
+    pointmap_ctx: Optional[dict] = None,
     episode_idx: int = 0,
     snapshot_manager: Optional[AttentionSnapshotManager] = None,
 ):
@@ -644,18 +634,29 @@ def run_episode(
                 continue
 
             observation, img = prepare_observation(obs)
-
-            compressed_tokens = None
-            if cfg.model_family == "octo" and cfg.use_vggt_tokens and vggt_ctx is not None:
-                try:
-                    compressed_tokens = compute_compressed_vggt_tokens_torch(img, vggt_ctx)
-                    observation["vggt_tokens"] = compressed_tokens
-                except Exception as _e:
-                    log_message(f"[VGGT] Failed to compute tokens at t={t}: {_e}", log_file)
-
             replay_images.append(img)
 
             if len(action_queue) == 0:
+                if (
+                    cfg.model_family == "octo"
+                    and cfg.use_vggt_tokens
+                    and pointmap_ctx is not None
+                ):
+                    try:
+                        runner: VGGTPointmapRunner = pointmap_ctx.get("runner")
+                        img_uint8 = np.asarray(img, dtype=np.uint8)
+                        img_bt = img_uint8[np.newaxis, np.newaxis, ...]
+                        pm_bt = runner.compute_pointmap(img_bt)
+                        pm_raw = pm_bt[0, 0]
+                        if cfg.normalize_pointmap:
+                            pm_norm = _normalize_pointmap_batch(pm_bt)[0, 0]
+                        else:
+                            pm_norm = pm_raw
+                        observation[cfg.pointmap_key] = pm_norm
+                        observation[f"{cfg.pointmap_key}_raw"] = pm_raw
+                    except Exception as _e:
+                        log_message(f"[PointMap] Failed to compute VGGT pointmap at t={t}: {_e}", log_file)
+
                 policy_step_idx = max(0, t - cfg.num_steps_wait)
                 capture_payload = None
                 capture_now = (
@@ -682,10 +683,6 @@ def run_episode(
                     else:
                         actions = actions_output
                         capture_payload = None
-                    if compressed_tokens is not None:
-                        if capture_payload is None:
-                            capture_payload = {}
-                        capture_payload["vggt_tokens"] = compressed_tokens
                     snapshot_manager.commit(
                         payload=capture_payload,
                         image=img,
@@ -732,7 +729,7 @@ def run_task(
     total_episodes=0,
     total_successes=0,
     log_file=None,
-    vggt_ctx: Optional[dict] = None,
+    pointmap_ctx: Optional[dict] = None,
 ) -> Tuple[int, int, bool]:
     task = task_suite.get_task(task_id)
     initial_states, all_initial_states = load_initial_states(cfg, task_suite, task_id, log_file)
@@ -777,7 +774,7 @@ def run_task(
             noisy_action_projector,
             initial_state,
             log_file,
-            vggt_ctx=vggt_ctx,
+            pointmap_ctx=pointmap_ctx,
             episode_idx=episode_idx,
             snapshot_manager=snapshot_manager,
         )
@@ -823,41 +820,26 @@ def eval_libero(cfg: GenerateConfig) -> float:
     set_seed_everywhere(cfg.seed)
 
     # =========================================================================
-    # --- PART 1: SETUP PyTorch VGGT + AE ---
+    # --- PART 1: SETUP PyTorch VGGT pointmap runner ---
     # =========================================================================
-    vggt_ctx: Optional[dict] = None
+    pointmap_ctx: Optional[dict] = None
     if cfg.model_family == "octo" and cfg.use_vggt_tokens:
-        if cfg.vggt_ae_path is None or not os.path.exists(cfg.vggt_ae_path):
-            print("[VGGT] AE path missing or not found; continuing without VGGT tokens")
-        else:
-            try:
-                device = torch.device('cuda' if (cfg.vggt_use_cuda and torch.cuda.is_available()) else 'cpu')
-                if device.type == 'cuda':
-                    torch.backends.cudnn.benchmark = True
-                # Determine layer indices if subset
-                layer_indices = _parse_layer_indices(cfg.vggt_layer_indices) if cfg.vggt_agg_layers < 24 else None
-                extractor = TorchVGGTExtractor(device, cfg.vggt_input_res, cfg.vggt_agg_layers, layer_indices)
-
-                # Probe L, D with a dummy white image
-                dummy = np.ones((1, 3, cfg.vggt_input_res, cfg.vggt_input_res), dtype=np.float32)
-                klnd, _ = extractor.extract_layers(dummy)
-                L = klnd.shape[1]
-                D = klnd.shape[3]
-
-                compressor = AECompressor(num_layers=L, input_dim=D, bottleneck_dim=512, hidden_dim=8192)
-                compressor.load_state_dict(torch.load(cfg.vggt_ae_path, map_location='cpu'))
-                compressor = compressor.to(device).eval()
-
-                vggt_ctx = {
-                    "extractor": extractor,
-                    "compressor": compressor,
-                    "cfg": cfg,
-                    "device": device,
-                }
-                print("Loaded PyTorch VGGT + AE compressor for online tokens.")
-            except Exception as e:
-                print(f"[VGGT] Failed to initialize PyTorch VGGT+AE: {e}; continuing without VGGT tokens")
-                vggt_ctx = None
+        try:
+            if cfg.vggt_use_cuda and torch.cuda.is_available():
+                device_index = int(cfg.vggt_device_id) if cfg.vggt_device_id is not None else 0
+                device = torch.device(f"cuda:{device_index}")
+            else:
+                device = torch.device("cpu")
+            runner = VGGTPointmapRunner(
+                device=device,
+                input_res=cfg.vggt_input_res,
+                batch_size=cfg.vggt_eval_batch_size,
+            )
+            pointmap_ctx = {"runner": runner}
+            print(f"[PointMap] Loaded VGGT runner on {device}")
+        except Exception as e:
+            print(f"[PointMap] Failed to initialize VGGT pointmap runner: {e}; continuing without pointmaps")
+            pointmap_ctx = None
 
     # Initialize model and components
     model, action_head, proprio_projector, noisy_action_projector, processor = initialize_model(cfg)
@@ -902,7 +884,7 @@ def eval_libero(cfg: GenerateConfig) -> float:
             total_episodes,
             total_successes,
             log_file,
-            vggt_ctx=vggt_ctx,
+            pointmap_ctx=pointmap_ctx,
         )
         if snapshot_captured:
             log_message("Attention snapshot captured; stopping further task evaluation.", log_file)

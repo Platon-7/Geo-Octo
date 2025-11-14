@@ -132,6 +132,85 @@ def _extract_vision_tokens_for_snapshot(
     }
 
 
+def _extract_readout_tokens_for_snapshot(
+    model: torch.nn.Module,
+    observation: Dict[str, Any],
+    task: Dict[str, Any],
+    timestep_index: int,
+    readout_name: str = "action",
+) -> Optional[np.ndarray]:
+    """
+    Run the transformer to fetch readout tokens at a particular timestep.
+    """
+    try:
+        import jax
+        outputs = model.run_transformer(
+            observation,
+            task,
+            observation["timestep_pad_mask"],
+            train=False,
+        )
+        readout_key = f"readout_{readout_name}"
+        group = outputs.get(readout_key)
+        if group is None or not hasattr(group, "tokens"):
+            return None
+        tokens = np.asarray(jax.device_get(group.tokens))
+        if tokens.ndim < 4:
+            return None
+        batch_idx = min(0, tokens.shape[0] - 1)
+        timestep = max(0, min(timestep_index, tokens.shape[1] - 1))
+        return tokens[batch_idx, timestep].astype(np.float32)
+    except Exception as exc:
+        print(f"[SNAPSHOT DEBUG] Failed to extract readout tokens: {exc}", flush=True)
+        return None
+
+
+def _build_pointmap_debug_payload(
+    model: torch.nn.Module,
+    observation: Dict[str, Any],
+    task: Dict[str, Any],
+    timestep_index: int,
+    pm_key: str,
+    latest_obs: Dict[str, Any],
+    rgb_preprocessed: Optional[np.ndarray],
+) -> Dict[str, np.ndarray]:
+    """
+    Collect auxiliary tensors (readout tokens pre/post fusion, pointmaps, resized RGB) for visualization.
+    """
+    payload: Dict[str, np.ndarray] = {}
+
+    post_tokens = _extract_readout_tokens_for_snapshot(
+        model, observation, task, timestep_index, readout_name="action"
+    )
+    if post_tokens is not None:
+        payload["readout_post_pointmap_tokens"] = post_tokens
+
+    if pm_key in observation:
+        observation_no_pm = dict(observation)
+        observation_no_pm.pop(pm_key, None)
+        pre_tokens = _extract_readout_tokens_for_snapshot(
+            model, observation_no_pm, task, timestep_index, readout_name="action"
+        )
+        if pre_tokens is not None:
+            payload["readout_pre_pointmap_tokens"] = pre_tokens
+
+    pm_raw = latest_obs.get(f"{pm_key}_raw") or latest_obs.get("_pointmap_raw")
+    if pm_raw is not None:
+        payload["pointmap_raw"] = np.asarray(pm_raw, dtype=np.float32)
+
+    pm_norm = latest_obs.get(pm_key) or latest_obs.get("_pointmap_normalized")
+    if pm_norm is not None:
+        payload["pointmap_normalized"] = np.asarray(pm_norm, dtype=np.float32)
+
+    if rgb_preprocessed is not None:
+        rgb = np.asarray(rgb_preprocessed, dtype=np.float32)
+        if rgb.max() > 1.0:
+            rgb = rgb / 255.0
+        payload["rgb_preprocessed"] = rgb
+
+    return payload
+
+
 def set_seed_everywhere(seed: int) -> None:
     """
     Set random seed for all random number generators for reproducibility.
@@ -414,17 +493,43 @@ def get_action(
         task = model.create_tasks(texts=[task_label])
 
         capture_payload: Optional[Dict[str, Optional[np.ndarray]]] = None
-        if capture_spec is not None and capture_spec.get("request_tokens"):
+        timestep_idx = T - 1
+        if capture_spec is not None:
             try:
                 timestep_idx = int(capture_spec.get("timestep_index", T - 1))
             except Exception:
                 timestep_idx = T - 1
+
+        if capture_spec is not None and capture_spec.get("request_tokens"):
             capture_payload = _extract_vision_tokens_for_snapshot(
                 model,
                 observation,
                 task,
                 timestep_index=timestep_idx,
             )
+
+        request_pointmap_debug = bool(capture_spec and capture_spec.get("request_pointmap_debug"))
+        if request_pointmap_debug:
+            rgb_pre = image
+            if target_h is not None and target_w is not None:
+                try:
+                    rgb_pre = resize_image_for_policy(image, (target_h, target_w))
+                except Exception:
+                    rgb_pre = image
+            rgb_pre = np.asarray(rgb_pre)
+            debug_payload = _build_pointmap_debug_payload(
+                model=model,
+                observation=observation,
+                task=task,
+                timestep_index=timestep_idx,
+                pm_key=pm_key,
+                latest_obs=obs,
+                rgb_preprocessed=rgb_pre,
+            )
+            if debug_payload:
+                if capture_payload is None:
+                    capture_payload = {}
+                capture_payload.update(debug_payload)
 
         # Build un-normalization stats from the checkpoint
         ds = getattr(model, "dataset_statistics", {}).get("action")
