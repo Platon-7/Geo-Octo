@@ -14,7 +14,7 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
-from typing import Dict, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -34,20 +34,22 @@ except Exception:
         return zoom(map_2d, (zoom_y, zoom_x), order=3)
 
 
-def _load_policy_snapshot(npz_path: Path, label: str) -> Dict[str, np.ndarray]:
+def _load_policy_snapshot(npz_path: Path, label: str) -> Dict[str, Any]:
     with np.load(npz_path, allow_pickle=True) as data:
         rgb_key = f"{label}_rgb"
         octo_key = f"{label}_octo_tokens"
         vggt_key = f"{label}_vggt_tokens"
         meta_key = f"{label}_meta"
 
-        missing = [k for k in (rgb_key, octo_key) if k not in data]
+        missing = [k for k in (rgb_key,) if k not in data]
         if missing:
             raise KeyError(f"Snapshot {npz_path} missing required keys for policy '{label}': {missing}")
 
         payload = {
-            "rgb": np.asarray(data[rgb_key]),
-            "octo_tokens": np.asfarray(data[octo_key], dtype=np.float32),
+            "rgb": np.asarray(data[rgb_key]) if rgb_key in data else None,
+            "octo_tokens": (
+                np.asfarray(data[octo_key], dtype=np.float32) if octo_key in data else None
+            ),
             "vggt_tokens": (
                 np.asfarray(data[vggt_key], dtype=np.float32) if vggt_key in data else None
             ),
@@ -108,13 +110,20 @@ def _render_heatmap(
     return overlay
 
 
+def _render_placeholder(ax, title: str, message: str) -> None:
+    ax.imshow(np.ones((2, 2, 3), dtype=np.float32), alpha=0.0)
+    ax.axis("off")
+    ax.set_title(title)
+    ax.text(0.5, 0.5, message, ha="center", va="center", fontsize=12, transform=ax.transAxes)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Visualize attention snapshots from evaluation.")
     parser.add_argument("--snapshot", type=Path, required=True, help="Path to the combined .npz snapshot file.")
     parser.add_argument(
         "--policies",
         type=str,
-        default="baseline,vggt",
+        default="baseline,vggt,vggt_only",
         help="Comma-separated list of policy labels stored in the snapshot.",
     )
     parser.add_argument(
@@ -131,7 +140,13 @@ def main() -> None:
     if not labels:
         raise ValueError("No policy labels provided.")
 
-    snapshots = [_load_policy_snapshot(args.snapshot, label) for label in labels]
+    snapshots = []
+    snapshots_map: Dict[str, Dict[str, Any]] = {}
+    for label in labels:
+        payload = _load_policy_snapshot(args.snapshot, label)
+        label_key = label.lower()
+        snapshots.append(payload)
+        snapshots_map[label_key] = payload
 
     display_names = []
     for label in labels:
@@ -139,45 +154,78 @@ def main() -> None:
         if label_lower == "baseline":
             display_names.append("Baseline")
         elif label_lower == "vggt":
-            display_names.append("VGGT")
+            display_names.append("VGGT Fusion")
+        elif label_lower in {"vggt_only", "vggt-only"}:
+            display_names.append("VGGT-Only")
         else:
             display_names.append(label.capitalize())
 
-    rows = len(labels)
-    fig, axes = plt.subplots(rows, 2, figsize=(12, 4 * rows))
-    if rows == 1:
-        axes = axes[np.newaxis, ...]
+    cols = len(labels)
+    fig, axes = plt.subplots(2, cols, figsize=(4.5 * cols, 7))
+    if cols == 1:
+        axes = axes[:, np.newaxis]
 
-    for row_idx, (label, disp_label, payload) in enumerate(zip(labels, display_names, snapshots)):
-        ax_rgb, ax_heat = axes[row_idx]
-        rgb = payload["rgb"]
-        octo_tokens = np.asarray(payload["octo_tokens"])
-        vggt_tokens = (
-            np.asarray(payload["vggt_tokens"]) if payload["vggt_tokens"] is not None else None
-        )
+    baseline_payload = snapshots_map.get("baseline")
 
-        if vggt_tokens is None:
-            self_heat = _cosine_similarity_map(octo_tokens, octo_tokens)
-            heat_low = self_heat
-            heat_overlay = _resize_heatmap(_normalize_heatmap(heat_low), rgb.shape[:2])
+    for col_idx, (label, disp_label) in enumerate(zip(labels, display_names)):
+        label_key = label.lower()
+        payload = snapshots_map[label_key]
+        ax_row0 = axes[0, col_idx]
+        ax_row1 = axes[1, col_idx]
 
-            _render_rgb(ax_rgb, rgb, f"{disp_label} – RGB")
-            overlay = _render_heatmap(ax_heat, rgb, heat_overlay, f"{disp_label} – Self-Similarity", args.alpha)
-            fig.colorbar(overlay, ax=ax_heat, fraction=0.046, pad=0.04)
+        # Row 0: Octo self-similarity (fallback to baseline if unavailable)
+        row0_title = f"{disp_label} – Self-Similarity (Octo)"
+        row0_rgb: Optional[np.ndarray] = payload.get("rgb")
+        row0_tokens: Optional[np.ndarray] = payload.get("octo_tokens")
+
+        if row0_tokens is None and label_key == "vggt_only" and baseline_payload is not None:
+            row0_tokens = baseline_payload.get("octo_tokens")
+            row0_rgb = baseline_payload.get("rgb")
+            row0_title = "Baseline – Self-Similarity (Octo)"
+
+        if row0_tokens is not None and row0_rgb is not None:
+            heat_low = _cosine_similarity_map(row0_tokens, row0_tokens)
+            heat_overlay = _resize_heatmap(_normalize_heatmap(heat_low), row0_rgb.shape[:2])
+            overlay = _render_heatmap(ax_row0, row0_rgb, heat_overlay, row0_title, args.alpha)
+            fig.colorbar(overlay, ax=ax_row0, fraction=0.046, pad=0.04)
         else:
-            heat_low = _cosine_similarity_map(octo_tokens, vggt_tokens)
-            heat_overlay = _resize_heatmap(_normalize_heatmap(heat_low), rgb.shape[:2])
+            _render_placeholder(ax_row0, row0_title, "Octo tokens unavailable.")
 
-            _render_rgb(ax_rgb, rgb, f"{disp_label} – RGB")
-            overlay = _render_heatmap(ax_heat, rgb, heat_overlay, f"{disp_label} – Similarity", args.alpha)
-            fig.colorbar(overlay, ax=ax_heat, fraction=0.046, pad=0.04)
+        # Row 1: Policy-specific visualization
+        if label_key == "baseline":
+            _render_placeholder(ax_row1, "Baseline – Cross-Modal", "VGGT tokens unavailable.")
+        elif label_key == "vggt":
+            octo_tokens = payload.get("octo_tokens")
+            vggt_tokens = payload.get("vggt_tokens")
+            rgb = payload.get("rgb")
+            row1_title = f"{disp_label} – Cross-Modal Similarity"
+            if octo_tokens is not None and vggt_tokens is not None and rgb is not None:
+                heat_low = _cosine_similarity_map(octo_tokens, vggt_tokens)
+                heat_overlay = _resize_heatmap(_normalize_heatmap(heat_low), rgb.shape[:2])
+                overlay = _render_heatmap(ax_row1, rgb, heat_overlay, row1_title, args.alpha)
+                fig.colorbar(overlay, ax=ax_row1, fraction=0.046, pad=0.04)
+            else:
+                _render_placeholder(ax_row1, row1_title, "Required tokens unavailable.")
+        elif label_key in {"vggt_only", "vggt-only"}:
+            vggt_tokens = payload.get("vggt_tokens")
+            rgb = payload.get("rgb")
+            row1_title = f"{disp_label} – Self-Similarity (VGGT)"
+            if vggt_tokens is not None and rgb is not None:
+                heat_low = _cosine_similarity_map(vggt_tokens, vggt_tokens)
+                heat_overlay = _resize_heatmap(_normalize_heatmap(heat_low), rgb.shape[:2])
+                overlay = _render_heatmap(ax_row1, rgb, heat_overlay, row1_title, args.alpha)
+                fig.colorbar(overlay, ax=ax_row1, fraction=0.046, pad=0.04)
+            else:
+                _render_placeholder(ax_row1, row1_title, "VGGT tokens unavailable.")
+        else:
+            _render_placeholder(ax_row1, f"{disp_label} – Details", "No visualization configured.")
 
     fig.suptitle(
-        "Comparison of Baseline Self-Attention and 2D-3D Cross-Modal Similarity",
+        "Comparison of Baseline, VGGT Fusion, and VGGT-Only Attention Maps",
         fontsize=18,
-        y=0.985,
+        y=0.97,
     )
-    fig.tight_layout(rect=[0, 0, 1, 0.945])
+    fig.tight_layout(rect=[0, 0, 1, 0.92])
     args.output.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(args.output, dpi=600)
     print(f"[plot_attention] Saved visualization to {args.output}")
