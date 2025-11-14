@@ -186,6 +186,7 @@ def _extract_pointmap_readout_tokens(
 
     debug_collection = debug_vars.get("debug", {})
     if not debug_collection:
+        print("[SNAPSHOT] Debug collection empty; no pointmap readout tensors were recorded.", flush=True)
         return None
 
     def _extract_named(name_suffix: str) -> Optional[np.ndarray]:
@@ -209,6 +210,11 @@ def _extract_pointmap_readout_tokens(
     pointmap_embed = _extract_named("_pointmap_embed")
 
     if pre_tokens is None and post_tokens is None and pointmap_embed is None:
+        print(
+            "[SNAPSHOT] Pointmap debug tensors unavailable. Keys present:",
+            list(debug_collection.keys()),
+            flush=True,
+        )
         return None
 
     return {
