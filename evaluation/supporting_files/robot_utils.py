@@ -212,8 +212,8 @@ def _extract_pointmap_readout_tokens(
         return None
 
     return {
-        "pointmap_readout_pre_tokens": pre_tokens,
-        "pointmap_readout_post_tokens": post_tokens,
+        "pointmap_readout_pre_pointmap_tokens": pre_tokens,
+        "pointmap_readout_post_pointmap_tokens": post_tokens,
         "pointmap_embed_tokens": pointmap_embed,
     }
 
