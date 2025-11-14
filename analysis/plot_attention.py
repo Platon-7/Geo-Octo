@@ -36,10 +36,30 @@ except Exception:
 
 def _load_policy_snapshot(npz_path: Path, label: str) -> Dict[str, Any]:
     with np.load(npz_path, allow_pickle=True) as data:
-        rgb_key = f"{label}_rgb"
-        octo_key = f"{label}_octo_tokens"
-        vggt_key = f"{label}_vggt_tokens"
-        meta_key = f"{label}_meta"
+        candidates = [label]
+        if "_" in label:
+            candidates.append(label.replace("_", "-"))
+        if "-" in label:
+            candidates.append(label.replace("-", "_"))
+        candidates = list(dict.fromkeys(candidates))
+
+        prefix = None
+        for candidate in candidates:
+            cand_prefix = f"{candidate}_"
+            if any(k.startswith(cand_prefix) for k in data.files):
+                prefix = candidate
+                break
+
+        if prefix is None:
+            raise KeyError(
+                f"Snapshot {npz_path} missing entries for policy '{label}'. "
+                f"Available keys: {list(data.files)}"
+            )
+
+        rgb_key = f"{prefix}_rgb"
+        octo_key = f"{prefix}_octo_tokens"
+        vggt_key = f"{prefix}_vggt_tokens"
+        meta_key = f"{prefix}_meta"
 
         payload = {
             "rgb": np.asarray(data[rgb_key]) if rgb_key in data else None,
