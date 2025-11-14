@@ -41,8 +41,6 @@ PY
 
 export PYTHONPATH="/gpfs/home4/pkarageorgis/geo_octo/vggt:/gpfs/home4/pkarageorgis/geo_octo/LIBERO:/gpfs/home4/pkarageorgis/geo_octo/octo:$PYTHONPATH"
 
-# srun python evaluate_model.py
-
 srun python -m evaluation.scripts.run_libero_eval_vggt_pointmap \
   --model_family octo \
   --pretrained_checkpoint "/scratch-shared/tmp.cwkV8vOvfY/trained_models/my_octo_vggt_model_online/octo_finetune_pointmap/lora_pointmap_20251102_141315" \
