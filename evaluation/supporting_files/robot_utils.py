@@ -194,11 +194,15 @@ def _build_pointmap_debug_payload(
         if pre_tokens is not None:
             payload["readout_pre_pointmap_tokens"] = pre_tokens
 
-    pm_raw = latest_obs.get(f"{pm_key}_raw") or latest_obs.get("_pointmap_raw")
+    pm_raw = latest_obs.get(f"{pm_key}_raw")
+    if pm_raw is None:
+        pm_raw = latest_obs.get("_pointmap_raw")
     if pm_raw is not None:
         payload["pointmap_raw"] = np.asarray(pm_raw, dtype=np.float32)
 
-    pm_norm = latest_obs.get(pm_key) or latest_obs.get("_pointmap_normalized")
+    pm_norm = latest_obs.get(pm_key)
+    if pm_norm is None:
+        pm_norm = latest_obs.get("_pointmap_normalized")
     if pm_norm is not None:
         payload["pointmap_normalized"] = np.asarray(pm_norm, dtype=np.float32)
 
