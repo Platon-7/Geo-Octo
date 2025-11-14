@@ -3,6 +3,7 @@ import warnings
 import json
 import numpy as np
 from datetime import datetime
+from contextlib import nullcontext
 
 # Add compatibility shim before importing anything else
 try:
@@ -30,7 +31,7 @@ from collections import deque
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Optional, Union, Tuple, List
+from typing import Optional, Union, Tuple, List, Dict
 
 import draccus
 import tqdm
@@ -39,7 +40,6 @@ from libero.libero import benchmark
 import wandb
 
 from evaluation.supporting_files.load_fn import load_and_preprocess_images
-import tensorflow as tf
 
 # Torch + VGGT
 import torch
@@ -622,6 +622,125 @@ def compute_compressed_vggt_tokens_torch(image: np.ndarray, vggt_ctx: dict) -> O
     return z[0]
 
 
+def _preprocess_images_for_vggt(images_np: np.ndarray, target_size: int) -> np.ndarray:
+    """Aspect-preserving resize with white padding, returning CHW floats in [0,1]."""
+    from PIL import Image
+
+    processed_images = []
+    for img_array in images_np:
+        pil_image = Image.fromarray(img_array)
+
+        if pil_image.mode == "RGBA":
+            background = Image.new("RGBA", pil_image.size, (255, 255, 255, 255))
+            pil_image = Image.alpha_composite(background, pil_image)
+        pil_image = pil_image.convert("RGB")
+
+        width, height = pil_image.size
+        if width >= height:
+            new_width = target_size
+            new_height = int(round(height * (new_width / width) / 14) * 14)
+        else:
+            new_height = target_size
+            new_width = int(round(width * (new_height / height) / 14) * 14)
+        pil_image = pil_image.resize((new_width, new_height), Image.Resampling.BILINEAR)
+
+        arr = np.asarray(pil_image, dtype=np.float32) / 255.0
+        arr = np.transpose(arr, (2, 0, 1))
+
+        h_padding = target_size - arr.shape[1]
+        w_padding = target_size - arr.shape[2]
+        pad_top = h_padding // 2
+        pad_bottom = h_padding - pad_top
+        pad_left = w_padding // 2
+        pad_right = w_padding - pad_left
+        arr = np.pad(
+            arr,
+            ((0, 0), (pad_top, pad_bottom), (pad_left, pad_right)),
+            mode="constant",
+            constant_values=1.0,
+        )
+        processed_images.append(arr)
+
+    return np.stack(processed_images, axis=0)
+
+
+def _normalize_pointmap(pm: np.ndarray, keep_conf: bool = True) -> np.ndarray:
+    """Normalize XYZ per image; keep confidence unchanged."""
+    if pm.ndim != 5 or pm.shape[-1] < 1:
+        return pm
+    x = pm.astype(np.float32)
+    if keep_conf and x.shape[-1] >= 4:
+        xyz = x[..., :3]
+        conf = x[..., 3:4]
+        mean = np.nanmean(xyz, axis=(-3, -2), keepdims=True)
+        std = np.nanstd(xyz, axis=(-3, -2), keepdims=True) + 1e-6
+        xyz = (xyz - mean) / std
+        return np.concatenate([xyz, conf], axis=-1)
+    mean = np.nanmean(x, axis=(-3, -2), keepdims=True)
+    std = np.nanstd(x, axis=(-3, -2), keepdims=True) + 1e-6
+    return (x - mean) / std
+
+
+class VGGTPointmapRunner:
+    """Compute VGGT world-point maps (xyz + confidence) online."""
+
+    def __init__(
+        self,
+        device: torch.device,
+        input_res: int,
+        batch_size: int = 2,
+    ):
+        self.device = device
+        self.input_res = int(input_res)
+        self.batch_size = max(1, int(batch_size))
+        self.model = VGGT.from_pretrained("facebook/VGGT-1B").to(self.device).eval()
+        if self.device.type == "cuda":
+            torch.backends.cudnn.benchmark = True
+
+    @torch.no_grad()
+    def compute_pointmap(self, images_bt3hw: np.ndarray) -> np.ndarray:
+        """
+        Args:
+            images_bt3hw: (B, T, H, W, 3) uint8/float32 images in [0,255].
+        Returns:
+            np.ndarray with shape (B, T, H', W', 4) containing xyz + confidence.
+        """
+        b, t, h, w, c = images_bt3hw.shape
+        flat = images_bt3hw.reshape(b * t, h, w, c).astype(np.uint8)
+        chw = _preprocess_images_for_vggt(flat, self.input_res)
+        outputs = []
+        amp_ctx = torch.cuda.amp.autocast(enabled=self.device.type == "cuda")
+
+        for start in range(0, chw.shape[0], self.batch_size):
+            batch = torch.from_numpy(chw[start : start + self.batch_size]).to(self.device)
+            batch = batch.unsqueeze(1)  # (k,1,3,H,W)
+            with amp_ctx:
+                preds = self.model(batch)
+            if isinstance(preds, dict) and "world_points" in preds:
+                pts = preds["world_points"][:, 0]  # (k,H,W,3)
+                conf = preds.get("world_points_conf")
+                if conf is not None:
+                    conf = conf[:, 0][..., None]
+                else:
+                    conf = torch.ones((*pts.shape[:3], 1), device=pts.device)
+                out = torch.cat([pts, conf], dim=-1)
+            elif isinstance(preds, dict) and "depth" in preds:
+                depth = preds["depth"][:, 0, ..., 0][..., None]
+                conf = preds.get("depth_conf")
+                if conf is not None:
+                    conf = conf[:, 0][..., None]
+                else:
+                    conf = torch.ones_like(depth)
+                zeros = torch.zeros_like(depth)
+                out = torch.cat([zeros, zeros, depth, conf], dim=-1)
+            else:
+                raise RuntimeError("VGGT did not return point/depth predictions.")
+            outputs.append(out.detach().cpu().numpy())
+
+        stacked = np.concatenate(outputs, axis=0)
+        return stacked.reshape(b, t, stacked.shape[1], stacked.shape[2], stacked.shape[3]).astype(np.float32)
+
+
 def run_episode(
     cfg: GenerateConfig,
     env,
@@ -634,6 +753,7 @@ def run_episode(
     initial_state=None,
     log_file=None,
     vggt_ctx: Optional[dict] = None,
+    pointmap_ctx: Optional[dict] = None,
     episode_idx: int = 0,
     snapshot_manager: Optional[AttentionSnapshotManager] = None,
 ):
@@ -680,6 +800,26 @@ def run_episode(
 
             replay_images.append(img)
 
+            pointmap_cache: Optional[Dict[str, np.ndarray]] = None
+            if cfg.model_family == "octo" and pointmap_ctx is not None:
+                runner: Optional[VGGTPointmapRunner] = pointmap_ctx.get("runner")  # type: ignore[arg-type]
+                if runner is not None:
+                    try:
+                        img_bt = img[np.newaxis, np.newaxis, ...].astype(np.uint8)
+                        pm_bt = runner.compute_pointmap(img_bt)
+                        pm_raw = pm_bt[0, 0]
+                        if cfg.normalize_pointmap:
+                            pm_norm = _normalize_pointmap(pm_bt)[0, 0]
+                        else:
+                            pm_norm = pm_raw
+                        observation[cfg.pointmap_key] = pm_norm.astype(np.float32)
+                        pointmap_cache = {
+                            "raw": pm_raw.astype(np.float32),
+                            "normalized": pm_norm.astype(np.float32),
+                        }
+                    except Exception as _e:
+                        log_message(f"[PointMap] Failed to compute VGGT pointmap at t={t}: {_e}", log_file)
+
             if len(action_queue) == 0:
                 policy_step_idx = max(0, t - cfg.num_steps_wait)
                 capture_payload = None
@@ -690,6 +830,8 @@ def run_episode(
                 )
                 if capture_now:
                     spec = snapshot_manager.build_capture_spec()
+                    if spec is not None and pointmap_cache is not None:
+                        spec["pointmap_buffers"] = pointmap_cache
                     actions_output = get_action(
                         cfg,
                         model,
@@ -758,6 +900,7 @@ def run_task(
     total_successes=0,
     log_file=None,
     vggt_ctx: Optional[dict] = None,
+    pointmap_ctx: Optional[dict] = None,
 ) -> Tuple[int, int, bool]:
     task = task_suite.get_task(task_id)
     initial_states, all_initial_states = load_initial_states(cfg, task_suite, task_id, log_file)
@@ -803,6 +946,7 @@ def run_task(
             initial_state,
             log_file,
             vggt_ctx=vggt_ctx,
+            pointmap_ctx=pointmap_ctx,
             episode_idx=episode_idx,
             snapshot_manager=snapshot_manager,
         )
@@ -884,6 +1028,25 @@ def eval_libero(cfg: GenerateConfig) -> float:
                 print(f"[VGGT] Failed to initialize PyTorch VGGT+AE: {e}; continuing without VGGT tokens")
                 vggt_ctx = None
 
+    pointmap_ctx: Optional[dict] = None
+    if cfg.model_family == "octo" and cfg.use_vggt_tokens:
+        try:
+            if cfg.vggt_use_cuda and torch.cuda.is_available():
+                device_index = cfg.vggt_device_id if cfg.vggt_device_id is not None else 0
+                device = torch.device(f"cuda:{device_index}")
+            else:
+                device = torch.device("cpu")
+            runner = VGGTPointmapRunner(
+                device=device,
+                input_res=cfg.vggt_input_res,
+                batch_size=cfg.vggt_eval_batch_size,
+            )
+            pointmap_ctx = {"runner": runner}
+            print(f"[PointMap] Loaded VGGT pointmap runner on {device}")
+        except Exception as e:
+            print(f"[PointMap] Failed to initialize VGGT pointmap runner: {e}; continuing without pointmaps")
+            pointmap_ctx = None
+
     # Initialize model and components
     model, action_head, proprio_projector, noisy_action_projector, processor = initialize_model(cfg)
 
@@ -928,6 +1091,7 @@ def eval_libero(cfg: GenerateConfig) -> float:
             total_successes,
             log_file,
             vggt_ctx=vggt_ctx,
+            pointmap_ctx=pointmap_ctx,
         )
         if snapshot_captured:
             log_message("Attention snapshot captured; stopping further task evaluation.", log_file)

@@ -173,6 +173,7 @@ def _build_pointmap_debug_payload(
     pm_key: str,
     latest_obs: Dict[str, Any],
     rgb_preprocessed: Optional[np.ndarray],
+    pointmap_buffers: Optional[Dict[str, np.ndarray]] = None,
 ) -> Dict[str, np.ndarray]:
     """
     Collect auxiliary tensors (readout tokens pre/post fusion, pointmaps, resized RGB) for visualization.
@@ -194,15 +195,15 @@ def _build_pointmap_debug_payload(
         if pre_tokens is not None:
             payload["readout_pre_pointmap_tokens"] = pre_tokens
 
-    pm_raw = latest_obs.get(f"{pm_key}_raw")
+    pm_raw = pointmap_buffers.get("raw") if pointmap_buffers else None
     if pm_raw is None:
-        pm_raw = latest_obs.get("_pointmap_raw")
+        pm_raw = latest_obs.get(f"{pm_key}_raw") or latest_obs.get("_pointmap_raw")
     if pm_raw is not None:
         payload["pointmap_raw"] = np.asarray(pm_raw, dtype=np.float32)
 
-    pm_norm = latest_obs.get(pm_key)
+    pm_norm = pointmap_buffers.get("normalized") if pointmap_buffers else None
     if pm_norm is None:
-        pm_norm = latest_obs.get("_pointmap_normalized")
+        pm_norm = latest_obs.get(pm_key) or latest_obs.get("_pointmap_normalized")
     if pm_norm is not None:
         payload["pointmap_normalized"] = np.asarray(pm_norm, dtype=np.float32)
 
@@ -514,6 +515,7 @@ def get_action(
 
         request_pointmap_debug = bool(capture_spec and capture_spec.get("request_pointmap_debug"))
         if request_pointmap_debug:
+            pointmap_buffers = capture_spec.get("pointmap_buffers") if capture_spec else None
             rgb_pre = image
             if target_h is not None and target_w is not None:
                 try:
@@ -529,6 +531,7 @@ def get_action(
                 pm_key=pm_key,
                 latest_obs=obs,
                 rgb_preprocessed=rgb_pre,
+                pointmap_buffers=pointmap_buffers,
             )
             if debug_payload:
                 if capture_payload is None:
