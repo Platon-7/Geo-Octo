@@ -106,56 +106,47 @@ def main() -> None:
 
     pre_map = _compute_patch_similarity(octo, pre)
     post_map = _compute_patch_similarity(octo, post)
-    diff_map = post_map - pre_map
 
     pre_overlay = _normalize_heatmap(pre_map)
     post_overlay = _normalize_heatmap(post_map)
-    diff_norm = diff_map / (np.max(np.abs(diff_map)) + 1e-8)
-
-    panels = 4
+    panels = 3
     fig, axes = plt.subplots(1, panels, figsize=(4.5 * panels, 5))
 
     if rgb is not None:
         axes[0].imshow(rgb.astype(np.uint8))
+        axes[0].set_title("Decision Point (RGB)")
     else:
         axes[0].imshow(pre_overlay, cmap="gray")
+        axes[0].set_title("Token Grid (No RGB)")
     axes[0].axis("off")
-    axes[0].set_title("Reference RGB" if rgb is not None else "Token Grid")
 
     if rgb is not None:
         pre_img = _resize_heatmap(pre_overlay, rgb.shape[:2])
         post_img = _resize_heatmap(post_overlay, rgb.shape[:2])
-        diff_img = _resize_heatmap(diff_norm, rgb.shape[:2])
     else:
         pre_img = pre_overlay
         post_img = post_overlay
-        diff_img = diff_norm
 
-    im1 = axes[1].imshow(rgb.astype(np.uint8) if rgb is not None else pre_overlay, alpha=1.0 if rgb is None else 1.0)
+    base_img = rgb.astype(np.uint8) if rgb is not None else pre_overlay
+
+    axes[1].imshow(base_img, alpha=1.0 if rgb is None else 1.0)
     if rgb is not None:
         axes[1].imshow(pre_img, cmap="magma", alpha=args.alpha)
     axes[1].axis("off")
-    axes[1].set_title("Pre-Pointmap Similarity")
+    axes[1].set_title("Readout Attention (Before 3D Fusion)")
 
-    im2 = axes[2].imshow(rgb.astype(np.uint8) if rgb is not None else post_overlay, alpha=1.0 if rgb is None else 1.0)
+    axes[2].imshow(base_img, alpha=1.0 if rgb is None else 1.0)
     if rgb is not None:
         axes[2].imshow(post_img, cmap="magma", alpha=args.alpha)
     axes[2].axis("off")
-    axes[2].set_title("Post-Pointmap Similarity")
-
-    im3 = axes[3].imshow(diff_img, cmap="bwr", vmin=-1.0, vmax=1.0)
-    axes[3].axis("off")
-    axes[3].set_title("Post − Pre Difference")
+    axes[2].set_title("Readout Attention (After 3D Fusion)")
 
     magma_sm = plt.cm.ScalarMappable(cmap="magma", norm=Normalize(0.0, 1.0))
     magma_sm.set_array([])
     fig.colorbar(magma_sm, ax=axes[1], fraction=0.046, pad=0.04, label="Similarity (norm)")
     fig.colorbar(magma_sm, ax=axes[2], fraction=0.046, pad=0.04, label="Similarity (norm)")
-    diff_sm = plt.cm.ScalarMappable(cmap="bwr", norm=Normalize(-1.0, 1.0))
-    diff_sm.set_array([])
-    fig.colorbar(diff_sm, ax=axes[3], fraction=0.046, pad=0.04, label="Δ Similarity")
 
-    fig.suptitle("Effect of Pointmap Injection on Readout Focus", fontsize=18, y=0.96)
+    fig.suptitle("Readout Attention Shift from Pointmap Injection", fontsize=18, y=0.96)
     fig.tight_layout(rect=[0, 0, 1, 0.9])
 
     args.output.parent.mkdir(parents=True, exist_ok=True)
