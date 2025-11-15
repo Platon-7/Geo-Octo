@@ -413,7 +413,11 @@ class AttentionSnapshotManager:
         return True
 
     def build_capture_spec(self) -> dict:
-        return {"request_tokens": True}
+        spec = {"request_tokens": True}
+        if getattr(self.cfg, "use_pointmap", False):
+            spec["request_readout_attention"] = True
+            spec["pointmap_key"] = getattr(self.cfg, "pointmap_key", "pointmap")
+        return spec
 
     def commit(
         self,
