@@ -119,7 +119,7 @@ def main() -> None:
 
     pre_overlay = _normalize_heatmap(pre_map)
     post_overlay = _normalize_heatmap(post_map)
-    heatmap_cmap = "viridis"
+    heatmap_cmap = "turbo"
     panels = 3
     fig, axes = plt.subplots(1, panels, figsize=(4.5 * panels, 5))
 
