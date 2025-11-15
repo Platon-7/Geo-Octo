@@ -435,6 +435,8 @@ class AttentionSnapshotManager:
             return
 
         vggt_tokens = payload.get("vggt_tokens")
+        readout_pre = payload.get("readout_tokens_pre_pointmap")
+        readout_post = payload.get("readout_tokens_post_pointmap")
         image_np = np.asarray(image) if image is not None else None
 
         if self.output_dir is None or self.output_path is None:
@@ -455,6 +457,10 @@ class AttentionSnapshotManager:
         }
         if vggt_tokens is not None:
             new_entries[f"{label}_vggt_tokens"] = np.asarray(vggt_tokens, dtype=np.float32)
+        if readout_pre is not None:
+            new_entries[f"{label}_readout_pre_pointmap_tokens"] = np.asarray(readout_pre, dtype=np.float32)
+        if readout_post is not None:
+            new_entries[f"{label}_readout_post_pointmap_tokens"] = np.asarray(readout_post, dtype=np.float32)
         if image_np is not None:
             new_entries[f"{label}_rgb"] = image_np.astype(np.uint8)
 
