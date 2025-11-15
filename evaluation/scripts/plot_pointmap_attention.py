@@ -97,15 +97,25 @@ def main() -> None:
         pre = _load_array(data, f"{label}_readout_pre_pointmap_tokens")
         post = _load_array(data, f"{label}_readout_post_pointmap_tokens")
         rgb = _load_array(data, f"{label}_rgb")
+        img_pre = _load_array(data, f"{label}_image_tokens_pre_pointmap")
+        img_post = _load_array(data, f"{label}_image_tokens_post_pointmap")
 
-    if octo is None or pre is None or post is None:
+    if pre is None or post is None:
         raise KeyError(
-            "Snapshot is missing required arrays. "
-            f"Found octo={octo is not None}, pre={pre is not None}, post={post is not None}."
+            "Snapshot is missing readout tensors required for visualization. "
+            f"pre={pre is not None}, post={post is not None}."
         )
 
-    pre_map = _compute_patch_similarity(octo, pre)
-    post_map = _compute_patch_similarity(octo, post)
+    patch_tokens_pre = img_pre if img_pre is not None else (img_post if img_post is not None else octo)
+    patch_tokens_post = img_post if img_post is not None else (img_pre if img_pre is not None else octo)
+
+    if patch_tokens_pre is None or patch_tokens_post is None:
+        raise KeyError(
+            "Snapshot is missing both transformer-level image tokens and fallback octo tokens."
+        )
+
+    pre_map = _compute_patch_similarity(patch_tokens_pre, pre)
+    post_map = _compute_patch_similarity(patch_tokens_post, post)
 
     pre_overlay = _normalize_heatmap(pre_map)
     post_overlay = _normalize_heatmap(post_map)

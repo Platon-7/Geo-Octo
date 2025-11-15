@@ -417,6 +417,7 @@ class AttentionSnapshotManager:
         if getattr(self.cfg, "use_pointmap", False):
             spec["request_readout_attention"] = True
             spec["pointmap_key"] = getattr(self.cfg, "pointmap_key", "pointmap")
+            spec["observation_group"] = "obs_image_primary"
         return spec
 
     def commit(

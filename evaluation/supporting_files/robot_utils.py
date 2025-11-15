@@ -140,6 +140,7 @@ def _extract_vision_tokens_for_snapshot(
             task=task,
             timestep_index=timestep_index,
             pointmap_key=pm_key,
+            obs_group_name=capture_spec.get("observation_group", "obs_image_primary"),
         )
         payload.update(readout_payload)
 
@@ -152,6 +153,7 @@ def _compute_pointmap_readout_tokens(
     task: Dict[str, Any],
     timestep_index: int,
     pointmap_key: str,
+    obs_group_name: str,
 ) -> Dict[str, Optional[np.ndarray]]:
     try:
         import jax
@@ -225,9 +227,15 @@ def _compute_pointmap_readout_tokens(
         pre_tokens = _select_from_group(outputs_without.get(readout_key), timestep_index)
         if pre_tokens is not None:
             result["readout_pre_pointmap_tokens"] = pre_tokens
+        pre_image = _select_from_group(outputs_without.get(obs_group_name), timestep_index)
+        if pre_image is not None:
+            result["image_tokens_pre_pointmap"] = pre_image
     post_tokens = _select_from_group(outputs_with.get(readout_key) if isinstance(outputs_with, Mapping) else None, timestep_index)
     if post_tokens is not None:
         result["readout_post_pointmap_tokens"] = post_tokens
+    post_image = _select_from_group(outputs_with.get(obs_group_name) if isinstance(outputs_with, Mapping) else None, timestep_index)
+    if post_image is not None:
+        result["image_tokens_post_pointmap"] = post_image
     return result
 
 
