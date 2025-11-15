@@ -119,6 +119,7 @@ def main() -> None:
 
     pre_overlay = _normalize_heatmap(pre_map)
     post_overlay = _normalize_heatmap(post_map)
+    heatmap_cmap = "viridis"
     panels = 3
     fig, axes = plt.subplots(1, panels, figsize=(4.5 * panels, 5))
 
@@ -141,20 +142,20 @@ def main() -> None:
 
     axes[1].imshow(base_img, alpha=1.0 if rgb is None else 1.0)
     if rgb is not None:
-        axes[1].imshow(pre_img, cmap="magma", alpha=args.alpha)
+        axes[1].imshow(pre_img, cmap=heatmap_cmap, alpha=args.alpha)
     axes[1].axis("off")
     axes[1].set_title("Readout Attention (Before 3D Fusion)")
 
     axes[2].imshow(base_img, alpha=1.0 if rgb is None else 1.0)
     if rgb is not None:
-        axes[2].imshow(post_img, cmap="magma", alpha=args.alpha)
+        axes[2].imshow(post_img, cmap=heatmap_cmap, alpha=args.alpha)
     axes[2].axis("off")
     axes[2].set_title("Readout Attention (After 3D Fusion)")
 
-    magma_sm = plt.cm.ScalarMappable(cmap="magma", norm=Normalize(0.0, 1.0))
-    magma_sm.set_array([])
-    fig.colorbar(magma_sm, ax=axes[1], fraction=0.046, pad=0.04, label="Similarity (norm)")
-    fig.colorbar(magma_sm, ax=axes[2], fraction=0.046, pad=0.04, label="Similarity (norm)")
+    cmap_sm = plt.cm.ScalarMappable(cmap=heatmap_cmap, norm=Normalize(0.0, 1.0))
+    cmap_sm.set_array([])
+    fig.colorbar(cmap_sm, ax=axes[1], fraction=0.046, pad=0.04, label="Similarity (norm)")
+    fig.colorbar(cmap_sm, ax=axes[2], fraction=0.046, pad=0.04, label="Similarity (norm)")
 
     fig.suptitle("Readout Attention Shift from Pointmap Injection", fontsize=18, y=0.96)
     fig.tight_layout(rect=[0, 0, 1, 0.9])
