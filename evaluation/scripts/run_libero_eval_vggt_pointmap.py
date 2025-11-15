@@ -14,22 +14,25 @@ except ImportError:
 
 warnings.filterwarnings("ignore", category=DeprecationWarning, module="transformers")
 
-# 1. Load the statistics
-stats_path = "/home/pkarageorgis/geo_octo/libero_datasets/unified_stats/unified_dataset_statistics_libero_object_no_vggt.json"
-with open(stats_path, 'r') as f:
-    dataset_statistics = json.load(f)
+# 1. Load the statistics (match finetune_pointmap config)
+STATS_PATH = "/home/pkarageorgis/geo_octo/libero_datasets/unified_stats/unified_dataset_statistics_libero_object_no_vggt.json"
+try:
+    with open(STATS_PATH, 'r') as f:
+        dataset_statistics = json.load(f)
+except Exception as _e:
+    print(f"[WARNING] Could not load dataset statistics from {STATS_PATH}: {_e}")
+    dataset_statistics = {"action": {"mean": [0,0,0,0,0,0,0], "std": [1,1,1,1,1,1,1]}}
 
 action_mean = np.array(dataset_statistics['action']['mean'])
 action_std = np.array(dataset_statistics['action']['std'])
 
 import logging
-
 import os
 from collections import deque
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Optional, Union, Tuple, List
+from typing import Optional, Union
 
 import draccus
 import tqdm
@@ -42,7 +45,6 @@ import tensorflow as tf
 
 # Torch + VGGT
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
 from vggt.models.vggt import VGGT
 
@@ -82,10 +84,10 @@ class TaskSuite(str, Enum):
 # Define max steps for each task suite
 TASK_MAX_STEPS = {
     TaskSuite.LIBERO_SPATIAL: 220,  # longest training demo has 193 steps
-    TaskSuite.LIBERO_OBJECT: 280,  # longest training demo has 254 steps
-    TaskSuite.LIBERO_GOAL: 300,  # longest training demo has 270 steps
-    TaskSuite.LIBERO_10: 520,  # longest training demo has 505 steps
-    TaskSuite.LIBERO_90: 400,  # longest training demo has 373 steps
+    TaskSuite.LIBERO_OBJECT: 280,   # longest training demo has 254 steps
+    TaskSuite.LIBERO_GOAL: 300,     # longest training demo has 270 steps
+    TaskSuite.LIBERO_10: 520,       # longest training demo has 505 steps
+    TaskSuite.LIBERO_90: 400,       # longest training demo has 373 steps
 }
 
 
@@ -177,14 +179,14 @@ class GenerateConfig:
     env_img_res: int = 256                           # Resolution for environment images (not policy input resolution)
 
     #################################################################################################################
-    # VGGT (PyTorch) parameters
+    # VGGT PointMap (PyTorch) parameters
     #################################################################################################################
-    use_vggt_tokens: bool = True                     # Whether to compute and feed VGGT tokens online
+    use_pointmap: bool = True                        # Whether to compute and feed VGGT pointmaps online
+    pointmap_key: str = "pointmap"                  # Observation key used during finetuning
+    normalize_pointmap: bool = True                  # Normalize XYZ per image; keep confidence unchanged
     vggt_input_res: int = 224                        # Input resolution for VGGT model
     vggt_use_cuda: bool = True                       # Whether to use CUDA when available
-    vggt_agg_layers: int = 24                        # 24 for all layers, <24 to slice subset
-    vggt_layer_indices: str = "3,10,16,22"           # Used when vggt_agg_layers < 24 (0-based indices)
-    vggt_ae_path: Optional[str] = None               # Path to saved AE compressor (.pt)
+    vggt_device_id: int = 0                          # CUDA device index
 
     vggt_only_eval: bool = False                     # Used when finetuning removed vision encoder completely
 
@@ -315,7 +317,6 @@ def process_action(action, model_family, action_mean=None, action_std=None):
     if model_family == "openvla":
         action = normalize_gripper_action(action, binarize=True)
         action = invert_gripper_action(action)
-    # change the octo branch in process_action:
     elif model_family == "octo":
         if action_mean is None or action_std is None:
             raise ValueError("Action statistics (mean, std) must be provided for Octo model evaluation!")
@@ -329,115 +330,74 @@ def process_action(action, model_family, action_mean=None, action_std=None):
         return np.clip(np.asarray(action, dtype=np.float32), -1.0, 1.0)
 
 
-# ===== VGGT (PyTorch) helpers =====
+# ===== VGGT (PyTorch) pointmap helpers =====
 
-class WeightedLayerFuser(nn.Module):
-    def __init__(self, num_layers: int):
-        super().__init__()
-        self.weights = nn.Parameter(torch.zeros(num_layers))
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        w = torch.softmax(self.weights, dim=0)
-        return (x * w.view(*([1] * (x.ndim - 2)), -1, 1)).sum(dim=-2)
-
-
-class AECompressor(nn.Module):
-    def __init__(self, num_layers: int, input_dim: int, bottleneck_dim: int = 512, hidden_dim: int = 8192):
-        super().__init__()
-        self.fuser = WeightedLayerFuser(num_layers)
-        self.encoder = nn.Sequential(
-            nn.LayerNorm(input_dim),
-            nn.Linear(input_dim, hidden_dim),
-            nn.GELU(),
-            nn.Linear(hidden_dim, bottleneck_dim),
-        )
-        self.decoder = nn.Sequential(
-            nn.LayerNorm(bottleneck_dim),
-            nn.Linear(bottleneck_dim, hidden_dim),
-            nn.GELU(),
-            nn.Linear(hidden_dim, input_dim),
-        )
-        self.output_norm = nn.LayerNorm(bottleneck_dim)
-
-    @torch.no_grad()
-    def compress_tokens(self, tokens_ld: torch.Tensor) -> torch.Tensor:
-        self.eval()
-        device = next(self.parameters()).device
-        tokens_ld = tokens_ld.to(device)
-        fused = self.fuser(tokens_ld)
-        z = self.encoder(fused)
-        z = self.output_norm(z)
-        return z
-
-
-class TorchVGGTExtractor:
-    def __init__(self, device: torch.device, input_res: int, agg_layers: int, layer_indices: Optional[List[int]] = None):
+class OnlineVGGTPointmap:
+    def __init__(self, device: torch.device, input_res: int):
         self.device = device
-        self.input_res = input_res
-        self.agg_layers = int(agg_layers)
-        self.layer_indices = layer_indices
+        self.input_res = int(input_res)
         self.model = VGGT.from_pretrained("facebook/VGGT-1B").to(self.device).eval()
 
     @torch.no_grad()
-    def extract_layers(self, chw_images: np.ndarray) -> Tuple[np.ndarray, int]:
-        x = torch.from_numpy(chw_images).to(self.device)  # [K,3,H,W]
-        x = x.unsqueeze(1)  # [K,1,3,H,W]
-        output_list, patch_start_idx = self.model.aggregator(x)
-        all_layers = []
-        for t in output_list:  # [K,1,P,8192]
-            t = t[:, 0]  # [K,P,8192]
-            t = t[:, patch_start_idx:, :]
-            all_layers.append(t)
-        layers = torch.stack(all_layers, dim=0).permute(1, 0, 2, 3)  # [K,L,N,8192]
-        if self.agg_layers < 24:
-            idx = self.layer_indices if (self.layer_indices and len(self.layer_indices) > 0) else [3, 10, 16, 22]
-            layers = layers[:, idx, :, :]
-        K, L, N, D = layers.shape
-        sqrt_n = int(round(np.sqrt(N)))
-        return layers.detach().cpu().numpy(), sqrt_n
+    def compute_pointmap(self, chw_images: np.ndarray) -> np.ndarray:
+        """
+        Accepts CHW images in [0,1] (N,3,H,W) and returns (N,H',W',4) pointmaps.
+        """
+        x = torch.from_numpy(chw_images).to(self.device)
+        x = x.unsqueeze(1)  # (N,1,3,H,W)
+        with torch.cuda.amp.autocast(enabled=(self.device.type == 'cuda')):
+            preds = self.model(x)
+        if isinstance(preds, dict) and 'world_points' in preds:
+            pts = preds['world_points'][:, 0]  # (N,H,W,3)
+            conf = preds.get('world_points_conf', None)
+            conf = conf[:, 0][..., None] if conf is not None else torch.ones((*pts.shape[:3], 1), device=pts.device)
+            out = torch.cat([pts, conf], dim=-1)  # (N,H,W,4)
+        elif 'depth' in preds:
+            depth = preds['depth'][:, 0, ..., 0][..., None]
+            conf = preds.get('depth_conf', None)
+            conf = conf[:, 0][..., None] if conf is not None else torch.ones_like(depth)
+            zeros = torch.zeros_like(depth)
+            out = torch.cat([zeros, zeros, depth, conf], dim=-1)
+        else:
+            raise RuntimeError("VGGT did not return point/depth predictions")
+        return out.detach().cpu().numpy()
 
 
-def resize_and_stack_per_layer(features_klnd: np.ndarray, sqrt_n: int) -> np.ndarray:
-    K, L, N, D = features_klnd.shape
-    s = sqrt_n
-    x = torch.from_numpy(features_klnd).float()
-    x = x.reshape(K * L, s, s, D).permute(0, 3, 1, 2)
-    target_side = 16  # for 256 tokens
-    x_small = F.interpolate(x, size=(target_side, target_side), mode='bilinear', align_corners=False)
-    x_small = x_small.permute(0, 2, 3, 1).contiguous().view(K, L, target_side * target_side, D)
-    return x_small.numpy()
+def _normalize_pointmap(pm: np.ndarray, keep_conf: bool = True) -> np.ndarray:
+    """Normalize XYZ per image; keep confidence unchanged. Matches finetune_pointmap behavior."""
+    if pm.ndim != 4 or pm.shape[-1] < 1:
+        return pm
+    x = pm.astype(np.float32)
+    if keep_conf and x.shape[-1] >= 4:
+        xyz = x[..., :3]
+        conf = x[..., 3:4]
+        mean = np.nanmean(xyz, axis=(1, 2), keepdims=True)
+        std = np.nanstd(xyz, axis=(1, 2), keepdims=True) + 1e-6
+        xyz = (xyz - mean) / std
+        return np.concatenate([xyz, conf], axis=-1)
+    else:
+        mean = np.nanmean(x, axis=(1, 2), keepdims=True)
+        std = np.nanstd(x, axis=(1, 2), keepdims=True) + 1e-6
+        return (x - mean) / std
 
 
-def _parse_layer_indices(s: str) -> Optional[List[int]]:
-    try:
-        idx = [int(x) for x in s.split(',') if x.strip() != '']
-        return idx
-    except Exception:
-        return [3, 10, 16, 22]
-
-
-def compute_compressed_vggt_tokens_torch(image: np.ndarray, vggt_ctx: dict) -> Optional[np.ndarray]:
-    if vggt_ctx is None:
+def compute_pointmap_for_image(image: np.ndarray, pm_ctx: dict) -> Optional[np.ndarray]:
+    if pm_ctx is None:
         return None
 
-    extractor: TorchVGGTExtractor = vggt_ctx.get("extractor")
-    compressor: AECompressor = vggt_ctx.get("compressor")
-    cfg: GenerateConfig = vggt_ctx.get("cfg")
-    device: torch.device = vggt_ctx.get("device")
+    extractor: OnlineVGGTPointmap = pm_ctx.get("extractor")
+    cfg: GenerateConfig = pm_ctx.get("cfg")
 
-    if extractor is None or compressor is None:
-        raise RuntimeError("VGGT torch context is missing required components (extractor or compressor).")
+    if extractor is None:
+        raise RuntimeError("VGGT pointmap context is missing required components (extractor).")
 
     # Preprocess to CHW float32 in [0,1]
-    pre = load_and_preprocess_images([image], target_size=cfg.vggt_input_res)
-    klnd, sqrt_n = extractor.extract_layers(pre)               # [K,L,N,D]
-    k_l_256_d = resize_and_stack_per_layer(klnd, sqrt_n)        # [K,L,256,D]
-    K, L, S256, D = k_l_256_d.shape
-    tokens = torch.from_numpy(k_l_256_d).float().view(K * S256, L, D).to(device)
-    with torch.no_grad():
-        z = compressor.compress_tokens(tokens)                  # [K*256,512]
-    z = z.view(K, S256, -1).detach().cpu().numpy().astype(np.float16)  # [K,256,512]
-    return z[0]
+    pre = load_and_preprocess_images([image], target_size=cfg.vggt_input_res)  # (1,3,H,W)
+    pm = extractor.compute_pointmap(pre)[0]  # (H',W',4)
+    if cfg.normalize_pointmap:
+        pm = _normalize_pointmap(pm[np.newaxis, ...])[0]
+    # Match finetune_pointmap: use float32 for JAX stability
+    return pm.astype(np.float32)
 
 
 def run_episode(
@@ -451,7 +411,7 @@ def run_episode(
     noisy_action_projector=None,
     initial_state=None,
     log_file=None,
-    vggt_ctx: Optional[dict] = None,
+    pm_ctx: Optional[dict] = None,
 ):
     env.reset()
     if initial_state is not None:
@@ -479,12 +439,12 @@ def run_episode(
 
             observation, img = prepare_observation(obs)
 
-            if cfg.model_family == "octo" and cfg.use_vggt_tokens and vggt_ctx is not None:
+            if cfg.model_family == "octo" and cfg.use_pointmap and pm_ctx is not None:
                 try:
-                    compressed_tokens = compute_compressed_vggt_tokens_torch(img, vggt_ctx)
-                    observation["vggt_tokens"] = compressed_tokens
+                    pm = compute_pointmap_for_image(img, pm_ctx)
+                    observation[cfg.pointmap_key] = pm
                 except Exception as _e:
-                    log_message(f"[VGGT] Failed to compute tokens at t={t}: {_e}", log_file)
+                    log_message(f"[VGGT] Failed to compute pointmap at t={t}: {_e}", log_file)
 
             replay_images.append(img)
 
@@ -500,10 +460,18 @@ def run_episode(
                     noisy_action_projector=noisy_action_projector,
                     use_film=cfg.use_film,
                 )
+                # Guard against empty action chunks for clearer debugging
+                if actions is None or len(actions) == 0:
+                    obs_keys = list(observation.keys())
+                    raise RuntimeError(
+                        "Empty action chunk from model. This usually means required inputs are missing. "
+                        f"Observation keys at t={t}: {obs_keys}. If your checkpoint expects images, "
+                        "do not pass --vggt_only_eval True."
+                    )
                 action_queue.extend(actions)
 
             action = action_queue.popleft()
-            action = process_action(action, cfg.model_family, action_mean, action_std)
+            #action = process_action(action, cfg.model_family, action_mean, action_std)
             obs, reward, done, info = env.step(action.tolist())
             if done:
                 success = True
@@ -528,7 +496,7 @@ def run_task(
     total_episodes=0,
     total_successes=0,
     log_file=None,
-    vggt_ctx: Optional[dict] = None,
+    pm_ctx: Optional[dict] = None,
 ):
     task = task_suite.get_task(task_id)
     initial_states, all_initial_states = load_initial_states(cfg, task_suite, task_id, log_file)
@@ -561,7 +529,7 @@ def run_task(
             noisy_action_projector,
             initial_state,
             log_file,
-            vggt_ctx=vggt_ctx,
+            pm_ctx=pm_ctx,
         )
 
         task_episodes += 1
@@ -601,47 +569,35 @@ def eval_libero(cfg: GenerateConfig) -> float:
     set_seed_everywhere(cfg.seed)
 
     # =========================================================================
-    # --- PART 1: SETUP PyTorch VGGT + AE ---
+    # --- PART 1: SETUP PyTorch VGGT pointmap ---
     # =========================================================================
-    vggt_ctx: Optional[dict] = None
-    if cfg.model_family == "octo" and cfg.use_vggt_tokens:
-        if cfg.vggt_ae_path is None or not os.path.exists(cfg.vggt_ae_path):
-            print("[VGGT] AE path missing or not found; continuing without VGGT tokens")
-        else:
-            try:
-                device = torch.device('cuda' if (cfg.vggt_use_cuda and torch.cuda.is_available()) else 'cpu')
-                if device.type == 'cuda':
-                    torch.backends.cudnn.benchmark = True
-                # Determine layer indices if subset
-                layer_indices = _parse_layer_indices(cfg.vggt_layer_indices) if cfg.vggt_agg_layers < 24 else None
-                extractor = TorchVGGTExtractor(device, cfg.vggt_input_res, cfg.vggt_agg_layers, layer_indices)
-
-                # Probe L, D with a dummy white image
-                dummy = np.ones((1, 3, cfg.vggt_input_res, cfg.vggt_input_res), dtype=np.float32)
-                klnd, _ = extractor.extract_layers(dummy)
-                L = klnd.shape[1]
-                D = klnd.shape[3]
-
-                compressor = AECompressor(num_layers=L, input_dim=D, bottleneck_dim=512, hidden_dim=8192)
-                compressor.load_state_dict(torch.load(cfg.vggt_ae_path, map_location='cpu'))
-                compressor = compressor.to(device).eval()
-
-                vggt_ctx = {
-                    "extractor": extractor,
-                    "compressor": compressor,
-                    "cfg": cfg,
-                    "device": device,
-                }
-                print("Loaded PyTorch VGGT + AE compressor for online tokens.")
-            except Exception as e:
-                print(f"[VGGT] Failed to initialize PyTorch VGGT+AE: {e}; continuing without VGGT tokens")
-                vggt_ctx = None
+    pm_ctx: Optional[dict] = None
+    if cfg.model_family == "octo" and cfg.use_pointmap:
+        try:
+            device = torch.device(f'cuda:{int(cfg.vggt_device_id)}') if (cfg.vggt_use_cuda and torch.cuda.is_available()) else torch.device('cpu')
+            if device.type == 'cuda':
+                torch.backends.cudnn.benchmark = True
+            extractor = OnlineVGGTPointmap(device, cfg.vggt_input_res)
+            pm_ctx = {
+                "extractor": extractor,
+                "cfg": cfg,
+                "device": device,
+            }
+            print("Loaded PyTorch VGGT for online pointmap computation.")
+        except Exception as e:
+            print(f"[VGGT] Failed to initialize PyTorch VGGT for pointmaps: {e}; continuing without pointmaps")
+            pm_ctx = None
 
     # Initialize model and components
     model, action_head, proprio_projector, noisy_action_projector, processor = initialize_model(cfg)
+    
 
     try:
         mcfg = model.config
+        
+        # Ensure we use the exact key the checkpoint was trained with
+        cfg.pointmap_key = (mcfg.get("model", {}) or mcfg).get("pointmap_input_key", "pointmap")
+
         obs_tok = mcfg.get("model", {}).get("observation_tokenizers") or mcfg.get("observation_tokenizers")
         heads = mcfg.get("heads") or mcfg.get("model", {}).get("heads")
         act_dim = None
@@ -680,7 +636,7 @@ def eval_libero(cfg: GenerateConfig) -> float:
             total_episodes,
             total_successes,
             log_file,
-            vggt_ctx=vggt_ctx,
+            pm_ctx=pm_ctx,
         )
 
     final_success_rate = float(total_successes) / float(total_episodes) if total_episodes > 0 else 0
