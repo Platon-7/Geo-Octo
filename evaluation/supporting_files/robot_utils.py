@@ -3,6 +3,7 @@ import random
 import time
 from typing import Any, Dict, List, Optional, Union
 from collections import deque
+from collections.abc import Mapping
 
 import numpy as np
 import torch
@@ -44,6 +45,7 @@ def _extract_vision_tokens_for_snapshot(
     observation: Dict[str, Any],
     task: Dict[str, Any],
     timestep_index: int,
+    capture_spec: Optional[Dict[str, Any]] = None,
 ) -> Optional[Dict[str, Optional[np.ndarray]]]:
     """
     Extract intermediate vision tokens from the Octo model for analysis snapshots.
@@ -126,10 +128,129 @@ def _extract_vision_tokens_for_snapshot(
             return tokens[batch_idx].astype(np.float32)
         return tokens.astype(np.float32)
 
-    return {
+    payload: Dict[str, Optional[np.ndarray]] = {
         "octo_tokens": _select(octo_tokens),
         "vggt_tokens": _select(vggt_tokens),
     }
+    if capture_spec and capture_spec.get("request_readout_attention"):
+        pm_key = capture_spec.get("pointmap_key", "pointmap")
+        readout_payload = _compute_pointmap_readout_tokens(
+            model=model,
+            observation=observation,
+            task=task,
+            timestep_index=timestep_index,
+            pointmap_key=pm_key,
+            obs_group_name=capture_spec.get("observation_group", "obs_image_primary"),
+        )
+        payload.update(readout_payload)
+
+    return payload
+
+
+def _compute_pointmap_readout_tokens(
+    model: torch.nn.Module,
+    observation: Dict[str, Any],
+    task: Dict[str, Any],
+    timestep_index: int,
+    pointmap_key: str,
+    obs_group_name: str,
+) -> Dict[str, Optional[np.ndarray]]:
+    try:
+        import jax
+    except Exception as exc:
+        print(f"[SNAPSHOT] Unable to import JAX for readout capture: {exc}", flush=True)
+        return {}
+
+    def _clone_obs(obs: Dict[str, Any]) -> Dict[str, Any]:
+        cloned = dict(obs)
+        if "pad_mask_dict" in cloned and isinstance(cloned["pad_mask_dict"], dict):
+            cloned["pad_mask_dict"] = dict(cloned["pad_mask_dict"])
+        return cloned
+
+    def _select_from_group(group, idx: int) -> Optional[np.ndarray]:
+        if group is None:
+            return None
+        arr = jax.device_get(group.tokens)
+        arr = np.asarray(arr)
+        if arr.ndim < 4:
+            return None
+        batch_idx = min(arr.shape[0] - 1, 0)
+        tdim = arr.shape[1]
+        if tdim == 0:
+            return None
+        select_idx = idx
+        if select_idx < 0:
+            select_idx = tdim + select_idx
+        select_idx = max(0, min(select_idx, tdim - 1))
+        return arr[batch_idx, select_idx].astype(np.float32)
+
+    timestep_pad_mask = observation.get("timestep_pad_mask")
+    if timestep_pad_mask is None:
+        return {}
+
+    try:
+        action_head = model.module.heads.get("action") if hasattr(model.module, "heads") else None
+    except Exception:
+        action_head = None
+    readout_key = getattr(action_head, "readout_key", None) if action_head is not None else None
+    if not readout_key:
+        readout_key = "readout_action"
+
+    def _get_obs_group(outputs):
+        if not isinstance(outputs, Mapping):
+            return None
+        if obs_group_name and obs_group_name in outputs:
+            return outputs[obs_group_name]
+        # Prefer any obs_* key
+        for key in outputs.keys():
+            if isinstance(key, str) and key.startswith("obs_"):
+                return outputs[key]
+        # Fallback to concatenated obs
+        return outputs.get("obs") if isinstance(outputs, Mapping) else None
+
+    obs_with_pm = _clone_obs(observation)
+    obs_without_pm = _clone_obs(observation)
+    obs_without_pm.pop(pointmap_key, None)
+
+    try:
+        outputs_with = model.run_transformer(
+            obs_with_pm,
+            task,
+            timestep_pad_mask,
+            train=False,
+        )
+    except Exception as exc:
+        print(f"[SNAPSHOT] Failed to run transformer with pointmap: {exc}", flush=True)
+        return {}
+
+    try:
+        outputs_without = model.run_transformer(
+            obs_without_pm,
+            task,
+            timestep_pad_mask,
+            train=False,
+        )
+    except Exception as exc:
+        print(f"[SNAPSHOT] Failed to run transformer without pointmap: {exc}", flush=True)
+        outputs_without = None
+
+    result: Dict[str, Optional[np.ndarray]] = {}
+    if isinstance(outputs_without, Mapping):
+        pre_tokens = _select_from_group(outputs_without.get(readout_key), timestep_index)
+        if pre_tokens is not None:
+            result["readout_pre_pointmap_tokens"] = pre_tokens
+        pre_image_group = _get_obs_group(outputs_without)
+        pre_image = _select_from_group(pre_image_group, timestep_index)
+        if pre_image is not None:
+            result["image_tokens_pre_pointmap"] = pre_image
+    post_tokens = _select_from_group(outputs_with.get(readout_key) if isinstance(outputs_with, Mapping) else None, timestep_index)
+    if post_tokens is not None:
+        result["readout_post_pointmap_tokens"] = post_tokens
+    post_image_group = _get_obs_group(outputs_with) if isinstance(outputs_with, Mapping) else None
+    post_image = _select_from_group(post_image_group, timestep_index)
+    if post_image is not None:
+        result["image_tokens_post_pointmap"] = post_image
+    return result
 
 
 def set_seed_everywhere(seed: int) -> None:
@@ -424,6 +545,7 @@ def get_action(
                 observation,
                 task,
                 timestep_index=timestep_idx,
+                capture_spec=capture_spec,
             )
 
         # Build un-normalization stats from the checkpoint

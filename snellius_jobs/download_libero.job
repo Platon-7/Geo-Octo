@@ -4,11 +4,11 @@
 #SBATCH --gres=gpu:1            # Reduced to 1 GPU to avoid DDP issues
 #SBATCH --cpus-per-task=4
 #SBATCH --gpus=1                # Reduced to 1 GPU to avoid DDP issues
-#SBATCH --job-name=Octo_Trial
+#SBATCH --job-name=Get_RLDS_Libero
 #SBATCH --ntasks=1
 #SBATCH --time=05:30:00         # Increased time for full train-eval-test cycle
 #SBATCH --mem=8000M            # Decreased memory (we dont need it)
-#SBATCH --output=outfiles/trial_octo_%A.out
+#SBATCH --output=outfiles/rlds_libero_%A.out
 
 module purge
 module load 2024
@@ -20,9 +20,6 @@ export WANDB_ENTITY="nlp-squad"
 export WANDB_PROJECT="Geo_Octo"
 
 source activate octo
-cd LIBERO
+cd octo
 
-python benchmark_scripts/download_libero_datasets.py \
-    --datasets libero_10 \
-    --download-dir /scratch-shared/tmp.cwkV8vOvfY/libero_evaluation \
-    --use-huggingface
+srun python scripts/download_rlds_libero.py

@@ -51,7 +51,7 @@ srun python -m evaluation.scripts.run_libero_eval_vggt_torch \
   --num_trials_per_task 10 \
   --num_open_loop_steps 4 \
   --use_vggt_tokens True \
-  --vggt_ae_path "/home/pkarageorgis/AE_Compressor/vggt_autoencoder_24L_256x512.pt" \
+  --vggt_ae_path "/geo_octo/AE_Compressor/vggt_autoencoder_24L_256x512.pt" \
   --vggt_input_res 224 \
   --vggt_agg_layers 24 \
   --vggt_only_eval True \

@@ -45,6 +45,6 @@ hostname
 
 
 python evaluation/scripts/plot_pointmap_attention.py \
-    --snapshot analysis/attention_snapshots/ketchup_episode3_t1p00s_pointmap.npz \
-    --label pointmap \
-    --output analysis/attention_snapshots/pointmap_readout_comparison.png
+  --snapshot analysis/attention_snapshots/ketchup_episode3_t1p00s_pointmap.npz \
+  --label pointmap \
+  --output analysis/attention_snapshots/ketchup_pointmap_readout.png

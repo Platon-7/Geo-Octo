@@ -50,7 +50,7 @@ python evaluation/scripts/plot_pointmap_snapshot.py \
   --external-title "VGGT Point-Map" \
   --skip-scatter \
   --depth-offset 0.03 \
-  --output figures/pointmap_with_viser.png
+  --output analysis/figures/pointmap_with_viser.png
 
 # python vggt/demo_viser.py \
 #   --image_folder analysis/snapshots/rgb_images \

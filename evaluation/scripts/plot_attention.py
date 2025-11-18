@@ -175,14 +175,14 @@ def main() -> None:
 
     panels.append(
         {
-            "title": "Reference RGB",
+            "title": "Policy RGB Input",
             "rgb": (baseline_payload or vggt_payload or vggt_only_payload or {}).get("rgb"),
         }
     )
 
     panels.append(
         {
-            "title": "Baseline – Self-Similarity (Octo)",
+            "title": "Baseline – Self-Similarity (Octo Tokens)",
             "rgb": baseline_payload.get("rgb") if baseline_payload else None,
             "octo": baseline_payload.get("octo_tokens") if baseline_payload else None,
             "mode": "self",
@@ -191,7 +191,7 @@ def main() -> None:
 
     panels.append(
         {
-            "title": "VGGT Fusion – Cross-Modal Similarity",
+            "title": "VGGT-Fusion – Cross-Modal Similarity",
             "rgb": vggt_payload.get("rgb") if vggt_payload else None,
             "octo": vggt_payload.get("octo_tokens") if vggt_payload else None,
             "vggt": vggt_payload.get("vggt_tokens") if vggt_payload else None,
@@ -201,7 +201,7 @@ def main() -> None:
 
     panels.append(
         {
-            "title": "VGGT-Only – Self-Similarity (VGGT)",
+            "title": "VGGT-Only – Self-Similarity (VGGT Tokens)",
             "rgb": (vggt_only_payload or baseline_payload or vggt_payload or {}).get("rgb"),
             "vggt": vggt_only_payload.get("vggt_tokens") if vggt_only_payload else None,
             "mode": "vggt_self",
@@ -256,7 +256,7 @@ def main() -> None:
             _render_placeholder(ax, title, "Unsupported panel mode.")
 
     fig.suptitle(
-        "Attention Snapshot Comparison: Baseline vs. VGGT Variants",
+        "Patch-Similarity: Baseline vs. VGGT Variants",
         fontsize=18,
         y=0.95,
     )

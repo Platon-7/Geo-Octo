@@ -3,6 +3,8 @@ my_octo_vggt_model/
 outfiles/
 wandb/
 my_octo_vggt_model_offline/
+PCA_Compressors/
+AE_Compressor/
 # THIS IS THE NEW RULE:
 # Recursively find and ignore all .tfrecord files inside libero_datasets
 libero_datasets/**/*tfrecord*

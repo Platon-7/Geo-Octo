@@ -97,24 +97,35 @@ def main() -> None:
         pre = _load_array(data, f"{label}_readout_pre_pointmap_tokens")
         post = _load_array(data, f"{label}_readout_post_pointmap_tokens")
         rgb = _load_array(data, f"{label}_rgb")
+        img_pre = _load_array(data, f"{label}_image_tokens_pre_pointmap")
+        img_post = _load_array(data, f"{label}_image_tokens_post_pointmap")
 
-    if octo is None or pre is None or post is None:
+    if pre is None or post is None:
         raise KeyError(
-            "Snapshot is missing required arrays. "
-            f"Found octo={octo is not None}, pre={pre is not None}, post={post is not None}."
+            "Snapshot is missing readout tensors required for visualization. "
+            f"pre={pre is not None}, post={post is not None}."
         )
 
-    pre_map = _compute_patch_similarity(octo, pre)
-    post_map = _compute_patch_similarity(octo, post)
+    patch_tokens_pre = img_pre if img_pre is not None else (img_post if img_post is not None else octo)
+    patch_tokens_post = img_post if img_post is not None else (img_pre if img_pre is not None else octo)
+
+    if patch_tokens_pre is None or patch_tokens_post is None:
+        raise KeyError(
+            "Snapshot is missing both transformer-level image tokens and fallback octo tokens."
+        )
+
+    pre_map = _compute_patch_similarity(patch_tokens_pre, pre)
+    post_map = _compute_patch_similarity(patch_tokens_post, post)
 
     pre_overlay = _normalize_heatmap(pre_map)
     post_overlay = _normalize_heatmap(post_map)
+    heatmap_cmap = "turbo"
     panels = 3
     fig, axes = plt.subplots(1, panels, figsize=(4.5 * panels, 5))
 
     if rgb is not None:
         axes[0].imshow(rgb.astype(np.uint8))
-        axes[0].set_title("Decision Point (RGB)")
+        axes[0].set_title("Policy RGB Input")
     else:
         axes[0].imshow(pre_overlay, cmap="gray")
         axes[0].set_title("Token Grid (No RGB)")
@@ -131,20 +142,20 @@ def main() -> None:
 
     axes[1].imshow(base_img, alpha=1.0 if rgb is None else 1.0)
     if rgb is not None:
-        axes[1].imshow(pre_img, cmap="magma", alpha=args.alpha)
+        axes[1].imshow(pre_img, cmap=heatmap_cmap, alpha=args.alpha)
     axes[1].axis("off")
     axes[1].set_title("Readout Attention (Before 3D Fusion)")
 
     axes[2].imshow(base_img, alpha=1.0 if rgb is None else 1.0)
     if rgb is not None:
-        axes[2].imshow(post_img, cmap="magma", alpha=args.alpha)
+        axes[2].imshow(post_img, cmap=heatmap_cmap, alpha=args.alpha)
     axes[2].axis("off")
     axes[2].set_title("Readout Attention (After 3D Fusion)")
 
-    magma_sm = plt.cm.ScalarMappable(cmap="magma", norm=Normalize(0.0, 1.0))
-    magma_sm.set_array([])
-    fig.colorbar(magma_sm, ax=axes[1], fraction=0.046, pad=0.04, label="Similarity (norm)")
-    fig.colorbar(magma_sm, ax=axes[2], fraction=0.046, pad=0.04, label="Similarity (norm)")
+    cmap_sm = plt.cm.ScalarMappable(cmap=heatmap_cmap, norm=Normalize(0.0, 1.0))
+    cmap_sm.set_array([])
+    fig.colorbar(cmap_sm, ax=axes[1], fraction=0.046, pad=0.04, label="Similarity (norm)")
+    fig.colorbar(cmap_sm, ax=axes[2], fraction=0.046, pad=0.04, label="Similarity (norm)")
 
     fig.suptitle("Readout Attention Shift from Pointmap Injection", fontsize=18, y=0.96)
     fig.tight_layout(rect=[0, 0, 1, 0.9])
