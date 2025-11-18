@@ -1,8 +1,12 @@
+from pathlib import Path
+
 from ml_collections import ConfigDict
 from ml_collections.config_dict import FieldReference, placeholder
 from octo.model.components.tokenizers import VGGTTokenizer, ImageTokenizer, VisionMixer
 from octo.utils.spec import ModuleSpec
 from octo.model.components.vit_encoders import PatchEncoder
+
+REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
 def get_config(config_string="full,multimodal"):
@@ -10,7 +14,12 @@ def get_config(config_string="full,multimodal"):
     assert task in ["image_conditioned", "language_conditioned", "multimodal"]
     assert mode in ["full", "head_only", "head_mlp_only"]
 
-    UNIFIED_STATS_PATH = "/home/pkarageorgis/geo_octo/libero_datasets/unified_stats/unified_dataset_statistics_libero_object_no_vggt.json"
+    UNIFIED_STATS_PATH = str(
+        REPO_ROOT
+        / "libero_datasets"
+        / "unified_stats"
+        / "unified_dataset_statistics_libero_object_no_vggt.json"
+    )
 
     # Fill this in for your own dataset!
 
@@ -20,7 +29,7 @@ def get_config(config_string="full,multimodal"):
 
     FINETUNING_KWARGS = {
         "name": "libero_object_no_noops",
-        "data_dir": "/home/pkarageorgis/geo_octo/libero_datasets",
+        "data_dir": str(REPO_ROOT / "libero_datasets"),
         "dataset_statistics": UNIFIED_STATS_PATH,
         "image_obs_keys": {"primary": "image_primary"},
         "proprio_obs_key": "proprio",

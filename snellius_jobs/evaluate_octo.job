@@ -22,11 +22,15 @@ export WANDB_PROJECT="Geo_Octo"
 
 source activate octo-libero-eval
 
+SCRIPT_DIR="$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(realpath "${SCRIPT_DIR}/..")"
+cd "${REPO_ROOT}"
+
 export CUDA_NVCC_BIN=$(python -c "import os,inspect,nvidia.cuda_nvcc as nvcc; print(os.path.join(os.path.dirname(inspect.getfile(nvcc)),'bin'))")
 export NVRTC_LIB_DIR=$(python -c "import os,inspect,nvidia.cuda_nvrtc as nvrtc; print(os.path.join(os.path.dirname(inspect.getfile(nvrtc)),'lib'))")
 export PATH="$CUDA_NVCC_BIN:$PATH"
 export LD_LIBRARY_PATH="$NVRTC_LIB_DIR:$CONDA_PREFIX/lib:$LD_LIBRARY_PATH"
-export PYTHONPATH="/gpfs/home4/pkarageorgis/geo_octo:/gpfs/home4/pkarageorgis/geo_octo/LIBERO:/gpfs/home4/pkarageorgis/geo_octo/octo:$PYTHONPATH"
+export PYTHONPATH="${REPO_ROOT}:${REPO_ROOT}/LIBERO:${REPO_ROOT}/octo:${PYTHONPATH}"
 export MUJOCO_GL=egl
 export TOKENIZERS_PARALLELISM=false
 export TF_CPP_MIN_LOG_LEVEL=3
@@ -45,20 +49,20 @@ print('Torch CUDA:', torch.version.cuda)
 PY
 
 # # sanity checks
-# ls -ld /gpfs/home4/pkarageorgis/geo_octo/evaluation/scripts/offline_regression.py
-# ls -ld /gpfs/home4/pkarageorgis/geo_octo/octo/my_octo_vggt_model_offline/octo_vggt_finetune_staged/experiment_20250808_130401_BASELINE_RUN
+# ls -ld "${REPO_ROOT}/evaluation/scripts/offline_regression.py"
+# ls -ld "${REPO_ROOT}/octo/my_octo_vggt_model_offline/octo_vggt_finetune_staged/experiment_20250808_130401_BASELINE_RUN"
 
 # # Offline regression (override data root if needed)
-# srun python -u /gpfs/home4/pkarageorgis/geo_octo/evaluation/scripts/offline_regression.py \
-#   --model_path /gpfs/home4/pkarageorgis/geo_octo/octo/my_octo_vggt_model_offline/octo_vggt_finetune_staged/experiment_20250808_130401_BASELINE_RUN \
+# srun python -u "${REPO_ROOT}/evaluation/scripts/offline_regression.py" \
+#   --model_path "${REPO_ROOT}/octo/my_octo_vggt_model_offline/octo_vggt_finetune_staged/experiment_20250808_130401_BASELINE_RUN" \
 #   --batches 32 \
 #   --batch_size 8 \
 #   --config_string full,multimodal \
-#   --data_root /gpfs/home4/pkarageorgis/geo_octo/libero_datasets
+#   --data_root "${REPO_ROOT}/libero_datasets"
 
 # # Parameter delta against HF base
-# srun python -u /gpfs/home4/pkarageorgis/geo_octo/evaluation/scripts/check_param_delta.py \
-#   --finetuned /gpfs/home4/pkarageorgis/geo_octo/octo/my_octo_vggt_model_offline/octo_vggt_finetune_staged/experiment_20250808_130401_BASELINE_RUN \
+# srun python -u "${REPO_ROOT}/evaluation/scripts/check_param_delta.py" \
+#   --finetuned "${REPO_ROOT}/octo/my_octo_vggt_model_offline/octo_vggt_finetune_staged/experiment_20250808_130401_BASELINE_RUN" \
 #   --base hf://rail-berkeley/octo-small-1.5 \
 #   --topk 30
 

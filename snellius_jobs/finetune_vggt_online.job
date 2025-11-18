@@ -29,7 +29,11 @@ export JAX_DISABLE_PERSISTENT_CACHE=1
 # export CUDA_VISIBLE_DEVICES=0,1,2,3
 
 source activate octo
-cd octo
+
+SCRIPT_DIR="$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(realpath "${SCRIPT_DIR}/..")"
+cd "${REPO_ROOT}/octo"
+AE_COMPRESSOR_PATH="${REPO_ROOT}/AE_Compressor/vggt_autoencoder_24L_256x512.pt"
 
 export NVRTC_LIB_DIR=$(python - <<'PY'
 import os,inspect
@@ -40,7 +44,7 @@ PY
 export LD_LIBRARY_PATH="$NVRTC_LIB_DIR:$CONDA_PREFIX/lib:$LD_LIBRARY_PATH"
 [ -f "$NVRTC_LIB_DIR/libnvrtc.so" ] || ln -sf $(ls "$NVRTC_LIB_DIR"/libnvrtc.so.* | head -n1) "$NVRTC_LIB_DIR/libnvrtc.so"
 
-export PYTHONPATH="/gpfs/home4/pkarageorgis/geo_octo:$PYTHONPATH"
+export PYTHONPATH="${REPO_ROOT}:${PYTHONPATH}"
 
 #export XLA_FLAGS="$XLA_FLAGS --xla_gpu_enable_cudnn_frontend=false"
 
@@ -92,7 +96,7 @@ srun -u python scripts/finetune_vggt_online.py \
   --config.save_dir=/scratch-shared/tmp.cwkV8vOvfY/trained_models/my_octo_vggt_model_online \
   --use_vision_encoder=False \
   --vggt_concat_mode=features \
-  --ae_path=/home/pkarageorgis/AE_Compressor/vggt_autoencoder_24L_256x512.pt \
+  --ae_path="${AE_COMPRESSOR_PATH}" \
   --ae_hidden=8192 \
   --vggt_eval_batch_size=48 \
   --vggt_use_cuda=True \

@@ -1,6 +1,7 @@
 import os
 import sys
 import math
+from pathlib import Path
 from typing import Tuple, Optional, List, Iterable
 
 import numpy as np
@@ -21,12 +22,19 @@ import matplotlib.pyplot as plt
 # Reuse the official VGGT implementation shipped in this repo
 from vggt.models.vggt import VGGT
 
+REPO_ROOT = Path(__file__).resolve().parents[2]
+DEFAULT_AE_OUTPUT_DIR = REPO_ROOT / "AE_Compressor"
+
 
 FLAGS = flags.FLAGS
 
 # I/O and dataset discovery
 flags.DEFINE_string("input_data_dir", None, "Path to the root directory containing ORIGINAL sub-datasets.", required=True)
-flags.DEFINE_string("output_dir", "/home/pkarageorgis/AE_Compressor", "Directory to save trained AE .pt files.")
+flags.DEFINE_string(
+    "output_dir",
+    str(DEFAULT_AE_OUTPUT_DIR),
+    "Directory to save trained AE .pt files.",
+)
 flags.DEFINE_string(
     "dataset_names",
     "libero_spatial_no_noops,libero_goal_no_noops,libero_object_no_noops,libero_10_no_noops",

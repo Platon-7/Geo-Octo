@@ -1,5 +1,5 @@
 {
-  "dataset_dir": "/gpfs/home4/pkarageorgis/geo_octo/libero_datasets/libero_spatial_no_noops/1.0.0",
+  "dataset_dir": "libero_datasets/libero_spatial_no_noops/1.0.0",
   "num_episodes_scanned": 432,
   "by_language": {
     "pick up the black bowl next to the cookie box and place it on the plate": [

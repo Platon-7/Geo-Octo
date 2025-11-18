@@ -20,6 +20,9 @@ export WANDB_ENTITY="nlp-squad"
 export WANDB_PROJECT="Geo_Octo"
 
 source activate octo
-cd octo
+
+SCRIPT_DIR="$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(realpath "${SCRIPT_DIR}/..")"
+cd "${REPO_ROOT}/octo"
 
 srun python scripts/download_rlds_libero.py

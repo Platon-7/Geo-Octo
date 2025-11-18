@@ -1,5 +1,5 @@
 {
-  "dataset_dir": "/gpfs/home4/pkarageorgis/geo_octo/libero_datasets/libero_goal_no_noops/1.0.0",
+  "dataset_dir": "libero_datasets/libero_goal_no_noops/1.0.0",
   "num_episodes_scanned": 428,
   "by_language": {
     "push the plate to the front of the stove": [
