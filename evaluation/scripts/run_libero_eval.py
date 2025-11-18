@@ -3,6 +3,7 @@ import warnings
 import json
 from datetime import datetime
 import numpy as np
+from pathlib import Path
 
 # Add compatibility shim before importing anything else
 try:
@@ -16,8 +17,14 @@ except ImportError:
 warnings.filterwarnings("ignore", category=DeprecationWarning, module="transformers")
 
 # 1. Load the statistics
-stats_path = "/home/pkarageorgis/geo_octo/libero_datasets/unified_stats/unified_dataset_statistics_libero_object_no_vggt.json"
-with open(stats_path, 'r') as f:
+REPO_ROOT = Path(__file__).resolve().parents[2]
+stats_path = (
+    REPO_ROOT
+    / "libero_datasets"
+    / "unified_stats"
+    / "unified_dataset_statistics_libero_object_no_vggt.json"
+)
+with stats_path.open('r') as f:
     dataset_statistics = json.load(f)
 
 action_mean = np.array(dataset_statistics['action']['mean'])
@@ -29,7 +36,6 @@ import os
 from collections import deque
 from dataclasses import dataclass
 from enum import Enum
-from pathlib import Path
 from typing import Optional, Tuple, Union
 
 import draccus

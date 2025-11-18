@@ -1,9 +1,11 @@
+from pathlib import Path
+
 from ml_collections import ConfigDict
 from ml_collections.config_dict import FieldReference, placeholder
 
 from octo.utils.spec import ModuleSpec
-from octo.model.components.tokenizers import VGGTTokenizer, VisionMixer, ImageTokenizer
-from octo.model.components.vit_encoders import PatchEncoder
+
+REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
 def get_config(config_string="full,multimodal"):
@@ -11,6 +13,13 @@ def get_config(config_string="full,multimodal"):
     assert task in ["image_conditioned", "language_conditioned", "multimodal"]
     assert mode in ["full", "head_only", "head_mlp_only"]
 
+    UNIFIED_STATS_PATH = str(
+        REPO_ROOT
+        / "libero_datasets"
+        / "unified_stats"
+        / "unified_dataset_statistics_libero_object_no_vggt.json"
+    )
+     
     # Fill this in for your own dataset!
 
     # There should be two image keys
@@ -18,9 +27,10 @@ def get_config(config_string="full,multimodal"):
     # and second image key should be the wrist view (None if not used)
 
     FINETUNING_KWARGS = {
-        "name": "bridge_dataset",
-        "data_dir": "./tests/debug_dataset",
-        "image_obs_keys": {"primary": "image_0", "wrist": None},
+        "name": "libero_spatial_no_noops",
+        "data_dir": str(REPO_ROOT / "libero_datasets"),
+        "dataset_statistics": UNIFIED_STATS_PATH,
+        "image_obs_keys": {"primary": "image_primary"},
         "proprio_obs_key": "proprio",
         "language_key": "language_instruction",
         "action_proprio_normalization_type": "normal",
@@ -29,7 +39,7 @@ def get_config(config_string="full,multimodal"):
         # standardize_fn is dynamically loaded from a file
         # for example: "experiments/kevin/custom_standardization_transforms.py:aloha_dataset_transform"
         "standardize_fn": ModuleSpec.create(
-            "octo.data.oxe.oxe_standardization_transforms:bridge_dataset_transform",
+                "octo.data.utils.data_utils:standardize_libero_vggt"
         ),
         # If the default data loading speed is too slow, try these:
         # "num_parallel_reads": 8,  # for reading from disk / GCS
@@ -55,16 +65,16 @@ def get_config(config_string="full,multimodal"):
     config = dict(
         pretrained_path=placeholder(str),
         pretrained_step=placeholder(int),
-        batch_size=8,
+        batch_size=64,
         shuffle_buffer_size=10000,
         num_steps=max_steps,
         log_interval=100,
-        eval_interval=5000,
-        save_interval=5000,
+        eval_interval=1000,
+        save_interval=1000,
         save_dir=placeholder(str),
         seed=42,
         wandb=dict(
-            project="octo_finetune", group=placeholder(str), entity=placeholder(str)
+            project="octo_finetune_baseline", group=placeholder(str), entity=placeholder(str)
         ),
         dataset_kwargs=FINETUNING_KWARGS,
         modality=task,
@@ -82,7 +92,7 @@ def get_config(config_string="full,multimodal"):
             weight_decay=0.01,
             clip_gradient=1.0,
             frozen_keys=frozen_keys,
-            grad_accumulation_steps=None,  # if you are using grad accumulation, you need to adjust max_steps accordingly
+            grad_accumulation_steps=4,  # if you are using grad accumulation, you need to adjust max_steps accordingly
         ),
         val_kwargs=dict(
             val_shuffle_buffer_size=1000,
@@ -147,7 +157,7 @@ def get_config(config_string="full,multimodal"):
     )
     frame_transform_kwargs = dict(
         resize_size={
-            "primary": (224, 224),  # workspace (3rd person) camera is at 256x256 (CHANGED TO 224x224)
+            "primary": (256, 256),  # workspace (3rd person) camera is at 256x256
             "wrist": (128, 128),  # wrist camera is at 128x128
         },
         image_augment_kwargs=dict(
@@ -160,54 +170,10 @@ def get_config(config_string="full,multimodal"):
         "frame_transform_threads"
     ] = 16  # for the most CPU-intensive ops (decoding, resizing, augmenting)
 
+    config['config_delete_keys'] = {
+        "model": {"observation_tokenizers": {"wrist": True}}
+    }
+
     config["traj_transform_kwargs"] = traj_transform_kwargs
     config["frame_transform_kwargs"] = frame_transform_kwargs
-
-    # ##################################################################
-    # ### START: ADD THE FOLLOWING CODE BEFORE THE RETURN STATEMENT  ###
-    # ##################################################################
-
-    # This dictionary will be used to UPDATE the config loaded from the pretrained model.
-    # We are adding our new "mixed_vision" tokenizer.
-    config['update_config'] = {
-        "model": {
-            "observation_tokenizers": {
-                "mixed_vision": ModuleSpec.create(
-                    VisionMixer,
-                    patch_tokenizer_spec={
-                        'module': ImageTokenizer,
-                        'kwargs': {
-                            # The ImageTokenizer's constructor takes 'encoder' and 'obs_stack_keys'.
-                            'encoder': ModuleSpec.create(
-                                PatchEncoder,
-                                # 'patch_size' is an argument for the PatchEncoder, so it goes here.
-                                patch_size=16,
-                                num_features=512
-                            ),
-                            'obs_stack_keys': ("image_primary",),
-                        }
-                    },
-                    vggt_tokenizer_spec={
-                        'module': VGGTTokenizer
-                    },
-                )
-            }
-        }
-    }
-
-    # This dictionary tells the script to DELETE a key from the pretrained model's config.
-    # We are removing the original "image_primary" tokenizer to avoid conflicts.
-    # The structure mirrors the path to the key. The `True` value is just a placeholder.
-    config['config_delete_keys'] = {
-        "model": {
-            "observation_tokenizers": {
-                "image_primary": True,
-            }
-        }
-    }
-
-    # ##################################################################
-    # ### END: ADD THE PREVIOUS CODE BLOCK                           ###
-    # ##################################################################
-
     return ConfigDict(config)

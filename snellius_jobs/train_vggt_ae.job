@@ -19,6 +19,17 @@ export WANDB_PROJECT="Geo_Octo"
 
 source activate octo-onnx
 
+if [[ -n "${SLURM_SUBMIT_DIR:-}" ]]; then
+  REPO_ROOT="${SLURM_SUBMIT_DIR}"
+else
+  SCRIPT_DIR="$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  REPO_ROOT="$(realpath "${SCRIPT_DIR}/..")"
+fi
+cd "${REPO_ROOT}"
+LIBERO_DATA_DIR="${REPO_ROOT}/libero_datasets"
+AE_OUTPUT_DIR="${REPO_ROOT}/AE_Compressor"
+AE_VERIFICATION_DIR="${AE_OUTPUT_DIR}/ae_verification"
+
 # ===================================================================
 # ================= GPU & CUDA DIAGNOSTICS ==========================
 # ===================================================================
@@ -74,11 +85,11 @@ echo "################################################"
 echo ""
 
 
-export PYTHONPATH="/gpfs/home4/pkarageorgis/geo_octo:$PYTHONPATH"
+export PYTHONPATH="${REPO_ROOT}:${PYTHONPATH}"
 
-srun -u python /gpfs/home4/pkarageorgis/geo_octo/octo/scripts/train_vggt_ae.py \
-  --input_data_dir=/home/pkarageorgis/geo_octo/libero_datasets \
-  --output_dir=/geo_octo/AE_Compressor \
+srun -u python "${REPO_ROOT}/octo/scripts/train_vggt_ae.py" \
+  --input_data_dir="${LIBERO_DATA_DIR}" \
+  --output_dir="${AE_OUTPUT_DIR}" \
   --dataset_names=libero_spatial_no_noops,libero_goal_no_noops,libero_object_no_noops,libero_10_no_noops \
   --vggt_input_res=224 --use_cuda=True \
   --ae_epochs=25 --ae_lr=1e-4 --ae_hidden=8192 \
@@ -88,5 +99,5 @@ srun -u python /gpfs/home4/pkarageorgis/geo_octo/octo/scripts/train_vggt_ae.py \
   --use_weighted_layer_fusion=True \
   --use_augmentations=True \
   --ae_verification_enable=True --ae_verification_count=8 \
-  --ae_verification_dir=/geo_octo/AE_Compressor/ae_verification \
+  --ae_verification_dir="${AE_VERIFICATION_DIR}" \
   --augmentation_mix_ratio=1.0

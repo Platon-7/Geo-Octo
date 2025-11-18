@@ -15,11 +15,18 @@ module load 2024
 module load Anaconda3/2024.06-1
 
 source activate octo
-cd octo
+
+if [[ -n "${SLURM_SUBMIT_DIR:-}" ]]; then
+  REPO_ROOT="${SLURM_SUBMIT_DIR}"
+else
+  SCRIPT_DIR="$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  REPO_ROOT="$(realpath "${SCRIPT_DIR}/..")"
+fi
+cd "${REPO_ROOT}/octo"
 
 BASE_DATA_DIR=/scratch-shared/tmp.cwkV8vOvfY/libero_datasets
 VGGT_DATA_DIR=/scratch-shared/tmp.cwkV8vOvfY/libero_vggt_onnx_compressed_torch_ae
-OUT_DIR=/home/pkarageorgis/geo_octo/libero_datasets/unified_stats
+OUT_DIR="${REPO_ROOT}/libero_datasets/unified_stats"
 
 # No-VGGT variants
 # srun -u python scripts/create_unified_statistics.py \

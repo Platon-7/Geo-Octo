@@ -3,6 +3,7 @@ import warnings
 import json
 import numpy as np
 from datetime import datetime
+from pathlib import Path
 
 # Add compatibility shim before importing anything else
 try:
@@ -16,9 +17,15 @@ except ImportError:
 warnings.filterwarnings("ignore", category=DeprecationWarning, module="transformers")
 
 # 1. Load the statistics (match finetune_pointmap config)
-STATS_PATH = "/home/pkarageorgis/geo_octo/libero_datasets/unified_stats/unified_dataset_statistics_libero_object_no_vggt.json"
+REPO_ROOT = Path(__file__).resolve().parents[2]
+STATS_PATH = (
+    REPO_ROOT
+    / "libero_datasets"
+    / "unified_stats"
+    / "unified_dataset_statistics_libero_object_no_vggt.json"
+)
 try:
-    with open(STATS_PATH, 'r') as f:
+    with STATS_PATH.open('r') as f:
         dataset_statistics = json.load(f)
 except Exception as _e:
     print(f"[WARNING] Could not load dataset statistics from {STATS_PATH}: {_e}")
@@ -32,7 +39,6 @@ import os
 from collections import deque
 from dataclasses import dataclass
 from enum import Enum
-from pathlib import Path
 from typing import Optional, Union
 
 import draccus

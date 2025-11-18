@@ -20,11 +20,19 @@ export WANDB_PROJECT="Geo_Octo"
 
 source activate octo-libero-eval
 
+if [[ -n "${SLURM_SUBMIT_DIR:-}" ]]; then
+  REPO_ROOT="${SLURM_SUBMIT_DIR}"
+else
+  SCRIPT_DIR="$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  REPO_ROOT="$(realpath "${SCRIPT_DIR}/..")"
+fi
+cd "${REPO_ROOT}"
+
 export CUDA_NVCC_BIN=$(python -c "import os,inspect,nvidia.cuda_nvcc as nvcc; print(os.path.join(os.path.dirname(inspect.getfile(nvcc)),'bin'))")
 export NVRTC_LIB_DIR=$(python -c "import os,inspect,nvidia.cuda_nvrtc as nvrtc; print(os.path.join(os.path.dirname(inspect.getfile(nvrtc)),'lib'))")
 export PATH="$CUDA_NVCC_BIN:$PATH"
 export LD_LIBRARY_PATH="$NVRTC_LIB_DIR:$CONDA_PREFIX/lib:$LD_LIBRARY_PATH"
-export PYTHONPATH="/gpfs/home4/pkarageorgis/geo_octo:/gpfs/home4/pkarageorgis/geo_octo/LIBERO:/gpfs/home4/pkarageorgis/geo_octo/octo:$PYTHONPATH"
+export PYTHONPATH="${REPO_ROOT}:${REPO_ROOT}/LIBERO:${REPO_ROOT}/octo:${PYTHONPATH}"
 export MUJOCO_GL=egl
 export TOKENIZERS_PARALLELISM=false
 export TF_CPP_MIN_LOG_LEVEL=3
@@ -38,7 +46,7 @@ print('JAX:', jax.default_backend(), jax.devices())
 print('Torch CUDA:', torch.version.cuda)
 PY
 
-export PYTHONPATH="/gpfs/home4/pkarageorgis/geo_octo/vggt:/gpfs/home4/pkarageorgis/geo_octo/LIBERO:/gpfs/home4/pkarageorgis/geo_octo/octo:$PYTHONPATH"
+export PYTHONPATH="${REPO_ROOT}/vggt:${PYTHONPATH}"
 
 hostname
 
