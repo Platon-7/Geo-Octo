@@ -32,8 +32,12 @@ export JAX_DISABLE_PERSISTENT_CACHE=1
 
 source activate octo
 
-SCRIPT_DIR="$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(realpath "${SCRIPT_DIR}/..")"
+if [[ -n "${SLURM_SUBMIT_DIR:-}" ]]; then
+  REPO_ROOT="${SLURM_SUBMIT_DIR}"
+else
+  SCRIPT_DIR="$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  REPO_ROOT="$(realpath "${SCRIPT_DIR}/..")"
+fi
 cd "${REPO_ROOT}/octo-baseline"
 
 export NVRTC_LIB_DIR=$(python - <<'PY'

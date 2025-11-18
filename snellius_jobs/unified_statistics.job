@@ -16,8 +16,12 @@ module load Anaconda3/2024.06-1
 
 source activate octo
 
-SCRIPT_DIR="$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(realpath "${SCRIPT_DIR}/..")"
+if [[ -n "${SLURM_SUBMIT_DIR:-}" ]]; then
+  REPO_ROOT="${SLURM_SUBMIT_DIR}"
+else
+  SCRIPT_DIR="$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  REPO_ROOT="$(realpath "${SCRIPT_DIR}/..")"
+fi
 cd "${REPO_ROOT}/octo"
 
 BASE_DATA_DIR=/scratch-shared/tmp.cwkV8vOvfY/libero_datasets

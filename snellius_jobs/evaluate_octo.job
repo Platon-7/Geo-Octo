@@ -22,8 +22,12 @@ export WANDB_PROJECT="Geo_Octo"
 
 source activate octo-libero-eval
 
-SCRIPT_DIR="$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(realpath "${SCRIPT_DIR}/..")"
+if [[ -n "${SLURM_SUBMIT_DIR:-}" ]]; then
+  REPO_ROOT="${SLURM_SUBMIT_DIR}"
+else
+  SCRIPT_DIR="$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  REPO_ROOT="$(realpath "${SCRIPT_DIR}/..")"
+fi
 cd "${REPO_ROOT}"
 
 export CUDA_NVCC_BIN=$(python -c "import os,inspect,nvidia.cuda_nvcc as nvcc; print(os.path.join(os.path.dirname(inspect.getfile(nvcc)),'bin'))")
