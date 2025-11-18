@@ -6,6 +6,9 @@ Environment Setup
 
 Run all steps from the repository root (`geo_octo`):
 
+* Repository layout: key code lives in `octo/` (Octo training utilities), `octo-baseline/` (baseline configs/scripts), and `LIBERO/` (benchmark assets). Batch scripts are under `snellius_jobs/`, datasets go in `libero_datasets/`, and analysis artifacts/logs land in `analysis/`.
+* Dataset prerequisite: before finetuning or evaluation, ensure the LIBERO TFDS datasets exist under `libero_datasets/` (for example by running `snellius_jobs/download_libero.job`, which calls Octo’s `download_rlds_libero.py`). If you already have the datasets elsewhere, either copy/symlink them or update the relevant job/config arguments to point to the correct location.
+
 1. Create the Conda environment specified by the project:
 
    ```
