@@ -253,23 +253,25 @@ def _compute_pointmap_readout_tokens(
     return result
 
 
-def _collect_attention_matrices(tree: Any) -> List[np.ndarray]:
+def _collect_attention_matrices(tree: Any, include: bool = False) -> List[np.ndarray]:
     """Recursively gather attention matrices from a Flax intermediates tree."""
     matrices: List[np.ndarray] = []
     if tree is None:
         return matrices
     if isinstance(tree, Mapping):
-        for value in tree.values():
-            matrices.extend(_collect_attention_matrices(value))
+        for key, value in tree.items():
+            include_next = include or (isinstance(key, str) and key.endswith("attention_weights"))
+            matrices.extend(_collect_attention_matrices(value, include_next))
         return matrices
     if isinstance(tree, (list, tuple)):
         for value in tree:
-            matrices.extend(_collect_attention_matrices(value))
+            matrices.extend(_collect_attention_matrices(value, include))
         return matrices
-    try:
-        matrices.append(np.asarray(tree))
-    except Exception:
-        pass
+    if include:
+        try:
+            matrices.append(np.asarray(tree))
+        except Exception:
+            pass
     return matrices
 
 
@@ -416,9 +418,7 @@ def _compute_readout_attention_maps(
         print(f"[SNAPSHOT] Unable to capture transformer attention: {exc}", flush=True)
         return {}
 
-    attention_tree = None
-    if isinstance(intermediates, Mapping):
-        attention_tree = intermediates.get("attention_weights")
+    attention_tree = intermediates if isinstance(intermediates, Mapping) else None
     attention_mats = _collect_attention_matrices(attention_tree)
     if not attention_mats:
         return {}
