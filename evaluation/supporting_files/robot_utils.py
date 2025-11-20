@@ -495,14 +495,17 @@ def _compute_readout_attention_maps(
     try:
         clean_observation = _convert_strings_to_arrays(observation)
         clean_task = _convert_strings_to_arrays(task)
-        transformer_outputs, intermediates = model.run_transformer(
+        transformer_outputs, aux = model.module.apply(
+            {"params": model.params},
             clean_observation,
             clean_task,
             timestep_mask,
             train=False,
-            capture_attention=True,
-            return_intermediates=True,
+            method="octo_transformer",
+            mutable=["intermediates"],
+            capture_intermediates=True,
         )
+        intermediates = aux.get("intermediates", {})
     except Exception as exc:
         print(f"[SNAPSHOT] Unable to capture transformer attention: {exc}", flush=True)
         return {}
