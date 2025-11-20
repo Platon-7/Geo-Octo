@@ -339,11 +339,12 @@ class Encoder1DBlock(nn.Module):
             num_heads=self.num_heads,
             name="MultiHeadDotProductAttention_0",
         )
+        attn_out = attn_layer(x, x, mask=attention_mask)
         if self.capture_attention:
             try:
                 attn_weights = attention_lib.dot_product_attention_weights(
-                    query,
-                    key,
+                    attn_layer.query,
+                    attn_layer.key,
                     mask=attention_mask,
                     deterministic=True,
                     dtype=self.dtype,
@@ -351,7 +352,6 @@ class Encoder1DBlock(nn.Module):
                 self.sow("intermediates", "attention_weights", attn_weights)
             except Exception as exc:
                 print(f"[ATTN] Failed to capture attention weights: {exc}", flush=True)
-        attn_out = attn_layer(x, x, mask=attention_mask)
         # Optional LoRA on attention output projection only (safe w.r.t. pretrained names)
         if self.use_lora_attention and self.lora_r and self.lora_r > 0:
             delta_attn = ResidualLoRA(
