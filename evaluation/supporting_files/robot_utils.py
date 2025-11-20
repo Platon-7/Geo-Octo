@@ -569,6 +569,11 @@ def _compute_readout_attention_maps(
     readout_start, readout_count = readout_range
     if obs_count <= 0 or readout_count <= 0:
         return {}
+    print(
+        f"[SNAPSHOT] attention mapping readout=({readout_key}, start={readout_start}, count={readout_count}) "
+        f"target=({obs_key}, start={obs_start}, count={obs_count}) timestep={timestep_idx}",
+        flush=True,
+    )
 
     obs_group = outputs_dict.get(obs_key)
     map_slices: List[np.ndarray] = []
