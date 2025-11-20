@@ -615,7 +615,9 @@ def _compute_readout_attention_maps(
         ]
         if sub.size == 0:
             continue
-        reduced = sub.mean(axis=(0, 1, 2))
+        sub = sub.mean(axis=1, keepdims=True)  # average over heads
+        sub = sub[..., -1:, :]  # last readout token
+        reduced = sub.mean(axis=(0, -2))
         map_slices.append(_reshape_attention_vector(reduced, obs_group))
 
     if not map_slices:

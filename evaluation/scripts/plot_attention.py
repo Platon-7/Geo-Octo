@@ -305,7 +305,7 @@ def main() -> None:
     _render_similarity_panel(
         axes_map["vggt_only_sim"],
         vggt_only_payload,
-        "vggt_self",
+        "self",
         "VGGT-Only – Self-Similarity",
     )
     _render_attention_panel(
