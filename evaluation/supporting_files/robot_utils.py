@@ -545,7 +545,7 @@ def get_model(cfg: Any, wrap_diffusion_policy_for_droid: bool = False) -> Any:
         if checkpoint_step is not None:
             model = OctoModel.load_pretrained(str(pretrained_checkpoint), step=int(checkpoint_step))
         else:
-            model = OctoModel.load_pretrained(str(pretrained_checkpoint))
+    model = OctoModel.load_pretrained(str(pretrained_checkpoint))
     else:
         raise ValueError(f"Unsupported model family: {model_family}")
 
