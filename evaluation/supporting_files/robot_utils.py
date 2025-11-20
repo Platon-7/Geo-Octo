@@ -1,7 +1,7 @@
 import os
 import random
 import time
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, Iterable, List, Optional, Tuple, Union
 from collections import deque
 from collections.abc import Mapping
 
@@ -275,6 +275,81 @@ def _collect_attention_matrices(tree: Any, include: bool = False) -> List[np.nda
     return matrices
 
 
+def _extract_call_array(node: Any) -> Optional[np.ndarray]:
+    if node is None:
+        return None
+    if isinstance(node, np.ndarray):
+        return node
+    try:
+        import jax.numpy as jnp  # type: ignore
+    except Exception:
+        jnp = None
+    if jnp is not None and isinstance(node, jnp.ndarray):
+        return np.asarray(node)
+    if isinstance(node, Mapping):
+        if "__call__" in node:
+            return _extract_call_array(node["__call__"])
+        for value in node.values():
+            arr = _extract_call_array(value)
+            if arr is not None:
+                return arr
+    if isinstance(node, (list, tuple)):
+        for value in node:
+            arr = _extract_call_array(value)
+            if arr is not None:
+                return arr
+    return None
+
+
+def _gather_attention_blocks(tree: Any) -> List[Any]:
+    blocks: List[Any] = []
+    if tree is None:
+        return blocks
+    if isinstance(tree, Mapping):
+        for key, value in tree.items():
+            if isinstance(key, str) and key.startswith("MultiHeadDotProductAttention"):
+                blocks.append(value)
+            blocks.extend(_gather_attention_blocks(value))
+    elif isinstance(tree, (list, tuple)):
+        for value in tree:
+            blocks.extend(_gather_attention_blocks(value))
+    return blocks
+
+
+def _softmax_along_last_axis(arr: np.ndarray) -> np.ndarray:
+    arr = arr - np.max(arr, axis=-1, keepdims=True)
+    np.exp(arr, out=arr)
+    sums = np.sum(arr, axis=-1, keepdims=True) + 1e-9
+    return arr / sums
+
+
+def _extract_attention_weights_from_block(block: Any) -> Optional[np.ndarray]:
+    if not isinstance(block, Mapping):
+        return None
+    query = _extract_call_array(block.get("query"))
+    key = _extract_call_array(block.get("key"))
+    if query is None or key is None:
+        return None
+    query = np.asarray(query)
+    key = np.asarray(key)
+    if query.shape != key.shape:
+        return None
+    depth = max(query.shape[-1], 1)
+    scale = 1.0 / np.sqrt(float(depth))
+    scores = np.einsum("...qhd,...khd->...hqk", query * scale, key)
+    return _softmax_along_last_axis(scores)
+
+
+def _extract_attention_weights(intermediates: Mapping[str, Any]) -> List[np.ndarray]:
+    blocks = _gather_attention_blocks(intermediates)
+    weights: List[np.ndarray] = []
+    for block in blocks:
+        arr = _extract_attention_weights_from_block(block)
+        if arr is not None:
+            weights.append(arr)
+    return weights
+
+
 def _resolve_group_key(
     keys: List[str],
     preferred: str,
@@ -418,18 +493,27 @@ def _compute_readout_attention_maps(
         print(f"[SNAPSHOT] Unable to capture transformer attention: {exc}", flush=True)
         return {}
 
-    attention_tree = intermediates if isinstance(intermediates, Mapping) else None
-    attention_mats = _collect_attention_matrices(attention_tree)
-    if not attention_mats:
-        available = list(attention_tree.keys()) if isinstance(attention_tree, Mapping) else []
-        print(
-            "[SNAPSHOT] No attention weights captured; available intermediate keys:",
-            available,
-            flush=True,
-        )
-        return {}
-    else:
+    attention_tree = intermediates if isinstance(intermediates, Mapping) else {}
+    attention_mats = _extract_attention_weights(attention_tree) if attention_tree else []
+    if attention_mats:
         print(f"[SNAPSHOT] Captured {len(attention_mats)} attention tensors.", flush=True)
+    else:
+        mask_tree = attention_tree.get("attention_mask") if isinstance(attention_tree, Mapping) else None
+        attention_mats = _collect_attention_matrices(mask_tree)
+        available = list(attention_tree.keys()) if isinstance(attention_tree, Mapping) else []
+        if attention_mats:
+            print(
+                "[SNAPSHOT] Falling back to transformer attention mask; available keys:",
+                available,
+                flush=True,
+            )
+        else:
+            print(
+                "[SNAPSHOT] No attention weights captured; available intermediate keys:",
+                available,
+                flush=True,
+            )
+            return {}
 
     outputs_dict = dict(transformer_outputs)
     indexer = _build_token_indexer(model, outputs_dict)
@@ -545,7 +629,7 @@ def get_model(cfg: Any, wrap_diffusion_policy_for_droid: bool = False) -> Any:
         if checkpoint_step is not None:
             model = OctoModel.load_pretrained(str(pretrained_checkpoint), step=int(checkpoint_step))
         else:
-    model = OctoModel.load_pretrained(str(pretrained_checkpoint))
+            model = OctoModel.load_pretrained(str(pretrained_checkpoint))
     else:
         raise ValueError(f"Unsupported model family: {model_family}")
 
