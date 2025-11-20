@@ -1,6 +1,8 @@
 # adapted from https://github.com/google-research/vision_transformer/blob/main/vit_jax/models_vit.py
 from typing import Callable, Optional, Sequence, Union as _Union
 
+import inspect
+
 import flax.linen as nn
 import jax
 import jax.numpy as jnp
@@ -329,7 +331,7 @@ class Encoder1DBlock(nn.Module):
         assert inputs.ndim == 3, f"Expected (batch, seq, hidden) got {inputs.shape}"
         x = nn.LayerNorm(dtype=self.dtype)(inputs)
         # Base attention with original parameter names
-        attn_out = nn.MultiHeadDotProductAttention(
+        attn_layer = nn.MultiHeadDotProductAttention(
             dtype=self.dtype,
             kernel_init=nn.initializers.xavier_uniform(),
             broadcast_dropout=False,
@@ -337,7 +339,16 @@ class Encoder1DBlock(nn.Module):
             dropout_rate=self.attention_dropout_rate,
             num_heads=self.num_heads,
             name="MultiHeadDotProductAttention_0",
-        )(x, x, mask=attention_mask, sow_weights=self.capture_attention)
+        )
+        attn_kwargs = {"mask": attention_mask}
+        if self.capture_attention:
+            try:
+                sig = inspect.signature(attn_layer.__call__)
+                if "sow_weights" in sig.parameters:
+                    attn_kwargs["sow_weights"] = True
+            except (ValueError, TypeError):
+                pass
+        attn_out = attn_layer(x, x, **attn_kwargs)
         # Optional LoRA on attention output projection only (safe w.r.t. pretrained names)
         if self.use_lora_attention and self.lora_r and self.lora_r > 0:
             delta_attn = ResidualLoRA(
