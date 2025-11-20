@@ -421,7 +421,15 @@ def _compute_readout_attention_maps(
     attention_tree = intermediates if isinstance(intermediates, Mapping) else None
     attention_mats = _collect_attention_matrices(attention_tree)
     if not attention_mats:
+        available = list(attention_tree.keys()) if isinstance(attention_tree, Mapping) else []
+        print(
+            "[SNAPSHOT] No attention weights captured; available intermediate keys:",
+            available,
+            flush=True,
+        )
         return {}
+    else:
+        print(f"[SNAPSHOT] Captured {len(attention_mats)} attention tensors.", flush=True)
 
     outputs_dict = dict(transformer_outputs)
     indexer = _build_token_indexer(model, outputs_dict)
