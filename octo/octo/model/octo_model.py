@@ -132,7 +132,7 @@ class OctoModel:
         _verify_shapes(tasks, "tasks", self.example_batch["task"], starting_dim=1)
         return tasks
 
-    @partial(jax.jit, static_argnames=("train",))
+    @partial(jax.jit, static_argnames=("train", "capture_attention", "return_intermediates"))
     def run_transformer(
         self,
         observations: Data,
