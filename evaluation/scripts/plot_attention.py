@@ -150,6 +150,7 @@ def _render_placeholder(ax, title: str, message: str) -> None:
 
 def _select_attention_overlay(entries: Dict[str, np.ndarray]) -> Optional[np.ndarray]:
     priorities = [
+        "attn_readout_action_obs_primary",
         "attn_readout_action_obs_image_primary",
         "attn_readout_action_obs_obs_image_primary",
     ]
@@ -162,7 +163,7 @@ def _select_attention_overlay(entries: Dict[str, np.ndarray]) -> Optional[np.nda
     return None
 
 
-def _build_attention_panel(payload: Optional[Dict[str, Any]], title: str) -> Optional[Dict[str, Any]]:
+def _extract_attention_map(payload: Optional[Dict[str, Any]]) -> Optional[np.ndarray]:
     if not payload:
         return None
     attn_entries = payload.get("attention_data")
@@ -171,11 +172,21 @@ def _build_attention_panel(payload: Optional[Dict[str, Any]], title: str) -> Opt
     attn_map = _select_attention_overlay(attn_entries)
     if attn_map is None:
         return None
-    return {
-        "title": title,
-        "attention": np.asarray(attn_map, dtype=np.float32),
-        "rgb": payload.get("rgb"),
-    }
+    return np.asarray(attn_map, dtype=np.float32)
+
+
+def _render_attention_panel(ax, attn_map: Optional[np.ndarray], rgb: Optional[np.ndarray], title: str, alpha: float):
+    if attn_map is None:
+        _render_placeholder(ax, title, "Attention map unavailable.")
+        return
+    heat = _normalize_heatmap(attn_map)
+    if rgb is not None:
+        heat_overlay = _resize_heatmap(heat, rgb.shape[:2])
+        _render_heatmap(ax, rgb, heat_overlay, title, alpha)
+    else:
+        ax.imshow(heat, cmap="turbo")
+        ax.axis("off")
+        ax.set_title(title)
 
 
 def main() -> None:
@@ -210,120 +221,107 @@ def main() -> None:
     vggt_payload = snapshots_map.get("vggt")
     vggt_only_payload = snapshots_map.get("vggt_only") or snapshots_map.get("vggt-only")
 
-    panels = []
+    fig = plt.figure(figsize=(18, 9))
+    gs = fig.add_gridspec(2, 4, width_ratios=[1.2, 1, 1, 1], height_ratios=[1, 1], wspace=0.2, hspace=0.15)
 
-    panels.append(
-        {
-            "title": "Policy RGB Input",
-            "rgb": (baseline_payload or vggt_payload or vggt_only_payload or {}).get("rgb"),
-        }
-    )
+    ax_rgb = fig.add_subplot(gs[:, 0])
+    rgb_source = (baseline_payload or vggt_payload or vggt_only_payload or {})
+    rgb_img = rgb_source.get("rgb")
+    if rgb_img is not None:
+        _render_rgb(ax_rgb, rgb_img, "Policy RGB Input")
+    else:
+        _render_placeholder(ax_rgb, "Policy RGB Input", "RGB frame unavailable.")
 
-    panels.append(
-        {
-            "title": "Baseline – Self-Similarity (Octo Tokens)",
-            "rgb": baseline_payload.get("rgb") if baseline_payload else None,
-            "octo": baseline_payload.get("octo_tokens") if baseline_payload else None,
-            "mode": "self",
-        }
-    )
+    axes_map = {
+        "baseline_sim": fig.add_subplot(gs[0, 1]),
+        "baseline_attn": fig.add_subplot(gs[1, 1]),
+        "vggt_sim": fig.add_subplot(gs[0, 2]),
+        "vggt_attn": fig.add_subplot(gs[1, 2]),
+        "vggt_only_sim": fig.add_subplot(gs[0, 3]),
+        "vggt_only_attn": fig.add_subplot(gs[1, 3]),
+    }
 
-    panels.append(
-        {
-            "title": "VGGT-Fusion – Cross-Modal Similarity",
-            "rgb": vggt_payload.get("rgb") if vggt_payload else None,
-            "octo": vggt_payload.get("octo_tokens") if vggt_payload else None,
-            "vggt": vggt_payload.get("vggt_tokens") if vggt_payload else None,
-            "mode": "cross",
-        }
-    )
-
-    panels.append(
-        {
-            "title": "VGGT-Only – Self-Similarity (VGGT Tokens)",
-            "rgb": (vggt_only_payload or baseline_payload or vggt_payload or {}).get("rgb"),
-            "vggt": vggt_only_payload.get("vggt_tokens") if vggt_only_payload else None,
-            "mode": "vggt_self",
-        }
-    )
-
-    attention_panel = _build_attention_panel(
-        baseline_payload or vggt_payload or vggt_only_payload,
-        "Transformer Attention (Readout → Image)",
-    )
-    if attention_panel:
-        panels.append(attention_panel)
-
-    fig, axes = plt.subplots(1, len(panels), figsize=(5 * len(panels), 5))
-    if len(panels) == 1:
-        axes = np.array([axes])
-
-    for ax, panel in zip(axes, panels):
-        title = panel["title"]
-        mode = panel.get("mode")
-        rgb = panel.get("rgb")
-
-        if mode is None:
-            if rgb is not None:
-                _render_rgb(ax, rgb, title)
-            else:
-                _render_placeholder(ax, title, "RGB frame unavailable.")
-            continue
-
+    def _render_similarity_panel(ax, payload, mode, title):
+        if not payload:
+            _render_placeholder(ax, title, "Snapshot unavailable.")
+            return
+        rgb = payload.get("rgb")
         if mode == "self":
-            tokens = panel.get("octo")
+            tokens = payload.get("octo_tokens")
             if tokens is not None and rgb is not None:
                 heat_low = _cosine_similarity_map(tokens, tokens)
                 heat_overlay = _resize_heatmap(_normalize_heatmap(heat_low), rgb.shape[:2])
-                overlay = _render_heatmap(ax, rgb, heat_overlay, title, args.alpha)
-                fig.colorbar(overlay, ax=ax, fraction=0.046, pad=0.04)
+                _render_heatmap(ax, rgb, heat_overlay, title, args.alpha)
             else:
                 _render_placeholder(ax, title, "Octo tokens unavailable.")
         elif mode == "cross":
-            octo_tokens = panel.get("octo")
-            vggt_tokens = panel.get("vggt")
+            octo_tokens = payload.get("octo_tokens")
+            vggt_tokens = payload.get("vggt_tokens")
             if octo_tokens is not None and vggt_tokens is not None and rgb is not None:
                 heat_low = _cosine_similarity_map(octo_tokens, vggt_tokens)
                 heat_overlay = _resize_heatmap(_normalize_heatmap(heat_low), rgb.shape[:2])
-                overlay = _render_heatmap(ax, rgb, heat_overlay, title, args.alpha)
-                fig.colorbar(overlay, ax=ax, fraction=0.046, pad=0.04)
+                _render_heatmap(ax, rgb, heat_overlay, title, args.alpha)
             else:
                 _render_placeholder(ax, title, "Required tokens unavailable.")
         elif mode == "vggt_self":
-            vggt_tokens = panel.get("vggt")
+            vggt_tokens = payload.get("vggt_tokens")
             if vggt_tokens is not None and rgb is not None:
                 heat_low = _cosine_similarity_map(vggt_tokens, vggt_tokens)
                 heat_overlay = _resize_heatmap(_normalize_heatmap(heat_low), rgb.shape[:2])
-                overlay = _render_heatmap(ax, rgb, heat_overlay, title, args.alpha)
-                fig.colorbar(overlay, ax=ax, fraction=0.046, pad=0.04)
+                _render_heatmap(ax, rgb, heat_overlay, title, args.alpha)
             else:
                 _render_placeholder(ax, title, "VGGT tokens unavailable.")
-        elif panel.get("attention") is not None:
-            attention_map = np.asarray(panel["attention"], dtype=np.float32)
-            heat = _normalize_heatmap(attention_map)
-            if rgb is not None:
-                heat_overlay = _resize_heatmap(heat, rgb.shape[:2])
-                overlay = _render_heatmap(ax, rgb, heat_overlay, title, args.alpha)
-                fig.colorbar(overlay, ax=ax, fraction=0.046, pad=0.04)
-            else:
-                ax.imshow(heat, cmap="turbo")
-                ax.axis("off")
-                ax.set_title(title)
-                fig.colorbar(
-                    plt.cm.ScalarMappable(cmap="turbo"),
-                    ax=ax,
-                    fraction=0.046,
-                    pad=0.04,
-                )
         else:
-            _render_placeholder(ax, title, "Unsupported panel mode.")
+            _render_placeholder(ax, title, "Unsupported mode.")
+
+    _render_similarity_panel(
+        axes_map["baseline_sim"],
+        baseline_payload,
+        "self",
+        "Baseline – Self-Similarity",
+    )
+    _render_attention_panel(
+        axes_map["baseline_attn"],
+        _extract_attention_map(baseline_payload),
+        baseline_payload.get("rgb") if baseline_payload else None,
+        "Baseline – Readout Attention",
+        args.alpha,
+    )
+
+    _render_similarity_panel(
+        axes_map["vggt_sim"],
+        vggt_payload,
+        "cross",
+        "VGGT-Fusion – Cross Similarity",
+    )
+    _render_attention_panel(
+        axes_map["vggt_attn"],
+        _extract_attention_map(vggt_payload),
+        vggt_payload.get("rgb") if vggt_payload else None,
+        "VGGT-Fusion – Readout Attention",
+        args.alpha,
+    )
+
+    _render_similarity_panel(
+        axes_map["vggt_only_sim"],
+        vggt_only_payload,
+        "vggt_self",
+        "VGGT-Only – Self-Similarity",
+    )
+    _render_attention_panel(
+        axes_map["vggt_only_attn"],
+        _extract_attention_map(vggt_only_payload),
+        vggt_only_payload.get("rgb") if vggt_only_payload else None,
+        "VGGT-Only – Readout Attention",
+        args.alpha,
+    )
 
     fig.suptitle(
-        "Patch-Similarity: Baseline vs. VGGT Variants",
+        "Policy Attention Snapshot: Baseline vs. VGGT Variants",
         fontsize=18,
-        y=0.95,
+        y=0.97,
     )
-    fig.tight_layout(rect=[0, 0, 1, 0.9])
+    fig.tight_layout(rect=[0, 0, 1, 0.95])
     args.output.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(args.output, dpi=600)
     print(f"[plot_attention] Saved visualization to {args.output}")
