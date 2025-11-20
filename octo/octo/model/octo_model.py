@@ -139,6 +139,8 @@ class OctoModel:
         tasks: Data,
         timestep_pad_mask: ArrayLike,
         train: bool = False,
+        capture_attention: bool = False,
+        return_intermediates: bool = False,
     ):
         """Runs the transformer, but does shape checking on the inputs.
 
@@ -158,13 +160,29 @@ class OctoModel:
         )
         _verify_shapes(tasks, "tasks", self.example_batch["task"], starting_dim=1)
 
+        apply_kwargs = dict(
+            train=train,
+            method="octo_transformer",
+            capture_attention=capture_attention,
+        )
+        variables = {"params": self.params}
+        if return_intermediates:
+            outputs, aux = self.module.apply(
+                variables,
+                observations,
+                tasks,
+                timestep_pad_mask,
+                mutable=["intermediates"],
+                **apply_kwargs,
+            )
+            intermediates = aux.get("intermediates", {})
+            return outputs, intermediates
         return self.module.apply(
-            {"params": self.params},
+            variables,
             observations,
             tasks,
             timestep_pad_mask,
-            train=train,
-            method="octo_transformer",
+            **apply_kwargs,
         )
 
     @partial(

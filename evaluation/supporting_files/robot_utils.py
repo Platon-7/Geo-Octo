@@ -1,7 +1,7 @@
 import os
 import random
 import time
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 from collections import deque
 from collections.abc import Mapping
 
@@ -251,6 +251,245 @@ def _compute_pointmap_readout_tokens(
     if post_image is not None:
         result["image_tokens_post_pointmap"] = post_image
     return result
+
+
+def _collect_attention_matrices(tree: Any) -> List[np.ndarray]:
+    """Recursively gather attention matrices from a Flax intermediates tree."""
+    matrices: List[np.ndarray] = []
+    if tree is None:
+        return matrices
+    if isinstance(tree, Mapping):
+        for value in tree.values():
+            matrices.extend(_collect_attention_matrices(value))
+        return matrices
+    if isinstance(tree, (list, tuple)):
+        for value in tree:
+            matrices.extend(_collect_attention_matrices(value))
+        return matrices
+    try:
+        matrices.append(np.asarray(tree))
+    except Exception:
+        pass
+    return matrices
+
+
+def _resolve_group_key(
+    keys: List[str],
+    preferred: str,
+    prefix: str,
+    disallow_prefix: Optional[str] = None,
+) -> Optional[str]:
+    exact = f"{prefix}{preferred}"
+    if exact in keys:
+        return exact
+    for key in keys:
+        if not key.startswith(prefix):
+            continue
+        if disallow_prefix and key.startswith(disallow_prefix):
+            continue
+        return key
+    return None
+
+
+def _build_token_indexer(model: torch.nn.Module, transformer_outputs) -> Optional[Dict[str, Any]]:
+    """Pre-compute token ordering metadata to map sequence indices back to groups."""
+    transformer_def = getattr(getattr(model, "module", None), "octo_transformer", None)
+    if transformer_def is None:
+        return None
+
+    def _to_list(mapping_attr: Any) -> List[str]:
+        if mapping_attr is None:
+            return []
+        if isinstance(mapping_attr, Mapping):
+            return list(mapping_attr.keys())
+        return list(mapping_attr)
+
+    prefix_order = _to_list(getattr(transformer_def, "task_tokenizers", {}))
+    obs_order = _to_list(getattr(transformer_def, "observation_tokenizers", {}))
+    readout_order = _to_list(getattr(transformer_def, "readouts", {}))
+    readout_counts = dict(getattr(transformer_def, "readouts", {}))
+    repeat_tasks = bool(getattr(transformer_def, "repeat_task_tokens", False))
+
+    prefix_ranges: Dict[str, Tuple[int, int]] = {}
+    prefix_total = 0
+    task_counts: Dict[str, int] = {}
+    for name in prefix_order:
+        key = f"task_{name}"
+        group = transformer_outputs.get(key)
+        if group is None:
+            continue
+        count = int(group.tokens.shape[1])
+        task_counts[name] = count
+        prefix_ranges[key] = (prefix_total, count)
+        prefix_total += count
+
+    obs_counts: Dict[str, int] = {}
+    horizon = 0
+    for name in obs_order:
+        key = f"obs_{name}"
+        group = transformer_outputs.get(key)
+        if group is None:
+            continue
+        obs_counts[name] = int(group.tokens.shape[2])
+        if horizon == 0:
+            horizon = int(group.tokens.shape[1])
+
+    timestep_order: List[Tuple[str, int]] = []
+    for name in obs_order:
+        count = obs_counts.get(name)
+        if count:
+            timestep_order.append((f"obs_{name}", count))
+
+    if repeat_tasks:
+        for prefix_key, (start_idx, count) in prefix_ranges.items():
+            if count <= 0:
+                continue
+            repeat_key = f"obs_{prefix_key}"
+            if transformer_outputs.get(repeat_key) is not None:
+                timestep_order.append((repeat_key, count))
+
+    for readout_name in readout_order:
+        count = int(readout_counts.get(readout_name) or 0)
+        if count <= 0:
+            continue
+        timestep_order.append((f"readout_{readout_name}", count))
+
+    per_timestep = sum(count for _, count in timestep_order)
+    if per_timestep == 0:
+        return None
+
+    return {
+        "prefix_total": prefix_total,
+        "per_timestep": per_timestep,
+        "prefix_ranges": prefix_ranges,
+        "timestep_order": timestep_order,
+        "horizon": horizon,
+    }
+
+
+def _lookup_token_range(indexer: Dict[str, Any], group_key: str, timestep_idx: int) -> Optional[Tuple[int, int]]:
+    if group_key in indexer["prefix_ranges"]:
+        return indexer["prefix_ranges"][group_key]
+    offset = indexer["prefix_total"] + timestep_idx * indexer["per_timestep"]
+    for key, count in indexer["timestep_order"]:
+        if key == group_key:
+            return offset, count
+        offset += count
+    return None
+
+
+def _reshape_attention_vector(vector: np.ndarray, obs_group) -> np.ndarray:
+    vec = np.asarray(vector, dtype=np.float32).reshape(-1)
+    size = vec.size
+    if obs_group is not None:
+        try:
+            tokens = int(obs_group.tokens.shape[2])
+            if tokens == size:
+                size = tokens
+        except Exception:
+            pass
+    side = int(round(size ** 0.5))
+    if side * side == size:
+        return vec.reshape(side, side)
+    return vec[np.newaxis, :]
+
+
+def _compute_readout_attention_maps(
+    model: torch.nn.Module,
+    observation: Dict[str, Any],
+    task: Dict[str, Any],
+    timestep_index: int,
+    readout_name: str,
+    target_name: str,
+) -> Dict[str, Any]:
+    timestep_mask = observation.get("timestep_pad_mask")
+    try:
+        transformer_outputs, intermediates = model.run_transformer(
+            observation,
+            task,
+            timestep_mask,
+            train=False,
+            capture_attention=True,
+            return_intermediates=True,
+        )
+    except Exception as exc:
+        print(f"[SNAPSHOT] Unable to capture transformer attention: {exc}", flush=True)
+        return {}
+
+    attention_tree = None
+    if isinstance(intermediates, Mapping):
+        attention_tree = intermediates.get("attention_weights")
+    attention_mats = _collect_attention_matrices(attention_tree)
+    if not attention_mats:
+        return {}
+
+    outputs_dict = dict(transformer_outputs)
+    indexer = _build_token_indexer(model, outputs_dict)
+    if not indexer:
+        return {}
+
+    horizon = max(1, int(indexer.get("horizon") or 1))
+    timestep_idx = max(0, min(int(timestep_index), horizon - 1))
+
+    all_keys = list(outputs_dict.keys())
+    obs_key = _resolve_group_key(all_keys, target_name, prefix="obs_", disallow_prefix="obs_task_")
+    readout_key = _resolve_group_key(all_keys, readout_name, prefix="readout_")
+    if obs_key is None or readout_key is None:
+        return {}
+
+    obs_range = _lookup_token_range(indexer, obs_key, timestep_idx)
+    readout_range = _lookup_token_range(indexer, readout_key, timestep_idx)
+    if obs_range is None or readout_range is None:
+        return {}
+    obs_start, obs_count = obs_range
+    readout_start, readout_count = readout_range
+    if obs_count <= 0 or readout_count <= 0:
+        return {}
+
+    obs_group = outputs_dict.get(obs_key)
+    map_slices: List[np.ndarray] = []
+    for mat in attention_mats:
+        arr = np.asarray(mat)
+        if arr.ndim != 4:
+            continue
+        if (
+            readout_start + readout_count > arr.shape[2]
+            or obs_start + obs_count > arr.shape[3]
+        ):
+            continue
+        sub = arr[
+            :,
+            :,
+            readout_start : readout_start + readout_count,
+            obs_start : obs_start + obs_count,
+        ]
+        if sub.size == 0:
+            continue
+        reduced = sub.mean(axis=(0, 1, 2))
+        map_slices.append(_reshape_attention_vector(reduced, obs_group))
+
+    if not map_slices:
+        return {}
+
+    layers_stack = np.stack(map_slices).astype(np.float32)
+    aggregate_map = layers_stack[-1]
+
+    base_key = f"attn_{readout_key}_{obs_key}"
+    metadata = {
+        "key": base_key,
+        "readout": readout_key,
+        "target": obs_key,
+        "timestep_index": timestep_idx,
+        "num_layers": layers_stack.shape[0],
+        "reduction": "mean_heads_readouts",
+    }
+    return {
+        "attention_maps": {
+            base_key: aggregate_map,
+            f"{base_key}_layers": layers_stack,
+        },
+        "attention_info": metadata,
+    }
 
 
 def set_seed_everywhere(seed: int) -> None:
@@ -534,7 +773,7 @@ def get_action(
         # Construct task from text without touching its representation
         task = model.create_tasks(texts=[task_label])
 
-        capture_payload: Optional[Dict[str, Optional[np.ndarray]]] = None
+        capture_payload: Optional[Dict[str, Any]] = None
         if capture_spec is not None and capture_spec.get("request_tokens"):
             try:
                 timestep_idx = int(capture_spec.get("timestep_index", T - 1))
@@ -547,6 +786,23 @@ def get_action(
                 timestep_index=timestep_idx,
                 capture_spec=capture_spec,
             )
+            if capture_spec.get("request_attention"):
+                attn_payload = _compute_readout_attention_maps(
+                    model=model,
+                    observation=observation,
+                    task=task,
+                    timestep_index=timestep_idx,
+                    readout_name=capture_spec.get("attention_readout", "action"),
+                    target_name=capture_spec.get("attention_target", "image_primary"),
+                )
+                if attn_payload:
+                    capture_payload = capture_payload or {}
+                    maps = attn_payload.get("attention_maps")
+                    if maps:
+                        capture_payload.setdefault("attention_maps", {}).update(maps)
+                    info = attn_payload.get("attention_info")
+                    if info:
+                        capture_payload.setdefault("attention_info", []).append(info)
 
         # Build un-normalization stats from the checkpoint
         ds = getattr(model, "dataset_statistics", {}).get("action")

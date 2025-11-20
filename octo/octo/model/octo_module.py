@@ -151,6 +151,7 @@ class OctoTransformer(nn.Module):
         readouts: Optional[Sequence[str]] = None,
         train: bool = False,
         verbose: bool = False,
+        capture_attention: bool = False,
     ) -> Dict[str, TokenGroup]:
         """
         Args:
@@ -416,7 +417,9 @@ class OctoTransformer(nn.Module):
         ), "Already added positional embeddings to the tokens"
 
         prefix_outputs, timestep_outputs = BlockTransformer(
-            self.transformer_kwargs, use_correct_attention=self.use_correct_attention
+            self.transformer_kwargs,
+            use_correct_attention=self.use_correct_attention,
+            capture_attention=capture_attention,
         )(
             all_prefix_groups,
             all_timestep_groups,
@@ -483,7 +486,13 @@ class OctoModule(nn.Module):
     heads: Dict[str, nn.Module]
 
     def __call__(
-        self, observations, tasks, timestep_pad_mask, train=True, verbose=False
+        self,
+        observations,
+        tasks,
+        timestep_pad_mask,
+        train=True,
+        verbose=False,
+        capture_attention=False,
     ):
         """Run transformer and the main method for all heads. Useful for init.
 
@@ -501,7 +510,12 @@ class OctoModule(nn.Module):
             head_outputs: dictionary of outputs from heads {head_name: output}
         """
         transformer_outputs = self.octo_transformer(
-            observations, tasks, timestep_pad_mask, train=train, verbose=verbose
+            observations,
+            tasks,
+            timestep_pad_mask,
+            train=train,
+            verbose=verbose,
+            capture_attention=capture_attention,
         )
         head_outputs = {}
         for head_name, head in self.heads.items():

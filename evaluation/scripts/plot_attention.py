@@ -69,6 +69,7 @@ def _load_policy_snapshot(npz_path: Path, label: str) -> Dict[str, Any]:
             "vggt_tokens": (
                 np.asfarray(data[vggt_key], dtype=np.float32) if vggt_key in data else None
             ),
+            "prefix_key": prefix,
         }
 
         if payload["octo_tokens"] is None and payload["vggt_tokens"] is None:
@@ -76,6 +77,14 @@ def _load_policy_snapshot(npz_path: Path, label: str) -> Dict[str, Any]:
                 f"Snapshot {npz_path} missing vision tokens for policy '{label}'. "
                 "Expected either octo or VGGT tokens."
             )
+        attention_entries: Dict[str, np.ndarray] = {}
+        attn_prefix = f"{prefix}_attn"
+        for key in data.files:
+            if key.startswith(attn_prefix):
+                suffix = key[len(prefix) + 1 :]
+                attention_entries[suffix] = np.asfarray(data[key], dtype=np.float32)
+        if attention_entries:
+            payload["attention_data"] = attention_entries
         if meta_key in data:
             try:
                 payload["meta"] = json.loads(str(data[meta_key].item()))
@@ -137,6 +146,36 @@ def _render_placeholder(ax, title: str, message: str) -> None:
     ax.axis("off")
     ax.set_title(title)
     ax.text(0.5, 0.5, message, ha="center", va="center", fontsize=12, transform=ax.transAxes)
+
+
+def _select_attention_overlay(entries: Dict[str, np.ndarray]) -> Optional[np.ndarray]:
+    priorities = [
+        "attn_readout_action_obs_image_primary",
+        "attn_readout_action_obs_obs_image_primary",
+    ]
+    for key in priorities:
+        if key in entries:
+            return entries[key]
+    for key, value in entries.items():
+        if not key.endswith("_layers"):
+            return value
+    return None
+
+
+def _build_attention_panel(payload: Optional[Dict[str, Any]], title: str) -> Optional[Dict[str, Any]]:
+    if not payload:
+        return None
+    attn_entries = payload.get("attention_data")
+    if not attn_entries:
+        return None
+    attn_map = _select_attention_overlay(attn_entries)
+    if attn_map is None:
+        return None
+    return {
+        "title": title,
+        "attention": np.asarray(attn_map, dtype=np.float32),
+        "rgb": payload.get("rgb"),
+    }
 
 
 def main() -> None:
@@ -208,6 +247,13 @@ def main() -> None:
         }
     )
 
+    attention_panel = _build_attention_panel(
+        baseline_payload or vggt_payload or vggt_only_payload,
+        "Transformer Attention (Readout → Image)",
+    )
+    if attention_panel:
+        panels.append(attention_panel)
+
     fig, axes = plt.subplots(1, len(panels), figsize=(5 * len(panels), 5))
     if len(panels) == 1:
         axes = np.array([axes])
@@ -252,6 +298,23 @@ def main() -> None:
                 fig.colorbar(overlay, ax=ax, fraction=0.046, pad=0.04)
             else:
                 _render_placeholder(ax, title, "VGGT tokens unavailable.")
+        elif panel.get("attention") is not None:
+            attention_map = np.asarray(panel["attention"], dtype=np.float32)
+            heat = _normalize_heatmap(attention_map)
+            if rgb is not None:
+                heat_overlay = _resize_heatmap(heat, rgb.shape[:2])
+                overlay = _render_heatmap(ax, rgb, heat_overlay, title, args.alpha)
+                fig.colorbar(overlay, ax=ax, fraction=0.046, pad=0.04)
+            else:
+                ax.imshow(heat, cmap="turbo")
+                ax.axis("off")
+                ax.set_title(title)
+                fig.colorbar(
+                    plt.cm.ScalarMappable(cmap="turbo"),
+                    ax=ax,
+                    fraction=0.046,
+                    pad=0.04,
+                )
         else:
             _render_placeholder(ax, title, "Unsupported panel mode.")
 

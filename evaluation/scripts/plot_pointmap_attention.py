@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Dict, Optional, Tuple
 
 import matplotlib.pyplot as plt
 from matplotlib.colors import Normalize
@@ -77,6 +77,20 @@ def _normalize_heatmap(h: np.ndarray) -> np.ndarray:
     return (h - min_val) / (max_val - min_val)
 
 
+def _select_attention_overlay(entries: Dict[str, np.ndarray]) -> Optional[np.ndarray]:
+    priorities = [
+        "attn_readout_action_obs_image_primary",
+        "attn_readout_action_obs_image_tokens",
+    ]
+    for key in priorities:
+        if key in entries:
+            return entries[key]
+    for key, value in entries.items():
+        if not key.endswith("_layers"):
+            return value
+    return None
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Visualize pointmap-conditioned readout attention.")
     parser.add_argument("--snapshot", type=Path, required=True, help="Path to snapshot (.npz) file.")
@@ -99,6 +113,12 @@ def main() -> None:
         rgb = _load_array(data, f"{label}_rgb")
         img_pre = _load_array(data, f"{label}_image_tokens_pre_pointmap")
         img_post = _load_array(data, f"{label}_image_tokens_post_pointmap")
+        attention_entries: Dict[str, np.ndarray] = {}
+        attn_prefix = f"{label}_attn"
+        for key in data.files:
+            if key.startswith(attn_prefix):
+                suffix = key[len(label) + 1 :]
+                attention_entries[suffix] = np.asfarray(data[key], dtype=np.float32)
 
     if pre is None or post is None:
         raise KeyError(
@@ -119,8 +139,10 @@ def main() -> None:
 
     pre_overlay = _normalize_heatmap(pre_map)
     post_overlay = _normalize_heatmap(post_map)
+    attention_raw = _select_attention_overlay(attention_entries) if attention_entries else None
+    attention_overlay = _normalize_heatmap(attention_raw) if attention_raw is not None else None
     heatmap_cmap = "turbo"
-    panels = 3
+    panels = 3 + (1 if attention_overlay is not None else 0)
     fig, axes = plt.subplots(1, panels, figsize=(4.5 * panels, 5))
 
     if rgb is not None:
@@ -152,10 +174,23 @@ def main() -> None:
     axes[2].axis("off")
     axes[2].set_title("Readout Attention (After 3D Fusion)")
 
+    if attention_overlay is not None:
+        target_ax = axes[3]
+        target_ax.imshow(base_img, alpha=1.0 if rgb is None else 1.0)
+        if rgb is not None:
+            overlay_img = _resize_heatmap(attention_overlay, rgb.shape[:2])
+            target_ax.imshow(overlay_img, cmap=heatmap_cmap, alpha=args.alpha)
+        else:
+            target_ax.imshow(attention_overlay, cmap=heatmap_cmap)
+        target_ax.axis("off")
+        target_ax.set_title("Transformer Attention (Actual)")
+
     cmap_sm = plt.cm.ScalarMappable(cmap=heatmap_cmap, norm=Normalize(0.0, 1.0))
     cmap_sm.set_array([])
     fig.colorbar(cmap_sm, ax=axes[1], fraction=0.046, pad=0.04, label="Similarity (norm)")
     fig.colorbar(cmap_sm, ax=axes[2], fraction=0.046, pad=0.04, label="Similarity (norm)")
+    if attention_overlay is not None:
+        fig.colorbar(cmap_sm, ax=axes[3], fraction=0.046, pad=0.04, label="Attention (norm)")
 
     fig.suptitle("Readout Attention Shift from Pointmap Injection", fontsize=18, y=0.96)
     fig.tight_layout(rect=[0, 0, 1, 0.9])
