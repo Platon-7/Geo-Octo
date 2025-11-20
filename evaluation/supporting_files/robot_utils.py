@@ -128,11 +128,11 @@ def _extract_vision_tokens_for_snapshot(
             return tokens[batch_idx].astype(np.float32)
         return tokens.astype(np.float32)
 
-    payload: Dict[str, Optional[np.ndarray]] = {
+    payload = {
         "octo_tokens": _select(octo_tokens),
         "vggt_tokens": _select(vggt_tokens),
     }
-    if capture_spec and capture_spec.get("request_readout_attention"):
+    if capture_spec and (capture_spec.get("request_attention") or capture_spec.get("request_readout_attention")):
         pm_key = capture_spec.get("pointmap_key", "pointmap")
         readout_payload = _compute_pointmap_readout_tokens(
             model=model,
