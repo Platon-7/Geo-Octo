@@ -180,7 +180,8 @@ class OctoModel:
                 tasks,
                 timestep_pad_mask,
                 mutable=["intermediates"],
-                **{**apply_kwargs, "capture_intermediates": True},
+                capture_intermediates=True,
+                **apply_kwargs,
             )
             intermediates = aux.get("intermediates", {})
             return outputs, intermediates

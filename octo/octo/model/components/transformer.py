@@ -2,7 +2,6 @@
 from typing import Callable, Optional, Sequence, Union as _Union
 
 import flax.linen as nn
-from flax.linen import attention as attention_lib
 import jax
 import jax.numpy as jnp
 
@@ -340,18 +339,6 @@ class Encoder1DBlock(nn.Module):
             name="MultiHeadDotProductAttention_0",
         )
         attn_out = attn_layer(x, x, mask=attention_mask)
-        if self.capture_attention:
-            try:
-                attn_weights = attention_lib.dot_product_attention_weights(
-                    attn_layer.query,
-                    attn_layer.key,
-                    mask=attention_mask,
-                    deterministic=True,
-                    dtype=self.dtype,
-                )
-                self.sow("intermediates", "attention_weights", attn_weights)
-            except Exception as exc:
-                print(f"[ATTN] Failed to capture attention weights: {exc}", flush=True)
         # Optional LoRA on attention output projection only (safe w.r.t. pretrained names)
         if self.use_lora_attention and self.lora_r and self.lora_r > 0:
             delta_attn = ResidualLoRA(
