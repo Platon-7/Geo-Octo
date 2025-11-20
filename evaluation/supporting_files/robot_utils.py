@@ -287,6 +287,47 @@ def _convert_strings_to_arrays(tree: Any) -> Any:
     return tree
 
 
+def _sanitize_for_jax(tree: Any) -> Any:
+    import numpy as np
+
+    if isinstance(tree, Mapping):
+        sanitized = {}
+        for k, v in tree.items():
+            sv = _sanitize_for_jax(v)
+            if sv is not None:
+                sanitized[k] = sv
+        return sanitized
+    if isinstance(tree, (list, tuple)):
+        sanitized_list = []
+        for item in tree:
+            si = _sanitize_for_jax(item)
+            if si is not None:
+                sanitized_list.append(si)
+        if not sanitized_list:
+            return None
+        return sanitized_list
+    if isinstance(tree, str):
+        return None
+    if isinstance(tree, (int, float, bool)):
+        return np.asarray(tree)
+    if isinstance(tree, np.ndarray):
+        return tree
+    try:
+        import jax.numpy as jnp  # type: ignore
+
+        if isinstance(tree, jnp.ndarray):
+            return np.asarray(tree)
+    except Exception:
+        pass
+    try:
+        arr = np.asarray(tree)
+        if arr.dtype.kind in ("i", "u", "f", "b"):
+            return arr
+    except Exception:
+        pass
+    return None
+
+
 def _extract_call_array(node: Any) -> Optional[np.ndarray]:
     if node is None:
         return None
@@ -493,8 +534,8 @@ def _compute_readout_attention_maps(
 ) -> Dict[str, Any]:
     timestep_mask = observation.get("timestep_pad_mask")
     try:
-        clean_observation = _convert_strings_to_arrays(observation)
-        clean_task = _convert_strings_to_arrays(task)
+        clean_observation = _sanitize_for_jax(_convert_strings_to_arrays(observation))
+        clean_task = _sanitize_for_jax(_convert_strings_to_arrays(task))
         transformer_outputs, aux = model.module.apply(
             {"params": model.params},
             clean_observation,
