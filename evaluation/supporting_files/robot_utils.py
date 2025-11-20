@@ -275,6 +275,18 @@ def _collect_attention_matrices(tree: Any, include: bool = False) -> List[np.nda
     return matrices
 
 
+def _convert_strings_to_arrays(tree: Any) -> Any:
+    if isinstance(tree, str):
+        return np.asarray([tree])
+    if isinstance(tree, (list, tuple)):
+        if tree and all(isinstance(elem, str) for elem in tree):
+            return np.asarray(tree)
+        return [ _convert_strings_to_arrays(elem) for elem in tree ]
+    if isinstance(tree, Mapping):
+        return {k: _convert_strings_to_arrays(v) for k, v in tree.items()}
+    return tree
+
+
 def _extract_call_array(node: Any) -> Optional[np.ndarray]:
     if node is None:
         return None
@@ -481,9 +493,11 @@ def _compute_readout_attention_maps(
 ) -> Dict[str, Any]:
     timestep_mask = observation.get("timestep_pad_mask")
     try:
+        clean_observation = _convert_strings_to_arrays(observation)
+        clean_task = _convert_strings_to_arrays(task)
         transformer_outputs, intermediates = model.run_transformer(
-            observation,
-            task,
+            clean_observation,
+            clean_task,
             timestep_mask,
             train=False,
             capture_attention=True,
