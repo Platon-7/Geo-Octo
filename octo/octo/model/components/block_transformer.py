@@ -178,11 +178,10 @@ class BlockTransformer(nn.Module):
         self.sow("intermediates", "attention_mask", attention_mask)
 
         # Run transformer
-        transformer = Transformer(
+        output = Transformer(
             capture_attention_weights=self.capture_attention,
             **self.transformer_kwargs,
-        )
-        output = transformer(
+        )(
             input_tokens, attention_mask, train=train
         )
 

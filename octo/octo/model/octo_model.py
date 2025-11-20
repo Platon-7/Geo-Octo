@@ -168,7 +168,7 @@ class OctoModel:
         variables = {"params": self.params}
         if return_intermediates:
             outputs, aux = self.module.apply(
-                variables,
+                {"params": self.params},
                 observations,
                 tasks,
                 timestep_pad_mask,
@@ -178,7 +178,7 @@ class OctoModel:
             intermediates = aux.get("intermediates", {})
             return outputs, intermediates
         return self.module.apply(
-            variables,
+            {"params": self.params},
             observations,
             tasks,
             timestep_pad_mask,
