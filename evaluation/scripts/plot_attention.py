@@ -223,8 +223,8 @@ def main() -> None:
     vggt_payload = snapshots_map.get("vggt")
     vggt_only_payload = snapshots_map.get("vggt_only") or snapshots_map.get("vggt-only")
 
-    fig = plt.figure(figsize=(20, 6))
-    gs = fig.add_gridspec(1, 4, width_ratios=[1.2, 1, 1.4, 1], wspace=0.3)
+    fig = plt.figure(figsize=(24, 6))
+    gs = fig.add_gridspec(1, 4, width_ratios=[1.2, 1, 1.8, 1], wspace=0.25)
 
     ax_rgb = fig.add_subplot(gs[0, 0])
     rgb_source = (baseline_payload or vggt_payload or vggt_only_payload or {})
@@ -235,9 +235,9 @@ def main() -> None:
         _render_placeholder(ax_rgb, "Policy RGB Input", "RGB frame unavailable.")
 
     ax_baseline_attn = fig.add_subplot(gs[0, 1])
-    vggt_grid = gs[0, 2].subgridspec(2, 1, height_ratios=[1, 1], hspace=0.1)
-    ax_vggt_sim = fig.add_subplot(vggt_grid[0, 0])
-    ax_vggt_attn = fig.add_subplot(vggt_grid[1, 0])
+    vggt_inner = gs[0, 2].subgridspec(1, 2, width_ratios=[1, 1], wspace=0.08)
+    ax_vggt_attn = fig.add_subplot(vggt_inner[0, 0])
+    ax_vggt_sim = fig.add_subplot(vggt_inner[0, 1])
     ax_vggt_only_attn = fig.add_subplot(gs[0, 3])
 
     def _render_similarity_panel(ax, payload, mode, title):
@@ -282,18 +282,18 @@ def main() -> None:
         args.alpha,
     )
 
-    vggt_sim_im = _render_similarity_panel(
-        ax_vggt_sim,
-        vggt_payload,
-        "cross",
-        "VGGT-Fusion – Cross Similarity",
-    )
     vggt_attn_im = _render_attention_panel(
         ax_vggt_attn,
         vggt_payload.get("rgb") if vggt_payload else None,
         _extract_attention_map(vggt_payload),
         "VGGT-Fusion – Readout Attention",
         args.alpha,
+    )
+    vggt_sim_im = _render_similarity_panel(
+        ax_vggt_sim,
+        vggt_payload,
+        "cross",
+        "VGGT-Fusion – Cross Similarity",
     )
 
     vggt_only_attn_im = _render_attention_panel(
@@ -307,16 +307,16 @@ def main() -> None:
     if baseline_attn_im is not None:
         fig.colorbar(baseline_attn_im, ax=ax_baseline_attn, fraction=0.046, pad=0.04, label="Attention (norm)")
     if vggt_sim_im is not None:
-        fig.colorbar(vggt_sim_im, ax=ax_vggt_sim, fraction=0.046, pad=0.04, label="Similarity (norm)")
+        fig.colorbar(vggt_sim_im, ax=ax_vggt_sim, fraction=0.08, pad=0.02, label="Similarity (norm)")
     if vggt_attn_im is not None:
         fig.colorbar(vggt_attn_im, ax=ax_vggt_attn, fraction=0.046, pad=0.04, label="Attention (norm)")
     if vggt_only_attn_im is not None:
         fig.colorbar(vggt_only_attn_im, ax=ax_vggt_only_attn, fraction=0.046, pad=0.04, label="Attention (norm)")
 
     fig.suptitle(
-        "Policy Attention Snapshot: Baseline vs. VGGT Variants",
+        "Diagnostic Analysis of Spatial Attention and Feature Alignment",
         fontsize=18,
-        y=0.97,
+        y=0.98,
     )
     fig.tight_layout(rect=[0, 0, 1, 0.95])
     args.output.parent.mkdir(parents=True, exist_ok=True)
