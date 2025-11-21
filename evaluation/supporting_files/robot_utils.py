@@ -235,6 +235,9 @@ def _compute_pointmap_readout_tokens(
         outputs_without = None
 
     result: Dict[str, Optional[np.ndarray]] = {}
+    readout_base = readout_key[8:] if readout_key.startswith("readout_") else readout_key
+    target_base = obs_group_name[4:] if obs_group_name.startswith("obs_") else obs_group_name
+
     if isinstance(outputs_without, Mapping):
         pre_tokens = _select_from_group(outputs_without.get(readout_key), timestep_index)
         if pre_tokens is not None:
@@ -243,6 +246,20 @@ def _compute_pointmap_readout_tokens(
         pre_image = _select_from_group(pre_image_group, timestep_index)
         if pre_image is not None:
             result["image_tokens_pre_pointmap"] = pre_image
+        pre_attn = _compute_readout_attention_maps(
+            model,
+            obs_without_pm,
+            task,
+            timestep_index,
+            readout_base,
+            target_base,
+        )
+        if pre_attn:
+            info = pre_attn.get("attention_info")
+            if info:
+                result["attention_pre_pointmap_info"] = info
+            for suffix, arr in pre_attn.get("attention_maps", {}).items():
+                result[f"attn_pre_pointmap_{suffix}"] = arr
     post_tokens = _select_from_group(outputs_with.get(readout_key) if isinstance(outputs_with, Mapping) else None, timestep_index)
     if post_tokens is not None:
         result["readout_post_pointmap_tokens"] = post_tokens
@@ -250,6 +267,21 @@ def _compute_pointmap_readout_tokens(
     post_image = _select_from_group(post_image_group, timestep_index)
     if post_image is not None:
         result["image_tokens_post_pointmap"] = post_image
+    if isinstance(outputs_with, Mapping):
+        post_attn = _compute_readout_attention_maps(
+            model,
+            obs_with_pm,
+            task,
+            timestep_index,
+            readout_base,
+            target_base,
+        )
+        if post_attn:
+            info = post_attn.get("attention_info")
+            if info:
+                result["attention_post_pointmap_info"] = info
+            for suffix, arr in post_attn.get("attention_maps", {}).items():
+                result[f"attn_post_pointmap_{suffix}"] = arr
     return result
 
 
@@ -498,55 +530,15 @@ def _reshape_attention_vector(vector: np.ndarray, obs_group) -> np.ndarray:
     return vec[np.newaxis, :]
 
 
-def _compute_readout_attention_maps(
+def _build_attention_map_from_outputs(
     model: torch.nn.Module,
+    transformer_outputs,
+    attention_mats: List[np.ndarray],
     observation: Dict[str, Any],
-    task: Dict[str, Any],
     timestep_index: int,
     readout_name: str,
     target_name: str,
 ) -> Dict[str, Any]:
-    timestep_mask = observation.get("timestep_pad_mask")
-    try:
-        clean_observation = observation  # keep original tensors to preserve timestep history
-        clean_task = _clean_task_for_apply(task)
-        transformer_outputs, aux = model.module.apply(
-            {"params": model.params},
-            clean_observation,
-            clean_task,
-            timestep_mask,
-            train=False,
-            method="octo_transformer",
-            mutable=["intermediates"],
-            capture_intermediates=True,
-        )
-        intermediates = aux.get("intermediates", {})
-    except Exception as exc:
-        print(f"[SNAPSHOT] Unable to capture transformer attention: {exc}", flush=True)
-        return {}
-
-    attention_tree = intermediates if isinstance(intermediates, Mapping) else {}
-    attention_mats = _extract_attention_weights(attention_tree) if attention_tree else []
-    if attention_mats:
-        print(f"[SNAPSHOT] Captured {len(attention_mats)} attention tensors.", flush=True)
-    else:
-        mask_tree = attention_tree.get("attention_mask") if isinstance(attention_tree, Mapping) else None
-        attention_mats = _collect_attention_matrices(mask_tree)
-        available = list(attention_tree.keys()) if isinstance(attention_tree, Mapping) else []
-        if attention_mats:
-            print(
-                "[SNAPSHOT] Falling back to transformer attention mask; available keys:",
-                available,
-                flush=True,
-            )
-        else:
-            print(
-                "[SNAPSHOT] No attention weights captured; available intermediate keys:",
-                available,
-                flush=True,
-            )
-            return {}
-
     outputs_dict = dict(transformer_outputs)
     indexer = _build_token_indexer(model, outputs_dict)
     if not indexer:
@@ -623,6 +615,66 @@ def _compute_readout_attention_maps(
         },
         "attention_info": metadata,
     }
+
+
+def _compute_readout_attention_maps(
+    model: torch.nn.Module,
+    observation: Dict[str, Any],
+    task: Dict[str, Any],
+    timestep_index: int,
+    readout_name: str,
+    target_name: str,
+) -> Dict[str, Any]:
+    timestep_mask = observation.get("timestep_pad_mask")
+    try:
+        clean_observation = observation  # keep original tensors to preserve timestep history
+        clean_task = _clean_task_for_apply(task)
+        transformer_outputs, aux = model.module.apply(
+            {"params": model.params},
+            clean_observation,
+            clean_task,
+            timestep_mask,
+            train=False,
+            method="octo_transformer",
+            mutable=["intermediates"],
+            capture_intermediates=True,
+        )
+        intermediates = aux.get("intermediates", {})
+    except Exception as exc:
+        print(f"[SNAPSHOT] Unable to capture transformer attention: {exc}", flush=True)
+        return {}
+
+    attention_tree = intermediates if isinstance(intermediates, Mapping) else {}
+    attention_mats = _extract_attention_weights(attention_tree) if attention_tree else []
+    if attention_mats:
+        print(f"[SNAPSHOT] Captured {len(attention_mats)} attention tensors.", flush=True)
+    else:
+        mask_tree = attention_tree.get("attention_mask") if isinstance(attention_tree, Mapping) else None
+        attention_mats = _collect_attention_matrices(mask_tree)
+        available = list(attention_tree.keys()) if isinstance(attention_tree, Mapping) else []
+        if attention_mats:
+            print(
+                "[SNAPSHOT] Falling back to transformer attention mask; available keys:",
+                available,
+                flush=True,
+            )
+        else:
+            print(
+                "[SNAPSHOT] No attention weights captured; available intermediate keys:",
+                available,
+                flush=True,
+            )
+            return {}
+
+    return _build_attention_map_from_outputs(
+        model,
+        transformer_outputs,
+        attention_mats,
+        observation,
+        timestep_index,
+        readout_name,
+        target_name,
+    )
 
 
 def set_seed_everywhere(seed: int) -> None:

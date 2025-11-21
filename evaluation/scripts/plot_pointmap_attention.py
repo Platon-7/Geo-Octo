@@ -2,11 +2,13 @@
 """
 Visualize how pointmap conditioning alters readout focus.
 
-Loads a snapshot that contains:
+  Loads a snapshot that contains:
   - {label}_octo_tokens                      -> (256, 512)
   - {label}_readout_pre_pointmap_tokens      -> (R, 512)
   - {label}_readout_post_pointmap_tokens     -> (R, 512)
   - {label}_rgb (optional)                   -> (H, W, 3)
+    - {label}_attn_pre_pointmap_* (optional attention overlays)
+    - {label}_attn_post_pointmap_* (optional attention overlays)
 
 Produces a 1x4 figure:
   [ RGB | Pre-Pointmap Similarity | Post-Pointmap Similarity | Post-Pre Difference ]
@@ -113,12 +115,22 @@ def main() -> None:
         rgb = _load_array(data, f"{label}_rgb")
         img_pre = _load_array(data, f"{label}_image_tokens_pre_pointmap")
         img_post = _load_array(data, f"{label}_image_tokens_post_pointmap")
-        attention_entries: Dict[str, np.ndarray] = {}
-        attn_prefix = f"{label}_attn"
-        for key in data.files:
-            if key.startswith(attn_prefix):
-                suffix = key[len(label) + 1 :]
-                attention_entries[suffix] = np.asfarray(data[key], dtype=np.float32)
+    attention_entries: Dict[str, np.ndarray] = {}
+    pre_attention_entries: Dict[str, np.ndarray] = {}
+    post_attention_entries: Dict[str, np.ndarray] = {}
+    attn_prefix = f"{label}_attn"
+    pre_prefix = f"{label}_attn_pre_pointmap_"
+    post_prefix = f"{label}_attn_post_pointmap_"
+    for key in data.files:
+        if key.startswith(pre_prefix):
+            suffix = key[len(pre_prefix) :]
+            pre_attention_entries[suffix] = np.asfarray(data[key], dtype=np.float32)
+        elif key.startswith(post_prefix):
+            suffix = key[len(post_prefix) :]
+            post_attention_entries[suffix] = np.asfarray(data[key], dtype=np.float32)
+        elif key.startswith(attn_prefix):
+            suffix = key[len(label) + 1 :]
+            attention_entries[suffix] = np.asfarray(data[key], dtype=np.float32)
 
     if pre is None or post is None:
         raise KeyError(
@@ -139,10 +151,12 @@ def main() -> None:
 
     pre_overlay = _normalize_heatmap(pre_map)
     post_overlay = _normalize_heatmap(post_map)
-    attention_raw = _select_attention_overlay(attention_entries) if attention_entries else None
-    attention_overlay = _normalize_heatmap(attention_raw) if attention_raw is not None else None
+    pre_attention_raw = _select_attention_overlay(pre_attention_entries) if pre_attention_entries else None
+    pre_attention_overlay = _normalize_heatmap(pre_attention_raw) if pre_attention_raw is not None else None
+    post_attention_raw = _select_attention_overlay(post_attention_entries) if post_attention_entries else None
+    post_attention_overlay = _normalize_heatmap(post_attention_raw) if post_attention_raw is not None else None
     heatmap_cmap = "turbo"
-    panels = 3 + (1 if attention_overlay is not None else 0)
+    panels = 3 + (1 if pre_attention_overlay is not None else 0) + (1 if post_attention_overlay is not None else 0)
     fig, axes = plt.subplots(1, panels, figsize=(4.5 * panels, 5))
 
     if rgb is not None:
@@ -174,23 +188,39 @@ def main() -> None:
     axes[2].axis("off")
     axes[2].set_title("Readout Attention (After 3D Fusion)")
 
-    if attention_overlay is not None:
-        target_ax = axes[3]
-        target_ax.imshow(base_img, alpha=1.0 if rgb is None else 1.0)
+    col_idx = 3
+    if pre_attention_overlay is not None:
+        ax_pre = axes[col_idx]
+        ax_pre.imshow(base_img, alpha=1.0 if rgb is None else 1.0)
         if rgb is not None:
-            overlay_img = _resize_heatmap(attention_overlay, rgb.shape[:2])
-            target_ax.imshow(overlay_img, cmap=heatmap_cmap, alpha=args.alpha)
+            overlay_img = _resize_heatmap(pre_attention_overlay, rgb.shape[:2])
+            ax_pre.imshow(overlay_img, cmap=heatmap_cmap, alpha=args.alpha)
         else:
-            target_ax.imshow(attention_overlay, cmap=heatmap_cmap)
-        target_ax.axis("off")
-        target_ax.set_title("Transformer Attention (Actual)")
+            ax_pre.imshow(pre_attention_overlay, cmap=heatmap_cmap)
+        ax_pre.axis("off")
+        ax_pre.set_title("Transformer Attention (Before 3D Fusion)")
+        col_idx += 1
+
+    if post_attention_overlay is not None:
+        ax_post = axes[col_idx]
+        ax_post.imshow(base_img, alpha=1.0 if rgb is None else 1.0)
+        if rgb is not None:
+            overlay_img = _resize_heatmap(post_attention_overlay, rgb.shape[:2])
+            ax_post.imshow(overlay_img, cmap=heatmap_cmap, alpha=args.alpha)
+        else:
+            ax_post.imshow(post_attention_overlay, cmap=heatmap_cmap)
+        ax_post.axis("off")
+        ax_post.set_title("Transformer Attention (After 3D Fusion)")
+        col_idx += 1
 
     cmap_sm = plt.cm.ScalarMappable(cmap=heatmap_cmap, norm=Normalize(0.0, 1.0))
     cmap_sm.set_array([])
     fig.colorbar(cmap_sm, ax=axes[1], fraction=0.046, pad=0.04, label="Similarity (norm)")
     fig.colorbar(cmap_sm, ax=axes[2], fraction=0.046, pad=0.04, label="Similarity (norm)")
-    if attention_overlay is not None:
+    if pre_attention_overlay is not None:
         fig.colorbar(cmap_sm, ax=axes[3], fraction=0.046, pad=0.04, label="Attention (norm)")
+    if post_attention_overlay is not None and panels > 4:
+        fig.colorbar(cmap_sm, ax=axes[4], fraction=0.046, pad=0.04, label="Attention (norm)")
 
     fig.suptitle("Readout Attention Shift from Pointmap Injection", fontsize=18, y=0.96)
     fig.tight_layout(rect=[0, 0, 1, 0.9])
