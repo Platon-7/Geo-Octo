@@ -109,12 +109,11 @@ def main() -> None:
 
     with np.load(args.snapshot, allow_pickle=True) as data:
         label = args.label
-        dataset = {}
+        dataset: Dict[str, np.ndarray] = {}
         for k in data.files:
             if k.endswith("_meta"):
-                dataset[k] = data[k]
-            else:
-                dataset[k] = np.asarray(data[k])
+                continue
+            dataset[k] = np.asarray(data[k])
     octo = _load_array(dataset, f"{label}_octo_tokens")
     pre = _load_array(dataset, f"{label}_readout_pre_pointmap_tokens")
     post = _load_array(dataset, f"{label}_readout_post_pointmap_tokens")
