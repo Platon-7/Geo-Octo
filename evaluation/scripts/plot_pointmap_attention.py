@@ -109,28 +109,31 @@ def main() -> None:
 
     with np.load(args.snapshot, allow_pickle=True) as data:
         label = args.label
-        octo = _load_array(data, f"{label}_octo_tokens")
-        pre = _load_array(data, f"{label}_readout_pre_pointmap_tokens")
-        post = _load_array(data, f"{label}_readout_post_pointmap_tokens")
-        rgb = _load_array(data, f"{label}_rgb")
-        img_pre = _load_array(data, f"{label}_image_tokens_pre_pointmap")
-        img_post = _load_array(data, f"{label}_image_tokens_post_pointmap")
+        dataset = {k: data[k] for k in data.files}
+    octo = _load_array(dataset, f"{label}_octo_tokens")
+    pre = _load_array(dataset, f"{label}_readout_pre_pointmap_tokens")
+    post = _load_array(dataset, f"{label}_readout_post_pointmap_tokens")
+    rgb = _load_array(dataset, f"{label}_rgb") or _load_array(dataset, f"{label}_rgb_preprocessed")
+    img_pre = _load_array(dataset, f"{label}_image_tokens_pre_pointmap")
+    img_post = _load_array(dataset, f"{label}_image_tokens_post_pointmap")
     attention_entries: Dict[str, np.ndarray] = {}
     pre_attention_entries: Dict[str, np.ndarray] = {}
     post_attention_entries: Dict[str, np.ndarray] = {}
     attn_prefix = f"{label}_attn"
     pre_prefix = f"{label}_attn_pre_pointmap_"
     post_prefix = f"{label}_attn_post_pointmap_"
-    for key in data.files:
+    generic_prefix = f"{label}_attn_"
+    for key, array in dataset.items():
+        arr = np.asarray(array, dtype=np.float32)
         if key.startswith(pre_prefix):
             suffix = key[len(pre_prefix) :]
-            pre_attention_entries[suffix] = np.asfarray(data[key], dtype=np.float32)
+            pre_attention_entries[suffix] = arr
         elif key.startswith(post_prefix):
             suffix = key[len(post_prefix) :]
-            post_attention_entries[suffix] = np.asfarray(data[key], dtype=np.float32)
-        elif key.startswith(attn_prefix):
+            post_attention_entries[suffix] = arr
+        elif key.startswith(generic_prefix):
             suffix = key[len(label) + 1 :]
-            attention_entries[suffix] = np.asfarray(data[key], dtype=np.float32)
+            attention_entries[suffix] = arr
 
     if pre is None or post is None:
         raise KeyError(
