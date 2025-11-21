@@ -175,18 +175,20 @@ def _extract_attention_map(payload: Optional[Dict[str, Any]]) -> Optional[np.nda
     return np.asarray(attn_map, dtype=np.float32)
 
 
-def _render_attention_panel(ax, attn_map: Optional[np.ndarray], rgb: Optional[np.ndarray], title: str, alpha: float):
+def _render_attention_panel(
+    ax, rgb: Optional[np.ndarray], attn_map: Optional[np.ndarray], title: str, alpha: float
+):
     if attn_map is None:
         _render_placeholder(ax, title, "Attention map unavailable.")
-        return
+        return None
     heat = _normalize_heatmap(attn_map)
     if rgb is not None:
         heat_overlay = _resize_heatmap(heat, rgb.shape[:2])
-        _render_heatmap(ax, rgb, heat_overlay, title, alpha)
-    else:
-        ax.imshow(heat, cmap="turbo")
-        ax.axis("off")
-        ax.set_title(title)
+        return _render_heatmap(ax, rgb, heat_overlay, title, alpha)
+    im = ax.imshow(heat, cmap="turbo")
+    ax.axis("off")
+    ax.set_title(title)
+    return im
 
 
 def main() -> None:
@@ -221,10 +223,10 @@ def main() -> None:
     vggt_payload = snapshots_map.get("vggt")
     vggt_only_payload = snapshots_map.get("vggt_only") or snapshots_map.get("vggt-only")
 
-    fig = plt.figure(figsize=(18, 9))
-    gs = fig.add_gridspec(2, 4, width_ratios=[1.2, 1, 1, 1], height_ratios=[1, 1], wspace=0.2, hspace=0.15)
+    fig = plt.figure(figsize=(20, 6))
+    gs = fig.add_gridspec(1, 4, width_ratios=[1.2, 1, 1.4, 1], wspace=0.3)
 
-    ax_rgb = fig.add_subplot(gs[:, 0])
+    ax_rgb = fig.add_subplot(gs[0, 0])
     rgb_source = (baseline_payload or vggt_payload or vggt_only_payload or {})
     rgb_img = rgb_source.get("rgb")
     if rgb_img is not None:
@@ -232,26 +234,23 @@ def main() -> None:
     else:
         _render_placeholder(ax_rgb, "Policy RGB Input", "RGB frame unavailable.")
 
-    axes_map = {
-        "baseline_sim": fig.add_subplot(gs[0, 1]),
-        "baseline_attn": fig.add_subplot(gs[1, 1]),
-        "vggt_sim": fig.add_subplot(gs[0, 2]),
-        "vggt_attn": fig.add_subplot(gs[1, 2]),
-        "vggt_only_sim": fig.add_subplot(gs[0, 3]),
-        "vggt_only_attn": fig.add_subplot(gs[1, 3]),
-    }
+    ax_baseline_attn = fig.add_subplot(gs[0, 1])
+    vggt_grid = gs[0, 2].subgridspec(2, 1, height_ratios=[1, 1], hspace=0.1)
+    ax_vggt_sim = fig.add_subplot(vggt_grid[0, 0])
+    ax_vggt_attn = fig.add_subplot(vggt_grid[1, 0])
+    ax_vggt_only_attn = fig.add_subplot(gs[0, 3])
 
     def _render_similarity_panel(ax, payload, mode, title):
         if not payload:
             _render_placeholder(ax, title, "Snapshot unavailable.")
-            return
+            return None
         rgb = payload.get("rgb")
         if mode == "self":
             tokens = payload.get("octo_tokens")
             if tokens is not None and rgb is not None:
                 heat_low = _cosine_similarity_map(tokens, tokens)
                 heat_overlay = _resize_heatmap(_normalize_heatmap(heat_low), rgb.shape[:2])
-                _render_heatmap(ax, rgb, heat_overlay, title, args.alpha)
+                return _render_heatmap(ax, rgb, heat_overlay, title, args.alpha)
             else:
                 _render_placeholder(ax, title, "Octo tokens unavailable.")
         elif mode == "cross":
@@ -260,7 +259,7 @@ def main() -> None:
             if octo_tokens is not None and vggt_tokens is not None and rgb is not None:
                 heat_low = _cosine_similarity_map(octo_tokens, vggt_tokens)
                 heat_overlay = _resize_heatmap(_normalize_heatmap(heat_low), rgb.shape[:2])
-                _render_heatmap(ax, rgb, heat_overlay, title, args.alpha)
+                return _render_heatmap(ax, rgb, heat_overlay, title, args.alpha)
             else:
                 _render_placeholder(ax, title, "Required tokens unavailable.")
         elif mode == "vggt_self":
@@ -268,53 +267,51 @@ def main() -> None:
             if vggt_tokens is not None and rgb is not None:
                 heat_low = _cosine_similarity_map(vggt_tokens, vggt_tokens)
                 heat_overlay = _resize_heatmap(_normalize_heatmap(heat_low), rgb.shape[:2])
-                _render_heatmap(ax, rgb, heat_overlay, title, args.alpha)
+                return _render_heatmap(ax, rgb, heat_overlay, title, args.alpha)
             else:
                 _render_placeholder(ax, title, "VGGT tokens unavailable.")
         else:
             _render_placeholder(ax, title, "Unsupported mode.")
+        return None
 
-    _render_similarity_panel(
-        axes_map["baseline_sim"],
-        baseline_payload,
-        "self",
-        "Baseline – Self-Similarity",
-    )
-    _render_attention_panel(
-        axes_map["baseline_attn"],
-        _extract_attention_map(baseline_payload),
+    baseline_attn_im = _render_attention_panel(
+        ax_baseline_attn,
         baseline_payload.get("rgb") if baseline_payload else None,
+        _extract_attention_map(baseline_payload),
         "Baseline – Readout Attention",
         args.alpha,
     )
 
-    _render_similarity_panel(
-        axes_map["vggt_sim"],
+    vggt_sim_im = _render_similarity_panel(
+        ax_vggt_sim,
         vggt_payload,
         "cross",
         "VGGT-Fusion – Cross Similarity",
     )
-    _render_attention_panel(
-        axes_map["vggt_attn"],
-        _extract_attention_map(vggt_payload),
+    vggt_attn_im = _render_attention_panel(
+        ax_vggt_attn,
         vggt_payload.get("rgb") if vggt_payload else None,
+        _extract_attention_map(vggt_payload),
         "VGGT-Fusion – Readout Attention",
         args.alpha,
     )
 
-    _render_similarity_panel(
-        axes_map["vggt_only_sim"],
-        vggt_only_payload,
-        "self",
-        "VGGT-Only – Self-Similarity",
-    )
-    _render_attention_panel(
-        axes_map["vggt_only_attn"],
-        _extract_attention_map(vggt_only_payload),
+    vggt_only_attn_im = _render_attention_panel(
+        ax_vggt_only_attn,
         vggt_only_payload.get("rgb") if vggt_only_payload else None,
+        _extract_attention_map(vggt_only_payload),
         "VGGT-Only – Readout Attention",
         args.alpha,
     )
+
+    if baseline_attn_im is not None:
+        fig.colorbar(baseline_attn_im, ax=ax_baseline_attn, fraction=0.046, pad=0.04, label="Attention (norm)")
+    if vggt_sim_im is not None:
+        fig.colorbar(vggt_sim_im, ax=ax_vggt_sim, fraction=0.046, pad=0.04, label="Similarity (norm)")
+    if vggt_attn_im is not None:
+        fig.colorbar(vggt_attn_im, ax=ax_vggt_attn, fraction=0.046, pad=0.04, label="Attention (norm)")
+    if vggt_only_attn_im is not None:
+        fig.colorbar(vggt_only_attn_im, ax=ax_vggt_only_attn, fraction=0.046, pad=0.04, label="Attention (norm)")
 
     fig.suptitle(
         "Policy Attention Snapshot: Baseline vs. VGGT Variants",
