@@ -109,7 +109,12 @@ def main() -> None:
 
     with np.load(args.snapshot, allow_pickle=True) as data:
         label = args.label
-        dataset = {k: data[k] for k in data.files}
+        dataset = {}
+        for k in data.files:
+            if k.endswith("_meta"):
+                dataset[k] = data[k]
+            else:
+                dataset[k] = np.asarray(data[k])
     octo = _load_array(dataset, f"{label}_octo_tokens")
     pre = _load_array(dataset, f"{label}_readout_pre_pointmap_tokens")
     post = _load_array(dataset, f"{label}_readout_post_pointmap_tokens")
@@ -126,7 +131,9 @@ def main() -> None:
     post_prefix = f"{label}_attn_post_pointmap_"
     generic_prefix = f"{label}_attn_"
     for key, array in dataset.items():
-        arr = np.asarray(array, dtype=np.float32)
+        if not isinstance(array, np.ndarray):
+            continue
+        arr = array.astype(np.float32, copy=False)
         if key.startswith(pre_prefix):
             suffix = key[len(pre_prefix) :]
             pre_attention_entries[suffix] = arr
