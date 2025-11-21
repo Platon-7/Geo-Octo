@@ -113,7 +113,9 @@ def main() -> None:
     octo = _load_array(dataset, f"{label}_octo_tokens")
     pre = _load_array(dataset, f"{label}_readout_pre_pointmap_tokens")
     post = _load_array(dataset, f"{label}_readout_post_pointmap_tokens")
-    rgb = _load_array(dataset, f"{label}_rgb") or _load_array(dataset, f"{label}_rgb_preprocessed")
+    rgb = _load_array(dataset, f"{label}_rgb")
+    if rgb is None:
+        rgb = _load_array(dataset, f"{label}_rgb_preprocessed")
     img_pre = _load_array(dataset, f"{label}_image_tokens_pre_pointmap")
     img_post = _load_array(dataset, f"{label}_image_tokens_post_pointmap")
     attention_entries: Dict[str, np.ndarray] = {}
