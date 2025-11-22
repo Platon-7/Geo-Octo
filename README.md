@@ -53,15 +53,15 @@ Finetuning Jobs
 
 All submission scripts live under `snellius_jobs/` and automatically derive their paths from the original checkout directory (where you run `sbatch`). Use the following jobs for each finetuning variant:
 
-- **Baseline Octo finetuning:** `snellius_jobs/finetune_octo_baseline.job`
-- **VGGT fusion finetuning:** `snellius_jobs/finetune_vggt_online.job`
+- **Baseline Octo finetuning:** `snellius_jobs/finetune_octo_baseline.job`.
+- **VGGT fusion finetuning:** `snellius_jobs/finetune_vggt_online.job`.
 - **VGGT-only finetuning:** reuse `snellius_jobs/finetune_vggt_online.job` but ensure the job arguments include `--use_vision_encoder=False`.
-- **VGGT pointmap finetuning:** `snellius_jobs/finetune_pointmap.job`
+- **VGGT pointmap finetuning:** `snellius_jobs/finetune_pointmap.job`.
 
 Evaluation Jobs
 ---------------
 
-- **Baseline policy evaluation:** `snellius_jobs/evaluate_octo.job`
-- **VGGT fusion evaluation:** `snellius_jobs/evaluate_octo_vggt_torch.job`
+- **Baseline policy evaluation:** `snellius_jobs/evaluate_octo.job`.
+- **VGGT fusion evaluation:** `snellius_jobs/evaluate_octo_vggt_torch.job`.
 - **VGGT-only evaluation:** reuse `snellius_jobs/evaluate_octo_vggt_torch.job` and pass `--use_vision_encoder=False`.
-- **VGGT pointmap evaluation:** `snellius_jobs/evaluate_octo_vggt_pointmap.job`
+- **VGGT pointmap evaluation:** `snellius_jobs/evaluate_octo_vggt_pointmap.job`.
