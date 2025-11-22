@@ -132,13 +132,22 @@ class OctoModel:
         _verify_shapes(tasks, "tasks", self.example_batch["task"], starting_dim=1)
         return tasks
 
-    @partial(jax.jit, static_argnames=("train",))
+    @partial(
+        jax.jit,
+        static_argnames=(
+            "train",
+            "capture_attention",
+            "return_intermediates",
+        ),
+    )
     def run_transformer(
         self,
         observations: Data,
         tasks: Data,
         timestep_pad_mask: ArrayLike,
         train: bool = False,
+        capture_attention: bool = False,
+        return_intermediates: bool = False,
     ):
         """Runs the transformer, but does shape checking on the inputs.
 
@@ -158,13 +167,31 @@ class OctoModel:
         )
         _verify_shapes(tasks, "tasks", self.example_batch["task"], starting_dim=1)
 
+        apply_kwargs = dict(
+            train=train,
+            method="octo_transformer",
+            capture_attention=capture_attention,
+        )
+        variables = {"params": self.params}
+        if return_intermediates:
+            outputs, aux = self.module.apply(
+                {"params": self.params},
+                observations,
+                tasks,
+                timestep_pad_mask,
+                mutable=["intermediates"],
+                capture_intermediates=True,
+                **apply_kwargs,
+            )
+            intermediates = aux.get("intermediates", {})
+            return outputs, intermediates
         return self.module.apply(
             {"params": self.params},
             observations,
             tasks,
             timestep_pad_mask,
-            train=train,
-            method="octo_transformer",
+            capture_intermediates=False,
+            **apply_kwargs,
         )
 
     @partial(

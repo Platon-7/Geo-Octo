@@ -9,7 +9,7 @@ Loads a snapshot that contains:
   - {label}_rgb (optional)                   -> (H, W, 3)
 
 Produces a 1x4 figure:
-  [ RGB | Pre-Pointmap Similarity | Post-Pointmap Similarity | Post-Pre Difference ]
+  [ RGB | Pre-Pointmap Similarity | Post-Pointmap Similarity ]
 """
 
 from __future__ import annotations
@@ -21,6 +21,8 @@ from typing import Optional, Tuple
 import matplotlib.pyplot as plt
 from matplotlib.colors import Normalize
 import numpy as np
+# Added this import for the alignment logic
+from mpl_toolkits.axes_grid1 import make_axes_locatable
 
 
 try:
@@ -77,6 +79,22 @@ def _normalize_heatmap(h: np.ndarray) -> np.ndarray:
     return (h - min_val) / (max_val - min_val)
 
 
+def _add_aligned_colorbar(fig, ax, im, label=None):
+    """
+    Adds a colorbar that perfectly matches the height of the image.
+    If im is None, it adds an invisible dummy axis of the same size
+    to ensure the main plot scales identically to plots with colorbars.
+    """
+    divider = make_axes_locatable(ax)
+    cax = divider.append_axes("right", size="5%", pad=0.05)
+    
+    if im is not None:
+        fig.colorbar(im, cax=cax, label=label)
+    else:
+        # Create invisible axes to enforce same layout shrinkage
+        cax.axis("off")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Visualize pointmap-conditioned readout attention.")
     parser.add_argument("--snapshot", type=Path, required=True, help="Path to snapshot (.npz) file.")
@@ -121,8 +139,11 @@ def main() -> None:
     post_overlay = _normalize_heatmap(post_map)
     heatmap_cmap = "turbo"
     panels = 3
-    fig, axes = plt.subplots(1, panels, figsize=(4.5 * panels, 5))
+    
+    # Using standard subplots, but we will fix layout with the helper
+    fig, axes = plt.subplots(1, panels, figsize=(16, 5))
 
+    # --- Panel 1: RGB ---
     if rgb is not None:
         axes[0].imshow(rgb.astype(np.uint8))
         axes[0].set_title("Policy RGB Input")
@@ -130,7 +151,12 @@ def main() -> None:
         axes[0].imshow(pre_overlay, cmap="gray")
         axes[0].set_title("Token Grid (No RGB)")
     axes[0].axis("off")
+    
+    # FIX: Add dummy colorbar to shrink this axis to match the others
+    _add_aligned_colorbar(fig, axes[0], None, None)
 
+
+    # --- Preparation for overlays ---
     if rgb is not None:
         pre_img = _resize_heatmap(pre_overlay, rgb.shape[:2])
         post_img = _resize_heatmap(post_overlay, rgb.shape[:2])
@@ -140,28 +166,38 @@ def main() -> None:
 
     base_img = rgb.astype(np.uint8) if rgb is not None else pre_overlay
 
+    # ScalarMappable for the shared colorbar
+    cmap_sm = plt.cm.ScalarMappable(cmap=heatmap_cmap, norm=Normalize(0.0, 1.0))
+    cmap_sm.set_array([])
+
+    # --- Panel 2: Pre-Pointmap ---
     axes[1].imshow(base_img, alpha=1.0 if rgb is None else 1.0)
     if rgb is not None:
         axes[1].imshow(pre_img, cmap=heatmap_cmap, alpha=args.alpha)
     axes[1].axis("off")
     axes[1].set_title("Readout Attention (Before 3D Fusion)")
+    
+    # FIX: Add real aligned colorbar
+    _add_aligned_colorbar(fig, axes[1], cmap_sm, "Similarity (norm)")
 
+
+    # --- Panel 3: Post-Pointmap ---
     axes[2].imshow(base_img, alpha=1.0 if rgb is None else 1.0)
     if rgb is not None:
         axes[2].imshow(post_img, cmap=heatmap_cmap, alpha=args.alpha)
     axes[2].axis("off")
     axes[2].set_title("Readout Attention (After 3D Fusion)")
+    
+    # FIX: Add real aligned colorbar
+    _add_aligned_colorbar(fig, axes[2], cmap_sm, "Similarity (norm)")
 
-    cmap_sm = plt.cm.ScalarMappable(cmap=heatmap_cmap, norm=Normalize(0.0, 1.0))
-    cmap_sm.set_array([])
-    fig.colorbar(cmap_sm, ax=axes[1], fraction=0.046, pad=0.04, label="Similarity (norm)")
-    fig.colorbar(cmap_sm, ax=axes[2], fraction=0.046, pad=0.04, label="Similarity (norm)")
 
     fig.suptitle("Readout Attention Shift from Pointmap Injection", fontsize=18, y=0.96)
-    fig.tight_layout(rect=[0, 0, 1, 0.9])
+    # Standard tight_layout works better with axes_grid1 than custom rects usually
+    fig.tight_layout(rect=[0, 0, 1, 0.92])
 
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(args.output, dpi=600)
+    fig.savefig(args.output, dpi=600, bbox_inches='tight')
     print(f"[plot_pointmap_attention] Saved visualization to {args.output}")
 
     if args.show:

@@ -52,8 +52,8 @@ hostname
 
 
 
-#python evaluation/scripts/combine_snapshots.py --output analysis/attention_snapshots/combined_baseline_fusion_only.npz --inputs baseline:analysis/attention_snapshots/ketchup_episode3_t1p00s.npz vggt:analysis/attention_snapshots/ketchup_episode3_t1p00s_vggt.npz vggt_only:analysis/attention_snapshots/ketchup_episode3_t1p00s_vggt_only.npz
+python evaluation/scripts/combine_snapshots.py --output analysis/attention_snapshots/combined_baseline_fusion_only.npz --inputs baseline:analysis/attention_snapshots/ketchup_episode3_t1p00s.npz vggt:analysis/attention_snapshots/ketchup_episode3_t1p00s_vggt.npz vggt_only:analysis/attention_snapshots/ketchup_episode3_t1p00s_vggt_only.npz
 
 python evaluation/scripts/plot_attention.py \
   --snapshot analysis/attention_snapshots/combined_baseline_fusion_only.npz \
-  --output analysis/attention_snapshots/ketchup_episode3_t1p00s_overlay_final.png
+  --output analysis/attention_snapshots/ketchup_episode3_t1p00s_overlay_final_2.png

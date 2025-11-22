@@ -51,7 +51,7 @@ PY
 export PYTHONPATH="${REPO_ROOT}/vggt:${PYTHONPATH}"
 
 # srun python evaluate_model.py
-
+# experiment_20251102_143753
 srun python -m evaluation.scripts.run_libero_eval_vggt_torch \
   --model_family octo \
   --pretrained_checkpoint "/scratch-shared/tmp.cwkV8vOvfY/trained_models/my_octo_vggt_model_online/octo_finetune_vggt/experiment_20251102_143753" \
@@ -69,6 +69,6 @@ srun python -m evaluation.scripts.run_libero_eval_vggt_torch \
   --attention_snapshot_label vggt_only \
   --attention_snapshot_task "pick up the ketchup and place it in the basket" \
   --attention_snapshot_episode_idx 3 \
-  --attention_snapshot_seconds 1.0 \
+  --attention_snapshot_seconds 2.0 \
   --attention_snapshot_output_dir "analysis/attention_snapshots" \
   --attention_snapshot_filename "ketchup_episode3_t1p00s_vggt_only.npz"

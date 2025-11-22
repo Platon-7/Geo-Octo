@@ -1,0 +1,20 @@
+
+==================================================
+EVALUATION CONFIGURATION
+  Model Path:      /scratch-shared/tmp.cwkV8vOvfY/trained_models/my_octo_vggt_model_online/octo_finetune_vggt/experiment_20251102_143753
+  Checkpoint Step: 160000
+==================================================
+
+Task suite: libero_object
+Using default initial states
+Skipping task 'pick up the alphabet soup and place it in the basket' because it does not match attention_snapshot_task.
+Using default initial states
+Skipping task 'pick up the cream cheese and place it in the basket' because it does not match attention_snapshot_task.
+Using default initial states
+Skipping task 'pick up the salad dressing and place it in the basket' because it does not match attention_snapshot_task.
+Using default initial states
+Skipping task 'pick up the bbq sauce and place it in the basket' because it does not match attention_snapshot_task.
+Using default initial states
+
+Task: pick up the ketchup and place it in the basket
+Starting episode 1...

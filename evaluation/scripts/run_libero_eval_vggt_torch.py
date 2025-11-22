@@ -414,7 +414,12 @@ class AttentionSnapshotManager:
         return True
 
     def build_capture_spec(self) -> dict:
-        return {"request_tokens": True}
+        return {
+            "request_tokens": True,
+            "request_attention": True,
+            "attention_readout": "action",
+            "attention_target": "image_primary",
+        }
 
     def commit(
         self,
@@ -464,6 +469,12 @@ class AttentionSnapshotManager:
         if image_np is not None:
             new_entries[f"{label}_rgb"] = image_np.astype(np.uint8)
 
+        attention_maps = payload.get("attention_maps") if isinstance(payload, dict) else None
+        if attention_maps:
+            for suffix, arr in attention_maps.items():
+                key = f"{label}_{suffix}"
+                new_entries[key] = np.asarray(arr, dtype=np.float32)
+
         metadata = {
             "policy_label": label,
             "task_description": self.task_description,
@@ -476,6 +487,8 @@ class AttentionSnapshotManager:
             "pretrained_checkpoint": str(self.cfg.pretrained_checkpoint),
             "run_id_note": self.cfg.run_id_note,
         }
+        if isinstance(payload, dict) and payload.get("attention_info"):
+            metadata["attention"] = payload.get("attention_info")
         new_entries[f"{label}_meta"] = np.array(json.dumps(metadata), dtype=object)
 
         existing.update(new_entries)

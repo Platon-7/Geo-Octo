@@ -1,7 +1,7 @@
 import os
 import random
 import time
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 from collections import deque
 from collections.abc import Mapping
 
@@ -128,11 +128,11 @@ def _extract_vision_tokens_for_snapshot(
             return tokens[batch_idx].astype(np.float32)
         return tokens.astype(np.float32)
 
-    payload: Dict[str, Optional[np.ndarray]] = {
+    payload = {
         "octo_tokens": _select(octo_tokens),
         "vggt_tokens": _select(vggt_tokens),
     }
-    if capture_spec and capture_spec.get("request_readout_attention"):
+    if capture_spec and (capture_spec.get("request_attention") or capture_spec.get("request_readout_attention")):
         pm_key = capture_spec.get("pointmap_key", "pointmap")
         readout_payload = _compute_pointmap_readout_tokens(
             model=model,
@@ -235,6 +235,9 @@ def _compute_pointmap_readout_tokens(
         outputs_without = None
 
     result: Dict[str, Optional[np.ndarray]] = {}
+    readout_base = readout_key[8:] if readout_key.startswith("readout_") else readout_key
+    target_base = obs_group_name[4:] if obs_group_name.startswith("obs_") else obs_group_name
+
     if isinstance(outputs_without, Mapping):
         pre_tokens = _select_from_group(outputs_without.get(readout_key), timestep_index)
         if pre_tokens is not None:
@@ -243,6 +246,20 @@ def _compute_pointmap_readout_tokens(
         pre_image = _select_from_group(pre_image_group, timestep_index)
         if pre_image is not None:
             result["image_tokens_pre_pointmap"] = pre_image
+        pre_attn = _compute_readout_attention_maps(
+            model,
+            obs_without_pm,
+            task,
+            timestep_index,
+            readout_base,
+            target_base,
+        )
+        if pre_attn:
+            info = pre_attn.get("attention_info")
+            if info:
+                result["attention_pre_pointmap_info"] = info
+            for suffix, arr in pre_attn.get("attention_maps", {}).items():
+                result[f"attn_pre_pointmap_{suffix}"] = arr
     post_tokens = _select_from_group(outputs_with.get(readout_key) if isinstance(outputs_with, Mapping) else None, timestep_index)
     if post_tokens is not None:
         result["readout_post_pointmap_tokens"] = post_tokens
@@ -250,7 +267,414 @@ def _compute_pointmap_readout_tokens(
     post_image = _select_from_group(post_image_group, timestep_index)
     if post_image is not None:
         result["image_tokens_post_pointmap"] = post_image
+    if isinstance(outputs_with, Mapping):
+        post_attn = _compute_readout_attention_maps(
+            model,
+            obs_with_pm,
+            task,
+            timestep_index,
+            readout_base,
+            target_base,
+        )
+        if post_attn:
+            info = post_attn.get("attention_info")
+            if info:
+                result["attention_post_pointmap_info"] = info
+            for suffix, arr in post_attn.get("attention_maps", {}).items():
+                result[f"attn_post_pointmap_{suffix}"] = arr
     return result
+
+
+def _collect_attention_matrices(tree: Any, include: bool = False) -> List[np.ndarray]:
+    """Recursively gather attention matrices from a Flax intermediates tree."""
+    matrices: List[np.ndarray] = []
+    if tree is None:
+        return matrices
+    if isinstance(tree, Mapping):
+        for key, value in tree.items():
+            include_next = include or (isinstance(key, str) and key.endswith("attention_weights"))
+            matrices.extend(_collect_attention_matrices(value, include_next))
+        return matrices
+    if isinstance(tree, (list, tuple)):
+        for value in tree:
+            matrices.extend(_collect_attention_matrices(value, include))
+        return matrices
+    if include:
+        try:
+            matrices.append(np.asarray(tree))
+        except Exception:
+            pass
+    return matrices
+
+
+def _convert_strings_to_arrays(tree: Any) -> Any:
+    if isinstance(tree, str):
+        return np.asarray([tree])
+    if isinstance(tree, (list, tuple)):
+        if tree and all(isinstance(elem, str) for elem in tree):
+            return np.asarray(tree)
+        return [ _convert_strings_to_arrays(elem) for elem in tree ]
+    if isinstance(tree, Mapping):
+        return {k: _convert_strings_to_arrays(v) for k, v in tree.items()}
+    return tree
+
+
+def _extract_call_array(node: Any) -> Optional[np.ndarray]:
+    if node is None:
+        return None
+    if isinstance(node, np.ndarray):
+        return node
+    try:
+        import jax.numpy as jnp  # type: ignore
+    except Exception:
+        jnp = None
+    if jnp is not None and isinstance(node, jnp.ndarray):
+        return np.asarray(node)
+    if isinstance(node, Mapping):
+        if "__call__" in node:
+            return _extract_call_array(node["__call__"])
+        for value in node.values():
+            arr = _extract_call_array(value)
+            if arr is not None:
+                return arr
+    if isinstance(node, (list, tuple)):
+        for value in node:
+            arr = _extract_call_array(value)
+            if arr is not None:
+                return arr
+    return None
+
+
+def _gather_attention_blocks(tree: Any) -> List[Any]:
+    blocks: List[Any] = []
+    if tree is None:
+        return blocks
+    if isinstance(tree, Mapping):
+        for key, value in tree.items():
+            if isinstance(key, str) and key.startswith("MultiHeadDotProductAttention"):
+                blocks.append(value)
+            blocks.extend(_gather_attention_blocks(value))
+    elif isinstance(tree, (list, tuple)):
+        for value in tree:
+            blocks.extend(_gather_attention_blocks(value))
+    return blocks
+
+
+def _softmax_along_last_axis(arr: np.ndarray) -> np.ndarray:
+    arr = arr - np.max(arr, axis=-1, keepdims=True)
+    np.exp(arr, out=arr)
+    sums = np.sum(arr, axis=-1, keepdims=True) + 1e-9
+    return arr / sums
+
+
+def _extract_attention_weights_from_block(block: Any) -> Optional[np.ndarray]:
+    if not isinstance(block, Mapping):
+        return None
+    query = _extract_call_array(block.get("query"))
+    key = _extract_call_array(block.get("key"))
+    if query is None or key is None:
+        return None
+    query = np.asarray(query)
+    key = np.asarray(key)
+    if query.shape != key.shape:
+        return None
+    depth = max(query.shape[-1], 1)
+    scale = 1.0 / np.sqrt(float(depth))
+    scores = np.einsum("...qhd,...khd->...hqk", query * scale, key)
+    return _softmax_along_last_axis(scores)
+
+
+def _extract_attention_weights(intermediates: Mapping[str, Any]) -> List[np.ndarray]:
+    blocks = _gather_attention_blocks(intermediates)
+    weights: List[np.ndarray] = []
+    for block in blocks:
+        arr = _extract_attention_weights_from_block(block)
+        if arr is not None:
+            weights.append(arr)
+    return weights
+
+
+def _clean_task_for_apply(task: Dict[str, Any]) -> Dict[str, Any]:
+    cleaned: Dict[str, Any] = {}
+    pad_mask = dict(task.get("pad_mask_dict") or {})
+    for key, value in task.items():
+        if key == "pad_mask_dict":
+            continue
+        if isinstance(value, str):
+            pad_mask.pop(key, None)
+            continue
+        cleaned[key] = value
+    if pad_mask:
+        cleaned["pad_mask_dict"] = pad_mask
+    return cleaned
+
+
+def _resolve_group_key(
+    keys: List[str],
+    preferred: str,
+    prefix: str,
+    disallow_prefix: Optional[str] = None,
+) -> Optional[str]:
+    exact = f"{prefix}{preferred}"
+    if exact in keys:
+        return exact
+    for key in keys:
+        if not key.startswith(prefix):
+            continue
+        if disallow_prefix and key.startswith(disallow_prefix):
+            continue
+        return key
+    return None
+
+
+def _build_token_indexer(model: torch.nn.Module, transformer_outputs) -> Optional[Dict[str, Any]]:
+    """Pre-compute token ordering metadata to map sequence indices back to groups."""
+    transformer_def = getattr(getattr(model, "module", None), "octo_transformer", None)
+    if transformer_def is None:
+        return None
+
+    def _to_list(mapping_attr: Any) -> List[str]:
+        if mapping_attr is None:
+            return []
+        if isinstance(mapping_attr, Mapping):
+            return list(mapping_attr.keys())
+        return list(mapping_attr)
+
+    prefix_order = _to_list(getattr(transformer_def, "task_tokenizers", {}))
+    obs_order = _to_list(getattr(transformer_def, "observation_tokenizers", {}))
+    readout_order = _to_list(getattr(transformer_def, "readouts", {}))
+    readout_counts = dict(getattr(transformer_def, "readouts", {}))
+    repeat_tasks = bool(getattr(transformer_def, "repeat_task_tokens", False))
+
+    prefix_ranges: Dict[str, Tuple[int, int]] = {}
+    prefix_total = 0
+    task_counts: Dict[str, int] = {}
+    for name in prefix_order:
+        key = f"task_{name}"
+        group = transformer_outputs.get(key)
+        if group is None:
+            continue
+        count = int(group.tokens.shape[1])
+        task_counts[name] = count
+        prefix_ranges[key] = (prefix_total, count)
+        prefix_total += count
+
+    obs_counts: Dict[str, int] = {}
+    horizon = 0
+    for name in obs_order:
+        key = f"obs_{name}"
+        group = transformer_outputs.get(key)
+        if group is None:
+            continue
+        obs_counts[name] = int(group.tokens.shape[2])
+        if horizon == 0:
+            horizon = int(group.tokens.shape[1])
+
+    timestep_order: List[Tuple[str, int]] = []
+    for name in obs_order:
+        count = obs_counts.get(name)
+        if count:
+            timestep_order.append((f"obs_{name}", count))
+
+    if repeat_tasks:
+        for prefix_key, (start_idx, count) in prefix_ranges.items():
+            if count <= 0:
+                continue
+            repeat_key = f"obs_{prefix_key}"
+            if transformer_outputs.get(repeat_key) is not None:
+                timestep_order.append((repeat_key, count))
+
+    for readout_name in readout_order:
+        count = int(readout_counts.get(readout_name) or 0)
+        if count <= 0:
+            continue
+        timestep_order.append((f"readout_{readout_name}", count))
+
+    per_timestep = sum(count for _, count in timestep_order)
+    if per_timestep == 0:
+        return None
+
+    return {
+        "prefix_total": prefix_total,
+        "per_timestep": per_timestep,
+        "prefix_ranges": prefix_ranges,
+        "timestep_order": timestep_order,
+        "horizon": horizon,
+    }
+
+
+def _lookup_token_range(indexer: Dict[str, Any], group_key: str, timestep_idx: int) -> Optional[Tuple[int, int]]:
+    if group_key in indexer["prefix_ranges"]:
+        return indexer["prefix_ranges"][group_key]
+    offset = indexer["prefix_total"] + timestep_idx * indexer["per_timestep"]
+    for key, count in indexer["timestep_order"]:
+        if key == group_key:
+            return offset, count
+        offset += count
+    return None
+
+
+def _reshape_attention_vector(vector: np.ndarray, obs_group) -> np.ndarray:
+    vec = np.asarray(vector, dtype=np.float32).reshape(-1)
+    size = vec.size
+    if obs_group is not None:
+        try:
+            tokens = int(obs_group.tokens.shape[2])
+            if tokens == size:
+                size = tokens
+        except Exception:
+            pass
+    side = int(round(size ** 0.5))
+    if side * side == size:
+        return vec.reshape(side, side)
+    return vec[np.newaxis, :]
+
+
+def _build_attention_map_from_outputs(
+    model: torch.nn.Module,
+    transformer_outputs,
+    attention_mats: List[np.ndarray],
+    observation: Dict[str, Any],
+    timestep_index: int,
+    readout_name: str,
+    target_name: str,
+) -> Dict[str, Any]:
+    outputs_dict = dict(transformer_outputs)
+    indexer = _build_token_indexer(model, outputs_dict)
+    if not indexer:
+        return {}
+
+    horizon = max(1, int(indexer.get("horizon") or 1))
+    timestep_idx = max(0, min(int(timestep_index), horizon - 1))
+
+    all_keys = list(outputs_dict.keys())
+    obs_key = _resolve_group_key(all_keys, target_name, prefix="obs_", disallow_prefix="obs_task_")
+    readout_key = _resolve_group_key(all_keys, readout_name, prefix="readout_")
+    if obs_key is None or readout_key is None:
+        return {}
+
+    obs_range = _lookup_token_range(indexer, obs_key, timestep_idx)
+    readout_range = _lookup_token_range(indexer, readout_key, timestep_idx)
+    if obs_range is None or readout_range is None:
+        return {}
+    obs_start, obs_count = obs_range
+    readout_start, readout_count = readout_range
+    if obs_count <= 0 or readout_count <= 0:
+        return {}
+    print(
+        f"[SNAPSHOT] attention mapping readout=({readout_key}, start={readout_start}, count={readout_count}) "
+        f"target=({obs_key}, start={obs_start}, count={obs_count}) timestep={timestep_idx}",
+        flush=True,
+    )
+
+    obs_group = outputs_dict.get(obs_key)
+    map_slices: List[np.ndarray] = []
+    for mat in attention_mats:
+        arr = np.asarray(mat)
+        if arr.ndim != 4:
+            continue
+        if (
+            readout_start + readout_count > arr.shape[2]
+            or obs_start + obs_count > arr.shape[3]
+        ):
+            continue
+        sub = arr[
+            :,
+            :,
+            readout_start : readout_start + readout_count,
+            obs_start : obs_start + obs_count,
+        ]
+        if sub.size == 0:
+            continue
+        sub = sub.mean(axis=1, keepdims=True)  # average over heads
+        # Take last readout token if multiple, else keep current
+        if sub.shape[-2] > 1:
+            sub = sub[..., -1:, :]
+        reduced = sub.mean(axis=(0, -2))
+        map_slices.append(_reshape_attention_vector(reduced, obs_group))
+
+    if not map_slices:
+        return {}
+
+    layers_stack = np.stack(map_slices).astype(np.float32)
+    aggregate_map = layers_stack[-1]
+
+    base_key = f"attn_{readout_key}_{obs_key}"
+    metadata = {
+        "key": base_key,
+        "readout": readout_key,
+        "target": obs_key,
+        "timestep_index": timestep_idx,
+        "num_layers": layers_stack.shape[0],
+        "reduction": "mean_heads_readouts",
+    }
+    return {
+        "attention_maps": {
+            base_key: aggregate_map,
+            f"{base_key}_layers": layers_stack,
+        },
+        "attention_info": metadata,
+    }
+
+
+def _compute_readout_attention_maps(
+    model: torch.nn.Module,
+    observation: Dict[str, Any],
+    task: Dict[str, Any],
+    timestep_index: int,
+    readout_name: str,
+    target_name: str,
+) -> Dict[str, Any]:
+    timestep_mask = observation.get("timestep_pad_mask")
+    try:
+        clean_observation = observation  # keep original tensors to preserve timestep history
+        clean_task = _clean_task_for_apply(task)
+        transformer_outputs, aux = model.module.apply(
+            {"params": model.params},
+            clean_observation,
+            clean_task,
+            timestep_mask,
+            train=False,
+            method="octo_transformer",
+            mutable=["intermediates"],
+            capture_intermediates=True,
+        )
+        intermediates = aux.get("intermediates", {})
+    except Exception as exc:
+        print(f"[SNAPSHOT] Unable to capture transformer attention: {exc}", flush=True)
+        return {}
+
+    attention_tree = intermediates if isinstance(intermediates, Mapping) else {}
+    attention_mats = _extract_attention_weights(attention_tree) if attention_tree else []
+    if attention_mats:
+        print(f"[SNAPSHOT] Captured {len(attention_mats)} attention tensors.", flush=True)
+    else:
+        mask_tree = attention_tree.get("attention_mask") if isinstance(attention_tree, Mapping) else None
+        attention_mats = _collect_attention_matrices(mask_tree)
+        available = list(attention_tree.keys()) if isinstance(attention_tree, Mapping) else []
+        if attention_mats:
+            print(
+                "[SNAPSHOT] Falling back to transformer attention mask; available keys:",
+                available,
+                flush=True,
+            )
+        else:
+            print(
+                "[SNAPSHOT] No attention weights captured; available intermediate keys:",
+                available,
+                flush=True,
+            )
+            return {}
+
+    return _build_attention_map_from_outputs(
+        model,
+        transformer_outputs,
+        attention_mats,
+        observation,
+        timestep_index,
+        readout_name,
+        target_name,
+    )
 
 
 def set_seed_everywhere(seed: int) -> None:
@@ -534,7 +958,7 @@ def get_action(
         # Construct task from text without touching its representation
         task = model.create_tasks(texts=[task_label])
 
-        capture_payload: Optional[Dict[str, Optional[np.ndarray]]] = None
+        capture_payload: Optional[Dict[str, Any]] = None
         if capture_spec is not None and capture_spec.get("request_tokens"):
             try:
                 timestep_idx = int(capture_spec.get("timestep_index", T - 1))
@@ -547,6 +971,23 @@ def get_action(
                 timestep_index=timestep_idx,
                 capture_spec=capture_spec,
             )
+            if capture_spec.get("request_attention"):
+                attn_payload = _compute_readout_attention_maps(
+                    model=model,
+                    observation=observation,
+                    task=task,
+                    timestep_index=timestep_idx,
+                    readout_name=capture_spec.get("attention_readout", "action"),
+                    target_name=capture_spec.get("attention_target", "image_primary"),
+                )
+                if attn_payload:
+                    capture_payload = capture_payload or {}
+                    maps = attn_payload.get("attention_maps")
+                    if maps:
+                        capture_payload.setdefault("attention_maps", {}).update(maps)
+                    info = attn_payload.get("attention_info")
+                    if info:
+                        capture_payload.setdefault("attention_info", []).append(info)
 
         # Build un-normalization stats from the checkpoint
         ds = getattr(model, "dataset_statistics", {}).get("action")

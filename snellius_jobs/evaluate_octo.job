@@ -81,6 +81,6 @@ srun python -m evaluation.scripts.run_libero_eval \
   --attention_snapshot_label baseline \
   --attention_snapshot_task "pick up the ketchup and place it in the basket" \
   --attention_snapshot_episode_idx 3 \
-  --attention_snapshot_seconds 1.0 \
+  --attention_snapshot_seconds 2.0 \
   --attention_snapshot_output_dir "analysis/attention_snapshots" \
   --attention_snapshot_filename "ketchup_episode3_t1p00s.npz"

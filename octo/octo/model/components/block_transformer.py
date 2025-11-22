@@ -126,6 +126,7 @@ class BlockTransformer(nn.Module):
     # Enforce that timestep causal structure is not broken (future timesteps can't attend to past timesteps)
     enforce_causal: bool = True
     use_correct_attention: bool = False
+    capture_attention: bool = False
 
     @nn.compact
     def __call__(
@@ -177,7 +178,10 @@ class BlockTransformer(nn.Module):
         self.sow("intermediates", "attention_mask", attention_mask)
 
         # Run transformer
-        output = Transformer(**self.transformer_kwargs)(
+        output = Transformer(
+            capture_attention_weights=self.capture_attention,
+            **self.transformer_kwargs,
+        )(
             input_tokens, attention_mask, train=train
         )
 

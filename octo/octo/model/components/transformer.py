@@ -311,6 +311,7 @@ class Encoder1DBlock(nn.Module):
     lora_attn_out: bool = False
 
     use_lora_mlp: bool = False
+    capture_attention: bool = False
 
     @nn.compact
     def __call__(self, inputs, attention_mask, *, deterministic):
@@ -328,7 +329,7 @@ class Encoder1DBlock(nn.Module):
         assert inputs.ndim == 3, f"Expected (batch, seq, hidden) got {inputs.shape}"
         x = nn.LayerNorm(dtype=self.dtype)(inputs)
         # Base attention with original parameter names
-        attn_out = nn.MultiHeadDotProductAttention(
+        attn_layer = nn.MultiHeadDotProductAttention(
             dtype=self.dtype,
             kernel_init=nn.initializers.xavier_uniform(),
             broadcast_dropout=False,
@@ -336,7 +337,8 @@ class Encoder1DBlock(nn.Module):
             dropout_rate=self.attention_dropout_rate,
             num_heads=self.num_heads,
             name="MultiHeadDotProductAttention_0",
-        )(x, x, mask=attention_mask)
+        )
+        attn_out = attn_layer(x, x, mask=attention_mask)
         # Optional LoRA on attention output projection only (safe w.r.t. pretrained names)
         if self.use_lora_attention and self.lora_r and self.lora_r > 0:
             delta_attn = ResidualLoRA(
@@ -384,6 +386,9 @@ class Transformer(nn.Module):
     dropout_rate: float = 0.1
     attention_dropout_rate: float = 0.1
     add_position_embedding: bool = False
+
+    # Attention capture (for instrumentation)
+    capture_attention_weights: bool = False
 
     # LoRA controls (forwarded to blocks)
     use_lora_attention: bool = False
@@ -434,6 +439,7 @@ class Transformer(nn.Module):
                 lora_attn_k=self.lora_attn_k,
                 lora_attn_v=self.lora_attn_v,
                 lora_attn_out=self.lora_attn_out,
+                capture_attention=self.capture_attention_weights,
             )(x, attention_mask, deterministic=not train)
         encoded = nn.LayerNorm(name="encoder_norm")(x)
 

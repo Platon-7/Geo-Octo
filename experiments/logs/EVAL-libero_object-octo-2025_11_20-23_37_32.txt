@@ -1,0 +1,51 @@
+Task suite: libero_object
+Using default initial states
+Skipping task 'pick up the alphabet soup and place it in the basket' because it does not match attention_snapshot_task.
+Using default initial states
+Skipping task 'pick up the cream cheese and place it in the basket' because it does not match attention_snapshot_task.
+Using default initial states
+Skipping task 'pick up the salad dressing and place it in the basket' because it does not match attention_snapshot_task.
+Using default initial states
+Skipping task 'pick up the bbq sauce and place it in the basket' because it does not match attention_snapshot_task.
+Using default initial states
+Skipping task 'pick up the ketchup and place it in the basket' because it does not match attention_snapshot_task.
+Using default initial states
+Skipping task 'pick up the tomato sauce and place it in the basket' because it does not match attention_snapshot_task.
+Using default initial states
+
+Task: pick up the butter and place it in the basket
+Starting episode 1...
+Saved rollout MP4 at path ./rollouts/2025_11_20/libero_eval_vggt--episode=1--success=True--task=pick_up_the_butter_and_place_it_in_the_basket.mp4
+Success: True
+# episodes completed so far: 1
+# successes: 1 (100.0%)
+
+Task: pick up the butter and place it in the basket
+Starting episode 2...
+Saved rollout MP4 at path ./rollouts/2025_11_20/libero_eval_vggt--episode=2--success=False--task=pick_up_the_butter_and_place_it_in_the_basket.mp4
+Success: False
+# episodes completed so far: 2
+# successes: 1 (50.0%)
+
+Task: pick up the butter and place it in the basket
+Starting episode 3...
+Saved rollout MP4 at path ./rollouts/2025_11_20/libero_eval_vggt--episode=3--success=False--task=pick_up_the_butter_and_place_it_in_the_basket.mp4
+Success: False
+# episodes completed so far: 3
+# successes: 1 (33.3%)
+
+Task: pick up the butter and place it in the basket
+Starting episode 4...
+Saved attention snapshot for policy 'baseline' at 1.60s to analysis/attention_snapshots/butter_episode3_t1p00s.npz
+Saved rollout MP4 at path ./rollouts/2025_11_20/libero_eval_vggt--episode=4--success=True--task=pick_up_the_butter_and_place_it_in_the_basket.mp4
+Success: True
+# episodes completed so far: 4
+# successes: 2 (50.0%)
+Attention snapshot captured; ending task early.
+Current task success rate: 0.5
+Current total success rate: 0.5
+Attention snapshot captured; stopping further task evaluation.
+Final results:
+Total episodes: 4
+Total successes: 2
+Overall success rate: 0.5000 (50.0%)
